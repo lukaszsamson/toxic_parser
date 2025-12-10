@@ -41,4 +41,12 @@ defmodule ToxicParser.PrattPrecedenceTest do
     assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr_list(state, :matched, log)
     assert {:__block__, [], [_a, _b]} = ast
   end
+
+  test "calls parser falls back to Pratt when identifier is not a call" do
+    state = TokenAdapter.new("foo")
+    log = EventLog.new()
+
+    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr(state, :matched, log)
+    assert ast == :foo
+  end
 end

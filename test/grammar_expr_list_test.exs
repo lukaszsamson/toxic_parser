@@ -7,8 +7,7 @@ defmodule ToxicParser.GrammarExprListTest do
     state = TokenAdapter.new("\n\n")
     log = EventLog.new()
 
-    assert {:error, :unexpected_eof, _state, _log} =
-             Grammar.Expressions.expr_list(state, :matched, log)
+    assert {:ok, :ok, _state, _log} = Grammar.Expressions.expr_list(state, :matched, log)
   end
 
   test "parses multiple expressions into a block" do

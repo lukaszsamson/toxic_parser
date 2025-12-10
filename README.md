@@ -24,7 +24,7 @@ All entry points return `{:ok, %ToxicParser.Result{}}` on success or `{:error, %
 - Run `mix test` to execute the conformance harness and contract checks.
 - `NONTERMINALS_GPT.md` is treated as the canonical nonterminal mapping and is loaded at compile time.
 - Set `TOXIC_PATH` to point at a checkout of the Toxic lexer when running CI (see `.github/workflows/ci.yml`); falls back to `/Users/lukaszsamson/claude_fun/toxic` for local development.
-- Phase 3 adds Pratt skeleton and precedence table; Phase 4 introduces a minimal grammar dispatcher that will be expanded in later phases. Public API still delegates to `Code.string_to_quoted_with_comments/2` until parser completeness.
+- Phase 3 adds Pratt skeleton and precedence table; Phase 4 introduces a minimal grammar dispatcher. Phase 5 begins call/identifier scaffolding with paren call parsing and identifier classification. Public API still delegates to `Code.string_to_quoted_with_comments/2` until parser completeness.
 
 ## Installation
 

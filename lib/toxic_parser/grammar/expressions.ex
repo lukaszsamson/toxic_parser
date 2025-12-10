@@ -3,7 +3,8 @@ defmodule ToxicParser.Grammar.Expressions do
   Expression dispatcher for matched/unmatched/no-parens contexts.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter, Warning}
+  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Grammar.Calls
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -23,6 +24,9 @@ defmodule ToxicParser.Grammar.Expressions do
       {:ok, first, state, log} ->
         collect_exprs([first], state, ctx, log)
 
+      {:error, :unexpected_eof, state, log} ->
+        {:ok, Builder.Helpers.literal(:ok), state, log}
+
       {:error, reason, state, log} ->
         {:error, reason, state, log}
     end
@@ -33,7 +37,10 @@ defmodule ToxicParser.Grammar.Expressions do
   """
   @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr(%State{} = state, ctx, %EventLog{} = log) do
-    Pratt.parse(state, ctx, log)
+    case Calls.parse(state, ctx, log) do
+      {:ok, ast, state, log} -> {:ok, ast, state, log}
+      {:error, reason, state, log} -> {:error, reason, state, log}
+    end
   end
 
   defp collect_exprs(acc, state, ctx, log) do
@@ -76,18 +83,5 @@ defmodule ToxicParser.Grammar.Expressions do
       _ ->
         {state, log}
     end
-  end
-
-  # Placeholder for warn_pipe and warn_no_parens_after_do_op infrastructure
-  @spec warn_pipe(State.t(), EventLog.t(), map()) :: {State.t(), EventLog.t()}
-  defp warn_pipe(state, log, meta) do
-    warning = %Warning{
-      code: :warn_pipe,
-      message: "ambiguous pipe into no-parens call",
-      range: meta.range,
-      details: %{}
-    }
-
-    {%{state | warnings: [warning | state.warnings]}, log}
   end
 end
