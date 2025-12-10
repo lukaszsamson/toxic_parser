@@ -50,9 +50,53 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp nud(token, state, _context, log) do
-    ast = literal_to_ast(token)
-    {:ok, ast, state, log}
+  # Handle unary operators in nud (null denotation)
+  defp nud(token, state, context, log) do
+    case Precedence.unary(token.kind) do
+      {bp, _assoc} ->
+        # This is a unary operator - parse operand
+        parse_unary(token, state, context, log, bp)
+
+      nil ->
+        # Check for dual_op used as unary (e.g., -1, +1)
+        if token.kind == :dual_op do
+          # dual_op as unary has fixed precedence
+          parse_unary(token, state, context, log, 300)
+        else
+          # Not a unary operator - convert to literal AST
+          ast = literal_to_ast(token)
+          {:ok, ast, state, log}
+        end
+    end
+  end
+
+  # Parse unary operator expression
+  defp parse_unary(op_token, state, context, log, min_bp) do
+    # Skip EOE after unary operator (allows "!\ntrue")
+    # Note: Unlike binary ops, unary ops don't include newlines metadata
+    {state, _newlines} = skip_eoe_after_op(state)
+
+    case TokenAdapter.next(state) do
+      {:ok, operand_token, state} ->
+        with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, min_bp) do
+          op = op_token.value
+          meta = build_meta(op_token.metadata)
+          ast = Builder.Helpers.unary(op, operand, meta)
+          {:ok, ast, state, log}
+        end
+
+      {:eof, state} ->
+        # Special case: ... and .. can be standalone at EOF
+        if op_token.kind in [:ellipsis_op, :range_op] do
+          ast = {op_token.value, build_meta(op_token.metadata), []}
+          {:ok, ast, state, log}
+        else
+          {:error, :unexpected_eof, state, log}
+        end
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
   end
 
   # Parse RHS of binary operator, handling chained operators with proper precedence

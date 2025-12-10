@@ -39,9 +39,9 @@ defmodule ToxicParser.Precedence do
 
   @unary_bp [
     {:capture_op, 90, :nonassoc},
+    {:ellipsis_op, 300, :nonassoc},
     {:unary_op, 300, :nonassoc},
-    {:unary_not_op, 300, :nonassoc},
-    {:unary_at_op, 320, :nonassoc}
+    {:at_op, 320, :nonassoc}
   ]
 
   @doc "Returns {binding power, associativity} for a binary operator class."
