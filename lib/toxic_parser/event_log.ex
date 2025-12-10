@@ -1,6 +1,6 @@
 defmodule ToxicParser.EventLog do
   @moduledoc """
-  Type definitions and documentation for the parser event stream contract.
+  Event stream contract and helpers for emitting well-ordered parse events.
 
   Ordering guarantees:
   - Events are emitted in source order.
@@ -12,6 +12,8 @@ defmodule ToxicParser.EventLog do
   """
 
   alias ToxicParser.Error
+
+  defstruct events: [], stack: []
 
   @typedoc "Cursor position in the source."
   @type location :: %{
@@ -102,7 +104,63 @@ defmodule ToxicParser.EventLog do
           expected: [atom()] | nil
         }
 
+  @type t :: %__MODULE__{events: [event()], stack: [node_kind()]}
+
   @doc "Returns an empty, ordered event log."
-  @spec new :: [event()]
-  def new, do: []
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @doc "Returns events in emission order."
+  @spec to_list(t()) :: [event()]
+  def to_list(%__MODULE__{events: evts}), do: Enum.reverse(evts)
+
+  @doc "Starts a node and pushes it onto the nesting stack."
+  @spec start_node(t(), node_kind(), metadata()) :: t()
+  def start_node(%__MODULE__{} = log, kind, metadata) do
+    %{log | events: [{:start_node, kind, metadata} | log.events], stack: [kind | log.stack]}
+  end
+
+  @doc "Ends the current node; raises if the stack is not balanced."
+  @spec end_node(t(), node_kind(), metadata()) :: t()
+  def end_node(%__MODULE__{stack: [kind | rest]} = log, kind, metadata) do
+    %{log | events: [{:end_node, kind, metadata} | log.events], stack: rest}
+  end
+
+  def end_node(%__MODULE__{stack: [top | _]}, kind, _metadata) do
+    raise ArgumentError, "Mismatched end_node: expected #{inspect(top)}, got #{inspect(kind)}"
+  end
+
+  def end_node(%__MODULE__{stack: []}, kind, _metadata) do
+    raise ArgumentError, "Unbalanced end_node with empty stack for #{inspect(kind)}"
+  end
+
+  @doc "Appends a token event."
+  @spec token(t(), token_payload(), metadata()) :: t()
+  def token(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:token, payload, metadata} | log.events]}
+  end
+
+  @doc "Appends an error event."
+  @spec error(t(), error_payload(), metadata()) :: t()
+  def error(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:error, payload, metadata} | log.events]}
+  end
+
+  @doc "Appends a missing-token event."
+  @spec missing(t(), missing_payload(), metadata()) :: t()
+  def missing(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:missing, payload, metadata} | log.events]}
+  end
+
+  @doc "Appends a synthetic-token event."
+  @spec synthetic(t(), synthetic_payload(), metadata()) :: t()
+  def synthetic(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:synthetic, payload, metadata} | log.events]}
+  end
+
+  @doc "Appends a comment event."
+  @spec comment(t(), comment_payload(), metadata()) :: t()
+  def comment(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:comment, payload, metadata} | log.events]}
+  end
 end
