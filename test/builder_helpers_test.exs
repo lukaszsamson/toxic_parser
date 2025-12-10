@@ -15,6 +15,11 @@ defmodule ToxicParser.BuilderHelpersTest do
     assert {{:., [ctx: :access], [Access, :get]}, [ctx: :access], [:foo, 1, 2]} = access
   end
 
+  test "builds call nodes" do
+    assert {:foo, [], [1, 2]} = Helpers.call(:foo, [1, 2])
+    assert {:bar, [line: 1], []} = Helpers.call(:bar, [], line: 1)
+  end
+
   test "builds alias segments" do
     assert {:__aliases__, [], [:Foo, :Bar]} = Helpers.alias_segments([:Foo, :Bar])
   end

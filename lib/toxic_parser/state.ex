@@ -27,7 +27,8 @@ defmodule ToxicParser.State do
           line_index: [non_neg_integer()],
           terminators: [term()],
           max_peek: pos_integer(),
-          source: binary()
+          source: binary(),
+          event_log: ToxicParser.EventLog.t()
         }
 
   defstruct stream: nil,
@@ -41,7 +42,8 @@ defmodule ToxicParser.State do
             line_index: [],
             terminators: [],
             max_peek: 4,
-            source: ""
+            source: "",
+            event_log: ToxicParser.EventLog.new()
 
   @doc """
   Builds an initial state from source with parser options.
@@ -69,7 +71,8 @@ defmodule ToxicParser.State do
       line_index: line_index(source_bin),
       terminators: terminators,
       max_peek: Keyword.get(opts, :max_peek, 4),
-      source: source_bin
+      source: source_bin,
+      event_log: ToxicParser.EventLog.new()
     }
   end
 

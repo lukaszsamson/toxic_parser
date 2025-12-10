@@ -34,6 +34,12 @@ defmodule ToxicParser.Builder.Helpers do
     {{:., meta, [Access, :get]}, meta, [subject | indices]}
   end
 
+  @doc "Builds a function call AST node."
+  @spec call(Macro.t(), [Macro.t()], keyword()) :: Macro.t()
+  def call(callee, args, meta \\ []) do
+    {callee, meta, args}
+  end
+
   @doc "Concatenates alias segments into an `__aliases__` node."
   @spec alias_segments([atom()], keyword()) :: Macro.t()
   def alias_segments(segments, meta \\ []) when is_list(segments) do
