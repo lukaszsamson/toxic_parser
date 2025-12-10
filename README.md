@@ -5,6 +5,8 @@ ToxicParser is an error-tolerant Elixir parser that integrates with the Toxic st
 ## Modes
 - `:strict` (default): lexer/parser errors are fatal and returned as `{:error, %ToxicParser.Result{}}`.
 - `:tolerant`: lexer/parser errors are collected in diagnostics and returned alongside the best-effort result; no exception is raised.
+- Tolerant mode downgrades lexer fatals into diagnostics and emits synthetic error tokens; strict mode stops on the first lexer error and never synthesizes delimiters.
+- Newline counts from `eol`/`;` tokens are preserved on the normalized `:eoe` token for layout-sensitive operators.
 
 See `PHASE0_CONTRACTS.md` for detailed behavior, event log schema, metadata policy, and builder contracts.
 
@@ -21,6 +23,7 @@ All entry points return `{:ok, %ToxicParser.Result{}}` on success or `{:error, %
 ## Development
 - Run `mix test` to execute the conformance harness and contract checks.
 - `NONTERMINALS_GPT.md` is treated as the canonical nonterminal mapping and is loaded at compile time.
+- Set `TOXIC_PATH` to point at a checkout of the Toxic lexer when running CI (see `.github/workflows/ci.yml`); falls back to `/Users/lukaszsamson/claude_fun/toxic` for local development.
 
 ## Installation
 

@@ -44,4 +44,51 @@ defmodule ToxicParser.Error do
 
   defp normalize_token(atom) when is_atom(atom), do: atom
   defp normalize_token(_), do: nil
+
+  @doc """
+  Builds a lexer-phase diagnostic from a Toxic error.
+  """
+  @spec from_toxic(term(), Toxic.Error.t() | term(), keyword()) :: t()
+  def from_toxic(meta, reason, opts \\ [])
+
+  def from_toxic(meta, %Toxic.Error{} = err, opts) do
+    line_index = Keyword.get(opts, :line_index, [])
+    range = meta_to_range(meta, err, line_index)
+
+    %__MODULE__{
+      phase: :lexer,
+      reason: {err.code, err.details},
+      token: normalize_token(err.token_display),
+      severity: err.severity,
+      expected: Keyword.get(opts, :expected),
+      range: range,
+      details: %{domain: err.domain, terminators: Keyword.get(opts, :terminators)}
+    }
+  end
+
+  def from_toxic(meta, reason, opts) do
+    line_index = Keyword.get(opts, :line_index, [])
+    range = meta_to_range(meta, %{position: Keyword.get(opts, :position)}, line_index)
+
+    %__MODULE__{
+      phase: :lexer,
+      reason: reason,
+      token: nil,
+      severity: Keyword.get(opts, :severity, :error),
+      expected: Keyword.get(opts, :expected),
+      range: range,
+      details: %{domain: :general, terminators: Keyword.get(opts, :terminators)}
+    }
+  end
+
+  defp meta_to_range({{_sl, _sc}, {_el, _ec}, _extra} = meta, _err, line_index) do
+    ToxicParser.Position.range_from_meta(meta, line_index)
+  end
+
+  defp meta_to_range(_meta, err, line_index) do
+    case err.position do
+      {{_sl, _sc}, {_el, _ec}} = pos -> ToxicParser.Position.range_from_meta(pos, line_index)
+      _ -> line_only_range(1)
+    end
+  end
 end

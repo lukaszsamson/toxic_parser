@@ -35,6 +35,14 @@ defmodule ToxicParser.Conformance do
     end
   end
 
+  @doc """
+  Compares two ASTs ignoring metadata by stringifying them.
+  """
+  @spec ast_equal?(Macro.t(), Macro.t()) :: boolean()
+  def ast_equal?(left, right) do
+    Macro.to_string(left) == Macro.to_string(right)
+  end
+
   defp to_code_opts(opts) do
     opts
     |> Keyword.take([:existing_atoms_only, :token_metadata, :literal_encoder, :file])

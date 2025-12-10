@@ -20,11 +20,13 @@ defmodule ToxicParser.MixProject do
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
+    toxic_path = System.get_env("TOXIC_PATH") || "/Users/lukaszsamson/claude_fun/toxic"
+
     [
       {:ex_doc, ">= 0.0.0", only: :dev},
-      {:dialyxir, "~> 1.0", only: :dev},
+      {:dialyxir, "~> 1.0", only: :dev, runtime: false},
       {:stream_data, "~> 1.2", only: :test},
-      {:toxic, path: "/Users/lukaszsamson/claude_fun/toxic"}
+      {:toxic, path: toxic_path}
     ]
   end
 end

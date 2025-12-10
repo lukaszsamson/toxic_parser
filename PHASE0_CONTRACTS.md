@@ -7,7 +7,14 @@ This project will deliver an error-tolerant Elixir parser that mirrors the `elix
 - Strict: lexer errors are fatal; no synthesized delimiters; diagnostics stop at the first parser error and return `{:error, %ToxicParser.Error{}}`.
 - Tolerant: lexer `error_token` values are surfaced as `:error` events; missing closers/openers may be synthesized (`:missing`/`:synthetic` events) to keep the tree well formed; all diagnostics are aggregated and returned alongside the best-effort AST/event log.
 - Comments are preserved in both modes; attachment prefers the following syntactic element and falls back to the previous token if at EOF. Ordering of comments in the result matches `Code.string_to_quoted_with_comments/2`.
+- Layout-sensitive operators (`*_op_eol` tokens) keep newline counts in metadata; Pratt/grammar layers are responsible for enforcing spacing rules using the `:newlines` metadata.
+- Lexer fatal errors are treated as fatal only in strict mode; tolerant mode converts them into diagnostics plus error tokens and resumes where possible.
 - Both modes expose lexer diagnostics; tolerant mode downgrades lexer fatal errors into parser-visible events/diagnostics instead of aborting.
+
+## Comment Policy
+- Comments are preserved when `:preserve_comments` is true and dropped otherwise.
+- Comments attach to the following token/node when possible; if the comment is the last element, it attaches to the preceding token.
+- Ordering in comment lists matches `Code.string_to_quoted_with_comments/2`; event log consumers may instead rely on `:comment` events preceding the attached token/node.
 
 ## Event Log Schema
 - Events are emitted in source order with well-nested `:start_node`/`:end_node` pairs; tokens/comments/errors/missing/synthetic entries appear where they occur in the stream.

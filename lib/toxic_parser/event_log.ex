@@ -2,9 +2,13 @@ defmodule ToxicParser.EventLog do
   @moduledoc """
   Type definitions and documentation for the parser event stream contract.
 
-  Events are emitted in source order. `:start_node`/`:end_node` entries are
-  always well-nested. `:missing` and `:synthetic` events are inserted where
-  the grammar expected constructs that were absent in the token stream.
+  Ordering guarantees:
+  - Events are emitted in source order.
+  - `:start_node`/`:end_node` entries are strictly well-nested; every `:start_node`
+    has a corresponding `:end_node` before its parent's `:end_node`.
+  - `:missing`/`:synthetic`/`:error` events appear at the position the grammar
+    expected the construct or where the lexer reported the problem.
+  - `:comment` events precede the node/token they attach to.
   """
 
   alias ToxicParser.Error

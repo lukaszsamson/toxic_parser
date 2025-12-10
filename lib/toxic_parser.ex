@@ -4,6 +4,11 @@ defmodule ToxicParser do
 
   Phase 0 implements mode handling, result struct wiring, and a conformance
   harness stubbed against `Code.string_to_quoted_with_comments/2`.
+
+  Modes:
+  - `:strict` stops on the first lexer/parser error and never synthesizes delimiters.
+  - `:tolerant` collects diagnostics, emits synthetic error tokens for lexer fatals,
+    and continues parsing with normalized `:eoe` tokens carrying newline counts.
   """
 
   alias ToxicParser.{Error, EventLog, Result}
