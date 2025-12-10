@@ -55,6 +55,13 @@ defmodule ToxicParser.Pratt do
     {:ok, ast, state, log}
   end
 
+  # Parse RHS of binary operator, handling chained operators with proper precedence
+  defp parse_rhs(token, state, context, log, min_bp) do
+    with {:ok, right, state, log} <- nud(token, state, context, log) do
+      led(right, state, log, min_bp, context)
+    end
+  end
+
   defp led(left, state, log, min_bp, context) do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
@@ -69,21 +76,33 @@ defmodule ToxicParser.Pratt do
             end
 
           {_, {bp, assoc}} when bp >= min_bp ->
-            {:ok, _op, state} = TokenAdapter.next(state)
-            next_min = if assoc == :right, do: bp, else: bp + 1
+            {:ok, op_token, state} = TokenAdapter.next(state)
+            # For right associativity, use same bp to allow chaining at same level
+            # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
+            rhs_min_bp = if assoc == :right, do: bp, else: bp + 1
+
+            # Skip EOE tokens after operator (allows "1 +\n2")
+            {state, newlines} = skip_eoe_after_op(state)
 
             case TokenAdapter.next(state) do
               {:ok, rhs_token, state} ->
-                with {:ok, right, state, log} <- nud(rhs_token, state, context, log) do
+                # Parse RHS with appropriate min_bp for associativity
+                with {:ok, right, state, log} <- parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
+                  # Use the actual operator value (e.g. :=, :+) not the token kind (e.g. :match_op)
+                  op = op_token.value
+                  # Add newlines metadata if there were newlines after the operator
+                  meta = build_meta_with_newlines(op_token.metadata, newlines)
+
                   combined =
                     Builder.Helpers.binary(
-                      next_token.kind,
+                      op,
                       left,
                       right,
-                      []
+                      meta
                     )
 
-                  led(combined, state, log, next_min, context)
+                  # Continue with original min_bp to allow chaining same-precedence left-assoc ops
+                  led(combined, state, log, min_bp, context)
                 end
 
               {:eof, state} ->
@@ -167,6 +186,27 @@ defmodule ToxicParser.Pratt do
   end
 
   defp build_meta(_), do: []
+
+  # Build metadata with newlines count if present
+  defp build_meta_with_newlines(token_meta, 0) do
+    build_meta(token_meta)
+  end
+
+  defp build_meta_with_newlines(token_meta, newlines) when newlines > 0 do
+    [newlines: newlines] ++ build_meta(token_meta)
+  end
+
+  # Skip EOE tokens after an operator and count newlines
+  defp skip_eoe_after_op(state, newlines \\ 0) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_after_op(state, newlines + n)
+
+      _ ->
+        {state, newlines}
+    end
+  end
 
   defp parse_access_indices(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
