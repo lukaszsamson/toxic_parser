@@ -45,4 +45,58 @@ defmodule ToxicParser.Builder.Helpers do
   def alias_segments(segments, meta \\ []) when is_list(segments) do
     {:__aliases__, meta, segments}
   end
+
+  @doc "Builds an identifier/variable reference AST."
+  @spec identifier(atom(), keyword()) :: Macro.t()
+  def identifier(name, meta \\ []) when is_atom(name) do
+    {name, meta, nil}
+  end
+
+  @doc "Builds an alias AST from a single atom."
+  @spec alias_single(atom(), keyword()) :: Macro.t()
+  def alias_single(name, meta \\ []) when is_atom(name) do
+    {:__aliases__, meta, [name]}
+  end
+
+  @doc "Builds AST from a token based on its kind."
+  @spec from_token(map()) :: Macro.t()
+  def from_token(%{kind: :identifier, value: name, metadata: meta}) do
+    identifier(name, token_meta(meta))
+  end
+
+  def from_token(%{kind: :alias, value: name, metadata: meta}) do
+    # Aliases need both :last and regular location metadata
+    m = token_meta(meta)
+    {:__aliases__, [last: m] ++ m, [name]}
+  end
+
+  def from_token(%{kind: kind, value: _}) when kind in [true, false, nil] do
+    kind
+  end
+
+  def from_token(%{kind: :atom, value: atom}) do
+    atom
+  end
+
+  def from_token(%{kind: :int, raw: {:int, {_, _, parsed}, _}}) do
+    parsed
+  end
+
+  def from_token(%{kind: :flt, raw: {:flt, {_, _, parsed}, _}}) do
+    parsed
+  end
+
+  def from_token(%{kind: :char, value: codepoint}) do
+    codepoint
+  end
+
+  def from_token(%{value: value}) do
+    value
+  end
+
+  defp token_meta(%{range: %{start: %{line: line, column: column}}}) do
+    [line: line, column: column]
+  end
+
+  defp token_meta(_), do: []
 end

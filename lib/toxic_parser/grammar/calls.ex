@@ -49,12 +49,12 @@ defmodule ToxicParser.Grammar.Calls do
           state = TokenAdapter.pushback(state, tok)
           Pratt.parse(state, ctx, log)
         else
-          ast = Builder.Helpers.literal(tok.value)
+          ast = Builder.Helpers.from_token(tok)
           maybe_do_block(ast, state, ctx, log)
         end
 
       _ ->
-        ast = Builder.Helpers.literal(tok.value)
+        ast = Builder.Helpers.from_token(tok)
         maybe_do_block(ast, state, ctx, log)
     end
   end

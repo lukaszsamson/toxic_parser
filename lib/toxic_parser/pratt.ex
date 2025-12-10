@@ -105,11 +105,68 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp literal_to_ast(%{kind: :int, value: chars}), do: List.to_integer(chars)
-  defp literal_to_ast(%{kind: :flt, value: chars}), do: List.to_float(chars)
-  defp literal_to_ast(%{kind: :atom, value: atom}), do: atom
-  defp literal_to_ast(%{kind: :string, value: value}), do: value
-  defp literal_to_ast(%{value: value}), do: value
+  # Integer: extract parsed value from raw token metadata
+  defp literal_to_ast(%{kind: :int, raw: {:int, {_, _, parsed_value}, _}}) do
+    parsed_value
+  end
+
+  # Float: extract parsed value from raw token metadata
+  defp literal_to_ast(%{kind: :flt, raw: {:flt, {_, _, parsed_value}, _}}) do
+    parsed_value
+  end
+
+  # Character literal: value is already the codepoint
+  defp literal_to_ast(%{kind: :char, value: codepoint}) do
+    codepoint
+  end
+
+  # Boolean literals: kind is the literal value itself
+  defp literal_to_ast(%{kind: true}), do: true
+  defp literal_to_ast(%{kind: false}), do: false
+  defp literal_to_ast(%{kind: nil}), do: nil
+
+  # Atom: value is already the atom
+  defp literal_to_ast(%{kind: :atom, value: atom}) do
+    atom
+  end
+
+  # Alias: wrap in __aliases__ tuple with :last metadata
+  defp literal_to_ast(%{kind: :alias, value: atom, metadata: meta}) do
+    m = build_meta(meta)
+    {:__aliases__, [last: m] ++ m, [atom]}
+  end
+
+  # Identifier: wrap in tuple with nil context (variable reference)
+  defp literal_to_ast(%{kind: :identifier, value: atom, metadata: meta}) do
+    {atom, build_meta(meta), nil}
+  end
+
+  # String (for future use)
+  defp literal_to_ast(%{kind: :string, value: value}) do
+    value
+  end
+
+  # Range operator (..) as standalone expression
+  defp literal_to_ast(%{kind: :range_op, value: op, metadata: meta}) do
+    {op, build_meta(meta), []}
+  end
+
+  # Ellipsis operator (...) as standalone expression
+  defp literal_to_ast(%{kind: :ellipsis_op, value: op, metadata: meta}) do
+    {op, build_meta(meta), []}
+  end
+
+  # Fallback for other tokens
+  defp literal_to_ast(%{value: value}) do
+    value
+  end
+
+  # Build metadata for AST nodes
+  defp build_meta(%{range: %{start: %{line: line, column: column}}}) do
+    [line: line, column: column]
+  end
+
+  defp build_meta(_), do: []
 
   defp parse_access_indices(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
