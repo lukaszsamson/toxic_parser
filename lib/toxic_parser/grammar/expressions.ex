@@ -13,24 +13,36 @@ defmodule ToxicParser.Grammar.Expressions do
   @doc """
   Parses a list of expressions separated by logical EOE.
 
-  Currently parses a single expression and returns it; full expr_list logic will
-  be expanded in later phases.
+  Handles the grammar rules:
+  - grammar -> '$empty' : {'__block__', [], []}.
+  - grammar -> eoe : {'__block__', meta_from_token('$1'), []}.
+  - grammar -> expr_list : build_block(reverse('$1')).
+  - grammar -> eoe expr_list : build_block(reverse('$2')).
+  - grammar -> expr_list eoe : build_block(reverse(annotate_eoe('$2', '$1'))).
+  - grammar -> eoe expr_list eoe : build_block(reverse(annotate_eoe('$3', '$2'))).
   """
   @spec expr_list(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr_list(%State{} = state, ctx, %EventLog{} = log) do
-    {state, _log} = skip_eoe(state, log)
+    # Track if we consumed any leading EOE tokens for metadata
+    {state, leading_eoe_meta} = skip_eoe_with_meta(state)
 
     case expr(state, ctx, log) do
       {:ok, first, state, log} ->
         collect_exprs([first], state, ctx, log)
 
       {:error, :unexpected_eof, state, log} ->
-        {:ok, Builder.Helpers.literal(:ok), state, log}
+        # No expressions found - return empty block with appropriate metadata
+        ast = build_empty_block(leading_eoe_meta)
+        {:ok, ast, state, log}
 
       {:error, reason, state, log} ->
         {:error, reason, state, log}
     end
   end
+
+  # Build empty block with metadata from first EOE token if present
+  defp build_empty_block(nil), do: {:__block__, [], []}
+  defp build_empty_block(meta), do: {:__block__, meta, []}
 
   @doc """
   Dispatches to the Pratt parser based on expression context.
@@ -63,15 +75,26 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp collect_exprs(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, state} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
+      {:ok, %{kind: :eoe}, _} ->
+        # Skip all consecutive EOE tokens (handles cases like "1\n;2")
+        state = skip_eoe(state)
 
-        case expr(state, ctx, log) do
-          {:ok, next_expr, state, log} ->
-            collect_exprs([next_expr | acc], state, ctx, log)
-
-          {:error, _reason, state, log} ->
+        # Check if we've reached EOF after trailing EOE
+        case TokenAdapter.peek(state) do
+          {:eof, state} ->
             finalize_exprs(acc, state, log)
+
+          {:ok, _, _} ->
+            case expr(state, ctx, log) do
+              {:ok, next_expr, state, log} ->
+                collect_exprs([next_expr | acc], state, ctx, log)
+
+              {:error, _reason, state, log} ->
+                finalize_exprs(acc, state, log)
+            end
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
         end
 
       {:eof, state} ->
@@ -92,14 +115,35 @@ defmodule ToxicParser.Grammar.Expressions do
     {:ok, block, state, log}
   end
 
-  defp skip_eoe(state, log) do
+  # Skip all EOE tokens
+  defp skip_eoe(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, state} ->
+      {:ok, %{kind: :eoe}, _} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state, log)
+        skip_eoe(state)
 
       _ ->
-        {state, log}
+        state
     end
   end
+
+  # Skip EOE tokens but capture metadata from first one
+  defp skip_eoe_with_meta(state, first_meta \\ nil) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, metadata: meta}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        # Capture metadata from first EOE token only
+        new_meta = first_meta || token_to_meta(meta)
+        skip_eoe_with_meta(state, new_meta)
+
+      _ ->
+        {state, first_meta}
+    end
+  end
+
+  defp token_to_meta(%{range: %{start: %{line: line, column: column}}}) do
+    [line: line, column: column]
+  end
+
+  defp token_to_meta(_), do: []
 end
