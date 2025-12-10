@@ -2,6 +2,7 @@ defmodule ToxicParser.PrattPrecedenceTest do
   use ExUnit.Case, async: true
 
   alias ToxicParser.{Precedence, Pratt, TokenAdapter, EventLog}
+  alias ToxicParser.Grammar
 
   test "binary binding powers are ordered and include dot/access/not_in" do
     table = Precedence.binary_table()
@@ -31,5 +32,13 @@ defmodule ToxicParser.PrattPrecedenceTest do
 
     assert {:ok, ast, _state, %EventLog{}} = Pratt.parse(state, :matched, log)
     assert match?({_, _, _}, ast)
+  end
+
+  test "grammar expr_list dispatches to pratt" do
+    state = TokenAdapter.new("1 + 2\n3")
+    log = EventLog.new()
+
+    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr_list(state, :matched, log)
+    assert {:__block__, [], [_a, _b]} = ast
   end
 end

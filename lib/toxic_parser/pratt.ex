@@ -51,7 +51,7 @@ defmodule ToxicParser.Pratt do
   end
 
   defp nud(token, state, _context, log) do
-    ast = Builder.Helpers.literal(token.value)
+    ast = literal_to_ast(token)
     {:ok, ast, state, log}
   end
 
@@ -95,4 +95,10 @@ defmodule ToxicParser.Pratt do
         {:error, diag, state, log}
     end
   end
+
+  defp literal_to_ast(%{kind: :int, value: chars}), do: List.to_integer(chars)
+  defp literal_to_ast(%{kind: :flt, value: chars}), do: List.to_float(chars)
+  defp literal_to_ast(%{kind: :atom, value: atom}), do: atom
+  defp literal_to_ast(%{kind: :string, value: value}), do: value
+  defp literal_to_ast(%{value: value}), do: value
 end
