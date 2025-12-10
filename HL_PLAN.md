@@ -21,15 +21,16 @@ Implement an error-tolerant Elixir parser that integrates with the Toxic streami
 │  └── EOE abstraction (eol/; → logical end-of-expression)            │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Grammar Layer (Recursive Descent)                                   │
-│  ├── Expression families: matched/unmatched/no_parens               │
+│  ├── Expression dispatcher: expr → matched/unmatched/no_parens      │
 │  ├── Containers: list/tuple/map/bitstring                           │
 │  ├── Blocks: do_block/fn/stab/clauses                               │
 │  └── Calls: paren/no-paren/do-block variants                        │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Expression Layer (Pratt Parser)                                     │
 │  ├── Binding powers from yrl precedence table                       │
+│  ├── Scope: matched_expr/unmatched_expr/no_parens_expr + *_op_expr  │
 │  ├── NUD: literals, containers, unary ops, captures                 │
-│  └── LED: binary ops, dot/call, access, do-block attachment         │
+│  └── LED: binary ops, dot/call, access                              │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Event Log & Environment                                             │
 │  ├── Event emission: start_node/end_node/token/error/missing        │
@@ -50,6 +51,7 @@ Implement an error-tolerant Elixir parser that integrates with the Toxic streami
 - Lock event log schema (node kinds, ordering guarantees, `error`/`missing`/`synthetic` payloads) and metadata policy (ranges, delimiters, newlines, synthesized flags).
 - Define AST builder contract and error node shape (`{:__error__, meta, payload}`) plus how builders subscribe to events for AST/CST/outline/environment.
 - Stand up a conformance harness that compares strict-mode AST to `Code.string_to_quoted/2` and exercises tolerant mode on the same cases; wire into CI early.
+- Adopt `NONTERMINALS_GPT.md` as the RD vs Pratt mapping (dispatcher vs core vs helpers) and keep it in sync with implementation/tests.
 
 ### Phase 1: Token Adapter & State
 - Implement state struct (`stream`, `current/peek`, checkpoints, `terminators`, `expression_context`, `fuel`, `opts`, diagnostics).
@@ -65,11 +67,14 @@ Implement an error-tolerant Elixir parser that integrates with the Toxic streami
 ### Phase 3: Pratt Expression Core
 - Finalize binding powers from `yrl` (including dot vs dot-call, access adornment as highest, `do` not treated as Pratt operator).
 - Parselets: NUD (literals, identifiers, unary `@/&/!/^/not/+/-`, containers, `fn`, `...`, nullary `..`, `capture_int`), LED (binary ops, dot/dot-call, access `[]`, `not in` combined operator, `..//` step).
+- Scope Pratt core strictly to `matched_expr`/`unmatched_expr`/`no_parens_expr` and `matched_op_expr`/`unmatched_op_expr`/`no_parens_op_expr`; keep `expr` as an RD dispatcher.
+- Treat `*_op_eol` and `dot_op` as operator helpers: parsed via simple RD rules but used only by Pratt parselets.
 - Honor `dual_op` spacing rules from token shapes; attach do-blocks only via grammar layer (`block_expr`), not inside Pratt loop.
 
 ### Phase 4: Grammar Layer — Expressions
 - Top-level `grammar -> eoe? expr_list eoe?` with centralized EOE handling.
 - Implement matched/unmatched/no_parens families with context threading; include `block_expr` (`dot_do_identifier`, paren + nested paren + do).
+- Implement `expr` as a small RD dispatcher onto the three Pratt contexts, with no precedence logic of its own, matching `NONTERMINALS_GPT.md`.
 - Spell out `no_parens_one/many/one_ambig` rules, arity-based nesting bans, and ambiguity resolution (outer arity 1). Emit warnings analogous to `warn_pipe` and `warn_no_parens_after_do_op`.
 
 ### Phase 5: Calls & Identifiers
