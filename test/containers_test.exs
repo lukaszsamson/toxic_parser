@@ -1,0 +1,36 @@
+defmodule ToxicParser.ContainersTest do
+  use ExUnit.Case, async: true
+
+  alias ToxicParser.{Grammar, TokenAdapter, EventLog}
+
+  test "parses list literals" do
+    state = TokenAdapter.new("[1, 2]")
+    log = EventLog.new()
+
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert ast == [1, 2]
+  end
+
+  test "parses empty list and trailing comma" do
+    state = TokenAdapter.new("[]")
+    log = EventLog.new()
+    assert {:ok, [], _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+
+    state = TokenAdapter.new("[1,]")
+    assert {:ok, [1], _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+  end
+
+  test "parses tuple literals" do
+    state = TokenAdapter.new("{1, 2}")
+    log = EventLog.new()
+
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert ast == {:{}, [], [1, 2]}
+  end
+
+  test "parses empty map" do
+    state = TokenAdapter.new("%{}")
+    log = EventLog.new()
+    assert {:ok, {:%{}, [], []}, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+  end
+end

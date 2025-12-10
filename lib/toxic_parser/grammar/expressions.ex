@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Expressions do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Calls
+  alias ToxicParser.Grammar.{Calls, Containers}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -37,9 +37,18 @@ defmodule ToxicParser.Grammar.Expressions do
   """
   @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr(%State{} = state, ctx, %EventLog{} = log) do
-    case Calls.parse(state, ctx, log) do
-      {:ok, ast, state, log} -> {:ok, ast, state, log}
-      {:error, reason, state, log} -> {:error, reason, state, log}
+    case Containers.parse(state, ctx, log) do
+      {:ok, ast, state, log} ->
+        {:ok, ast, state, log}
+
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
+
+      {:no_container, state} ->
+        case Calls.parse(state, ctx, log) do
+          {:ok, ast, state, log} -> {:ok, ast, state, log}
+          {:error, reason, state, log} -> {:error, reason, state, log}
+        end
     end
   end
 

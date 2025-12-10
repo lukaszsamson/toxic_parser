@@ -58,8 +58,17 @@ defmodule ToxicParser.Pratt do
   defp led(left, state, log, min_bp, context) do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
-        case Precedence.binary(next_token.kind) do
-          {bp, assoc} when bp >= min_bp ->
+        case {next_token.kind, Precedence.binary(next_token.kind)} do
+          {:"[", _} ->
+            {:ok, _open, state} = TokenAdapter.next(state)
+
+            with {:ok, indices, state, log} <- parse_access_indices([], state, context, log),
+                 {:ok, _close, state} <- TokenAdapter.next(state) do
+              combined = Builder.Helpers.access(left, Enum.reverse(indices), [])
+              led(combined, state, log, min_bp, context)
+            end
+
+          {_, {bp, assoc}} when bp >= min_bp ->
             {:ok, _op, state} = TokenAdapter.next(state)
             next_min = if assoc == :right, do: bp, else: bp + 1
 
@@ -101,4 +110,32 @@ defmodule ToxicParser.Pratt do
   defp literal_to_ast(%{kind: :atom, value: atom}), do: atom
   defp literal_to_ast(%{kind: :string, value: value}), do: value
   defp literal_to_ast(%{value: value}), do: value
+
+  defp parse_access_indices(acc, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"]"}, state} ->
+        {:ok, acc, state, log}
+
+      {:ok, _tok, _state} ->
+        with {:ok, expr, state, log} <- parse(state, ctx, log) do
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :","}, state} ->
+              {:ok, _comma, state} = TokenAdapter.next(state)
+              parse_access_indices([expr | acc], state, ctx, log)
+
+            {:ok, %{kind: :"]"}, _} ->
+              parse_access_indices([expr | acc], state, ctx, log)
+
+            _ ->
+              {:error, {:expected_comma_or, :"]"}, state, log}
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
 end
