@@ -11,7 +11,7 @@ defmodule ToxicParser do
     and continues parsing with normalized `:eoe` tokens carrying newline counts.
   """
 
-  alias ToxicParser.{Error, EventLog, Result}
+  alias ToxicParser.{Env, Error, EventLog, Grammar, Position, Result, TokenAdapter}
 
   @type mode :: :strict | :tolerant
 
@@ -29,33 +29,52 @@ defmodule ToxicParser do
 
   @doc """
   Parses a string and returns a `ToxicParser.Result`.
+
+  Phases 8-10 (strings, recovery, comments) are deferred; the public API is
+  wired to the current grammar pipeline and will evolve as later phases land.
   """
   @spec parse_string(String.t(), [option()]) :: {:ok, Result.t()} | {:error, Result.t()}
   def parse_string(source, opts \\ []) when is_binary(source) do
     file = Keyword.get(opts, :file)
     mode = Keyword.get(opts, :mode, :strict)
-    preserve_comments? = Keyword.get(opts, :preserve_comments, false)
+    emit_events? = Keyword.get(opts, :emit_events, false)
+    emit_env? = Keyword.get(opts, :emit_env, false)
+    ctx = Keyword.get(opts, :expression_context, :matched)
 
-    code_opts = to_code_opts(opts)
+    state = TokenAdapter.new(source, opts)
+    log = EventLog.new()
 
-    case Code.string_to_quoted_with_comments(source, code_opts) do
-      {:ok, ast, comments} ->
-        {:ok,
-         %Result{
-           ast: ast,
-           comments: maybe_preserve_comments(comments, preserve_comments?),
-           diagnostics: [],
-           events: EventLog.to_list(EventLog.new()),
-           env: [],
-           mode: mode,
-           file: file,
-           source: source,
-           metadata: %{code_opts: code_opts}
-         }}
+    case Grammar.parse(state, log, ctx) do
+      {:ok, ast, state, log} ->
+        result =
+          build_result(%{
+            ast: ast,
+            mode: mode,
+            file: file,
+            source: source,
+            state: state,
+            log: log,
+            emit_events?: emit_events?,
+            emit_env?: emit_env?
+          })
 
-      {:error, error_tuple} ->
-        diagnostic = Error.from_elixir(error_tuple)
-        result = error_result(mode, file, source, diagnostic)
+        {:ok, result}
+
+      {:error, reason, state, log} ->
+        parser_diag = parser_error(reason, state)
+
+        result =
+          build_result(%{
+            ast: nil,
+            mode: mode,
+            file: file,
+            source: source,
+            state: state,
+            log: log,
+            emit_events?: emit_events?,
+            emit_env?: emit_env?,
+            extra_diagnostics: [parser_diag]
+          })
 
         if mode == :strict, do: {:error, result}, else: {:ok, result}
     end
@@ -77,26 +96,71 @@ defmodule ToxicParser do
   @spec parse(String.t(), [option()]) :: {:ok, Result.t()} | {:error, Result.t()}
   def parse(source, opts \\ []), do: parse_string(source, opts)
 
-  defp to_code_opts(opts) do
-    opts
-    |> Keyword.take([:existing_atoms_only, :token_metadata, :literal_encoder, :file])
-    |> Keyword.put_new(:existing_atoms_only, false)
-  end
+  defp build_result(%{
+         ast: ast,
+         mode: mode,
+         file: file,
+         source: source,
+         state: state,
+         log: log,
+         emit_events?: emit_events?,
+         emit_env?: emit_env?,
+         extra_diagnostics: extra_diagnostics
+       }) do
+    events = if emit_events?, do: EventLog.to_list(log), else: []
+    env = if emit_env?, do: Env.from_events(events), else: []
 
-  defp maybe_preserve_comments(comments, true), do: comments
-  defp maybe_preserve_comments(_comments, false), do: []
-
-  defp error_result(mode, file, source, diagnostic) do
     %Result{
-      ast: nil,
+      ast: ast,
       comments: [],
-      diagnostics: [diagnostic],
-      events: EventLog.to_list(EventLog.new()),
-      env: [],
+      diagnostics: Enum.reverse(state.diagnostics) ++ extra_diagnostics,
+      events: events,
+      env: env,
       mode: mode,
       file: file,
       source: source,
-      metadata: %{source_status: :failed}
+      metadata: %{terminators: state.terminators}
+    }
+  end
+
+  defp build_result(%{
+         ast: ast,
+         mode: mode,
+         file: file,
+         source: source,
+         state: state,
+         log: log,
+         emit_events?: emit_events?,
+         emit_env?: emit_env?
+       }) do
+    events = if emit_events?, do: EventLog.to_list(log), else: []
+    env = if emit_env?, do: Env.from_events(events), else: []
+
+    %Result{
+      ast: ast,
+      comments: [],
+      diagnostics: Enum.reverse(state.diagnostics),
+      events: events,
+      env: env,
+      mode: mode,
+      file: file,
+      source: source,
+      metadata: %{terminators: state.terminators}
+    }
+  end
+
+  defp parser_error(reason, state) do
+    %Error{
+      phase: :parser,
+      reason: reason,
+      token: nil,
+      expected: nil,
+      severity: :error,
+      range: %{
+        start: Position.to_location(1, 1, state.line_index),
+        end: Position.to_location(1, 1, state.line_index)
+      },
+      details: %{source: :grammar}
     }
   end
 end
