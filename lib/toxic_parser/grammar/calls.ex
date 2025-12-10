@@ -8,7 +8,7 @@ defmodule ToxicParser.Grammar.Calls do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Expressions
+  alias ToxicParser.Grammar.{Blocks, Expressions}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -44,9 +44,18 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, %{kind: :"("}, _} ->
         parse_paren_call(tok, state, ctx, log)
 
+      {:ok, next_tok, _} ->
+        if Pratt.bp(next_tok.kind) do
+          state = TokenAdapter.pushback(state, tok)
+          Pratt.parse(state, ctx, log)
+        else
+          ast = Builder.Helpers.literal(tok.value)
+          maybe_do_block(ast, state, ctx, log)
+        end
+
       _ ->
         ast = Builder.Helpers.literal(tok.value)
-        {:ok, ast, state, log}
+        maybe_do_block(ast, state, ctx, log)
     end
   end
 
@@ -56,7 +65,7 @@ defmodule ToxicParser.Grammar.Calls do
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
          {:ok, _close, state} <- expect(state, :")") do
       ast = Builder.Helpers.call(callee_tok.value, Enum.reverse(args))
-      {:ok, ast, state, log}
+      maybe_do_block(ast, state, ctx, log)
     end
   end
 
@@ -82,6 +91,27 @@ defmodule ToxicParser.Grammar.Calls do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
+    end
+  end
+
+  defp maybe_do_block(ast, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :do}, _} ->
+        with {:ok, block_kw, state, log} <- Blocks.parse_do_block(state, ctx, log) do
+          ast =
+            case ast do
+              {name, meta, args} when is_list(args) ->
+                {name, meta, args ++ [block_kw]}
+
+              other ->
+                Builder.Helpers.call(other, [block_kw])
+            end
+
+          {:ok, ast, state, log}
+        end
+
+      _ ->
+        {:ok, ast, state, log}
     end
   end
 

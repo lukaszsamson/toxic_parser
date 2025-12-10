@@ -38,9 +38,10 @@ defmodule ToxicParser.EventLogTest do
       |> EventLog.missing(%{expected: :")"}, meta())
       |> EventLog.synthetic(%{kind: :delimiter, value: :")"}, meta())
       |> EventLog.comment(%{text: "# c", inline?: false}, meta())
+      |> EventLog.env(%{action: :enter_scope, scope: :fn, name: nil}, meta())
 
     kinds = Enum.map(EventLog.to_list(log), fn {kind, _, _} -> kind end)
-    assert kinds == [:token, :error, :missing, :synthetic, :comment]
+    assert kinds == [:token, :error, :missing, :synthetic, :comment, :env]
   end
 
   defp meta do

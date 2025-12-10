@@ -94,6 +94,14 @@ defmodule ToxicParser.EventLog do
           | {:missing, missing_payload(), metadata()}
           | {:synthetic, synthetic_payload(), metadata()}
           | {:comment, comment_payload(), metadata()}
+          | {:env, env_payload(), metadata()}
+
+  @typedoc "Environment event payload (scope/binding notifications)."
+  @type env_payload :: %{
+          action: :enter_scope | :exit_scope | :bind,
+          scope: atom() | nil,
+          name: atom() | nil
+        }
 
   @typedoc "Error payload stored in the event stream."
   @type error_payload :: %{
@@ -162,5 +170,11 @@ defmodule ToxicParser.EventLog do
   @spec comment(t(), comment_payload(), metadata()) :: t()
   def comment(%__MODULE__{} = log, payload, metadata) do
     %{log | events: [{:comment, payload, metadata} | log.events]}
+  end
+
+  @doc "Appends an environment event."
+  @spec env(t(), env_payload(), metadata()) :: t()
+  def env(%__MODULE__{} = log, payload, metadata) do
+    %{log | events: [{:env, payload, metadata} | log.events]}
   end
 end
