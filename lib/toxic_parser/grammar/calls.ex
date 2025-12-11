@@ -374,7 +374,9 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp maybe_do_block(ast, state, ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} ->
+      {:ok, %{kind: :do}, _} when ctx != :matched ->
+        # Only attach do-blocks in non-matched contexts
+        # In :matched context, the do-block belongs to an outer call
         with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
           ast =
             case ast do

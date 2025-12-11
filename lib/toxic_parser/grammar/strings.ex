@@ -14,13 +14,13 @@ defmodule ToxicParser.Grammar.Strings do
           | {:no_string, State.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse(%State{} = state, _ctx, %EventLog{} = log) do
+  def parse(%State{} = state, ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in @string_start ->
-        parse_string(state, log)
+        parse_string(state, ctx, log)
 
       {:ok, %{kind: kind}, _} when kind in @sigil_start ->
-        parse_sigil(state, log)
+        parse_sigil(state, ctx, log)
 
       {:ok, _tok, _} ->
         {:no_string, state}
@@ -33,7 +33,7 @@ defmodule ToxicParser.Grammar.Strings do
     end
   end
 
-  defp parse_string(state, log) do
+  defp parse_string(state, ctx, log) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     target_end = closing_for(start_tok.kind)
     type = string_type(start_tok.kind)
@@ -41,11 +41,13 @@ defmodule ToxicParser.Grammar.Strings do
     with {:ok, fragments, state, log} <- collect_fragments([], state, target_end, log),
          {:ok, _close, state} <- TokenAdapter.next(state) do
       value = build_string_value(Enum.reverse(fragments), type)
-      {:ok, Builder.Helpers.literal(value), state, log}
+      ast = Builder.Helpers.literal(value)
+      # Continue with Pratt's led() to handle trailing operators like =>, +, etc.
+      Pratt.led(ast, state, log, 0, ctx)
     end
   end
 
-  defp parse_sigil(state, log) do
+  defp parse_sigil(state, ctx, log) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     {sigil, _delim} = start_tok.value
 
@@ -54,7 +56,8 @@ defmodule ToxicParser.Grammar.Strings do
       {_close, mods} = end_tok.value
       content = build_string_value(Enum.reverse(fragments), :binary)
       ast = {sigil, [], [content, mods || ""]}
-      {:ok, ast, state, log}
+      # Continue with Pratt's led() to handle trailing operators
+      Pratt.led(ast, state, log, 0, ctx)
     end
   end
 

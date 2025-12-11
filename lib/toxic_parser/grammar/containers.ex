@@ -43,6 +43,33 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
+  @doc """
+  Parse a container without calling Pratt.led at the end.
+  Used when the caller needs to control operator binding (e.g., stab patterns).
+  """
+  @spec parse_container_base(State.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse_container_base(%State{} = state, ctx, %EventLog{} = log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"["}, _} ->
+        parse_list_base(state, ctx, log)
+
+      {:ok, %{kind: :"{", value: _}, _} ->
+        parse_tuple_base(state, ctx, log)
+
+      {:ok, %{kind: :"<<", value: _}, _} ->
+        Bitstrings.parse(state, ctx, log)
+
+      {:eof, state} ->
+        {:no_container, state}
+
+      {:error, _diag, state} ->
+        {:no_container, state}
+
+      _ ->
+        {:no_container, state}
+    end
+  end
+
   # Parse parenthesized expression, empty parens, or stab expression
   # Grammar rules:
   #   access_expr -> open_paren stab_eoe ')'         : build_paren_stab
@@ -504,9 +531,17 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp apply_parens_meta([single_pattern], parens_meta, stab_meta) when parens_meta != [] do
-    # 1 pattern - parens go on the pattern
-    pattern_with_parens = add_parens_to_pattern(single_pattern, parens_meta)
-    {[pattern_with_parens], stab_meta}
+    # 1 pattern - parens go on the pattern if it's a 3-tuple with metadata
+    # For keyword lists (plain lists), parens go on the stab arrow
+    case single_pattern do
+      {_name, meta, _args} when is_list(meta) ->
+        pattern_with_parens = add_parens_to_pattern(single_pattern, parens_meta)
+        {[pattern_with_parens], stab_meta}
+
+      _ ->
+        # Pattern can't hold metadata (e.g., keyword list) - put parens on stab
+        {[single_pattern], parens_meta ++ stab_meta}
+    end
   end
 
   defp apply_parens_meta(patterns, parens_meta, stab_meta) do
@@ -695,9 +730,10 @@ defmodule ToxicParser.Grammar.Containers do
   # Stops before -> and when operators
   defp parse_stab_pattern_expr(state, log) do
     case TokenAdapter.peek(state) do
-      # Container tokens - delegate to container parser, then continue with led
+      # Container tokens - parse container base then continue with led at min_bp=51
+      # Use parse_container_base which doesn't call Pratt.led internally
       {:ok, %{kind: kind}, _} when kind in [:"{", :"[", :"<<"] ->
-        with {:ok, ast, state, log} <- parse(state, :matched, log) do
+        with {:ok, ast, state, log} <- parse_container_base(state, :matched, log) do
           # Continue with led to handle trailing operators, but stop at -> and when
           # min_bp > when_op (50) to stop before when, and -> has bp of 10
           Pratt.led(ast, state, log, 51, :matched)
@@ -974,6 +1010,14 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_list(state, ctx, log) do
+    with {:ok, ast, state, log} <- parse_list_base(state, ctx, log) do
+      # Continue with Pratt's led() to handle trailing operators
+      Pratt.led(ast, state, log, 0, ctx)
+    end
+  end
+
+  # Parse list without calling Pratt.led - used when caller controls led binding
+  defp parse_list_base(state, ctx, log) do
     {:ok, _open, state} = TokenAdapter.next(state)
 
     # Skip leading EOE
@@ -986,7 +1030,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, [], state, log}
 
       {:ok, _, _} ->
-        parse_list_elements([], state, ctx, log)
+        parse_list_elements_base([], state, ctx, log)
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}
@@ -1008,7 +1052,9 @@ defmodule ToxicParser.Grammar.Containers do
             {state, _newlines} = skip_eoe_count_newlines(state, 0)
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"]"}, state} ->
-                {:ok, Enum.reverse(acc) ++ kw_list, state, log}
+                ast = Enum.reverse(acc) ++ kw_list
+                # Continue with Pratt's led() to handle trailing operators
+                Pratt.led(ast, state, log, 0, ctx)
 
               {:ok, tok, state} ->
                 {:error, {:expected, :"]", got: tok.kind}, state, log}
@@ -1046,10 +1092,80 @@ defmodule ToxicParser.Grammar.Containers do
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
               {:ok, _close, state} = TokenAdapter.next(state)
-              {:ok, Enum.reverse([expr | acc]), state, log}
+              ast = Enum.reverse([expr | acc])
+              # Continue with Pratt's led() to handle trailing operators
+              Pratt.led(ast, state, log, 0, ctx)
 
             _ ->
               parse_list_elements([expr | acc], state, ctx, log)
+          end
+
+        {:ok, %{kind: :"]"}, _} ->
+          {:ok, _close, state} = TokenAdapter.next(state)
+          ast = Enum.reverse([expr | acc])
+          # Continue with Pratt's led() to handle trailing operators
+          Pratt.led(ast, state, log, 0, ctx)
+
+        {:ok, tok, state} ->
+          {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state, log}
+
+        {:error, diag, state} ->
+          {:error, diag, state, log}
+      end
+    end
+  end
+
+  # Parse list elements without calling Pratt.led - used when caller controls led binding
+  defp parse_list_elements_base(acc, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+            {state, _newlines} = skip_eoe_count_newlines(state, 0)
+            case TokenAdapter.next(state) do
+              {:ok, %{kind: :"]"}, state} ->
+                {:ok, Enum.reverse(acc) ++ kw_list, state, log}
+
+              {:ok, tok, state} ->
+                {:error, {:expected, :"]", got: tok.kind}, state, log}
+
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+          end
+        else
+          parse_list_element_base(acc, state, ctx, log)
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp parse_list_element_base(acc, state, ctx, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"]"}, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              {:ok, Enum.reverse([expr | acc]), state, log}
+
+            _ ->
+              parse_list_elements_base([expr | acc], state, ctx, log)
           end
 
         {:ok, %{kind: :"]"}, _} ->
@@ -1069,6 +1185,14 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_tuple(state, ctx, log) do
+    with {:ok, ast, state, log} <- parse_tuple_base(state, ctx, log) do
+      # Continue with Pratt's led() to handle trailing operators like <-, =, etc.
+      Pratt.led(ast, state, log, 0, ctx)
+    end
+  end
+
+  # Parse tuple without calling Pratt.led - used when caller controls led binding
+  defp parse_tuple_base(state, ctx, log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 

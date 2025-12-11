@@ -132,6 +132,13 @@ defmodule ToxicParser.Pratt do
       :capture_int ->
         parse_capture_int(token, state, log)
 
+      # Container tokens need to be handled by Containers.parse
+      kind when kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Containers
+        # Containers.parse will call led after parsing the container
+        Containers.parse(state, context, log)
+
       _ ->
         case Precedence.unary(token.kind) do
           {bp, _assoc} ->
@@ -385,13 +392,31 @@ defmodule ToxicParser.Pratt do
   # we need special handling but must preserve min_bp for associativity
   defp parse_rhs(token, state, context, log, min_bp) do
     # Check if this is an identifier that could be a call with arguments
-    if Identifiers.classify(token.kind) != :other do
-      # Handle identifier specially to preserve min_bp
-      parse_rhs_identifier(token, state, context, log, min_bp)
-    else
-      with {:ok, right, state, log} <- nud(token, state, context, log) do
-        led(right, state, log, min_bp, context)
-      end
+    cond do
+      Identifiers.classify(token.kind) != :other ->
+        # Handle identifier specially to preserve min_bp
+        parse_rhs_identifier(token, state, context, log, min_bp)
+
+      # Container tokens need Expressions.expr to handle them properly
+      token.kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Expressions
+        with {:ok, right, state, log} <- Expressions.expr(state, context, log) do
+          led(right, state, log, min_bp, context)
+        end
+
+      # String tokens need Expressions.expr to handle them properly
+      token.kind in [:bin_string_start, :list_string_start, :bin_heredoc_start, :list_heredoc_start, :sigil_start] ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Expressions
+        with {:ok, right, state, log} <- Expressions.expr(state, context, log) do
+          led(right, state, log, min_bp, context)
+        end
+
+      true ->
+        with {:ok, right, state, log} <- nud(token, state, context, log) do
+          led(right, state, log, min_bp, context)
+        end
     end
   end
 

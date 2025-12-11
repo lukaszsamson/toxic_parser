@@ -1,11 +1,16 @@
 defmodule ToxicParser.Grammar.Blocks do
   @moduledoc """
-  Block parsing for `fn`, `case`/`cond`/`with`/`try`/`receive` and `do` blocks
-  with clause/guard support and basic environment events.
+  Block parsing for `fn` and `do` blocks with clause/guard support and basic
+  environment events.
+
+  Note: Keywords like `case`, `cond`, `with`, `try`, `receive`, `for` are NOT
+  handled here - they are normal function calls with do-blocks and are parsed
+  by Calls.parse. Only `fn` needs special handling because it has unique syntax
+  (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Containers, Expressions}
+  alias ToxicParser.Grammar.Containers
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -13,19 +18,17 @@ defmodule ToxicParser.Grammar.Blocks do
           | {:no_block, State.t()}
 
   @doc """
-  Entry point for block constructs that start with reserved words (`fn`,
-  `case`, `cond`, `with`, `try`, `receive`).
+  Entry point for block constructs. Only `fn` needs special handling here
+  because it has unique syntax (fn -> ... end with stab clauses directly).
+
+  Other block keywords like `case`, `cond`, `with`, `try`, `receive`, `for`
+  are just normal function calls with do-blocks and are handled by Calls.parse.
   """
   @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :fn} = tok, _} ->
         parse_fn(tok, state, ctx, log)
-
-      {:ok, %{kind: kind, value: value} = tok, _}
-      when kind in [:identifier, :do_identifier, :block_identifier] and
-             value in [:case, :cond, :with, :try, :receive, :for] ->
-        parse_keyword_block(value, tok, state, ctx, log)
 
       {:eof, state} ->
         {:no_block, state}
@@ -68,57 +71,6 @@ defmodule ToxicParser.Grammar.Blocks do
 
       _ ->
         {state, count}
-    end
-  end
-
-  defp parse_keyword_block(kind, kw_tok, state, ctx, log) do
-    {:ok, _kw, state} = TokenAdapter.next(state)
-    log = enter_scope(log, kind, kw_tok.metadata)
-
-    # Parse subject in :matched context so it doesn't consume the do-block
-    # that belongs to the case/with/for expression
-    subject_result =
-      case kind do
-        :cond -> {:ok, nil, state, log}
-        :try -> {:ok, nil, state, log}
-        :receive -> {:ok, nil, state, log}
-        _ -> Pratt.parse(state, :matched, log)
-      end
-
-    kw_meta = Builder.Helpers.token_meta(kw_tok.metadata)
-
-    case kind do
-      :for ->
-        with {:ok, qualifiers, state, log} <- parse_for_qualifiers([], state, ctx, log),
-             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
-          # Attach do/end meta to the call, then line/column
-          ast = {:for, block_meta ++ kw_meta, Enum.reverse(qualifiers) ++ [sections]}
-          log = exit_scope(log, kind, kw_tok.metadata)
-          {:ok, ast, state, log}
-        end
-
-      :with ->
-        with {:ok, qualifiers, state, log} <- parse_with_qualifiers([], state, ctx, log),
-             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
-          ast = {:with, block_meta ++ kw_meta, Enum.reverse(qualifiers) ++ [sections]}
-          log = exit_scope(log, kind, kw_tok.metadata)
-          {:ok, ast, state, log}
-        end
-
-      _ ->
-        with {:ok, subject, state, log} <- subject_result,
-             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
-          ast =
-            case kind do
-              :case -> {:case, block_meta ++ kw_meta, [subject, sections]}
-              :cond -> {:cond, block_meta ++ kw_meta, [sections]}
-              :try -> {:try, block_meta ++ kw_meta, [sections]}
-              :receive -> {:receive, block_meta ++ kw_meta, [sections]}
-            end
-
-          log = exit_scope(log, kind, kw_tok.metadata)
-          {:ok, ast, state, log}
-        end
     end
   end
 
@@ -194,82 +146,6 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp parse_with_qualifiers(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} ->
-        {:ok, acc, state, log}
-
-      {:ok, %{kind: :eoe}, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        parse_with_qualifiers(acc, state, ctx, log)
-
-      {:ok, _tok, _} ->
-        with {:ok, qualifier, state, log} <- parse_qualifier(state, ctx, log),
-             state <- consume_optional_comma(state) do
-          parse_with_qualifiers([qualifier | acc], state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_for_qualifiers(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} ->
-        {:ok, acc, state, log}
-
-      {:ok, %{kind: :eoe}, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        parse_for_qualifiers(acc, state, ctx, log)
-
-      {:ok, _tok, _} ->
-        with {:ok, qualifier, state, log} <- parse_for_qualifier(state, ctx, log),
-             state <- consume_optional_comma(state) do
-          parse_for_qualifiers([qualifier | acc], state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_for_qualifier(state, ctx, log) do
-    with {:ok, left, state, log} <- Expressions.expr(state, ctx, log) do
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :in_match_op}, _} ->
-          {:ok, _op, state} = TokenAdapter.next(state)
-          with {:ok, rhs, state, log} <- Expressions.expr(state, ctx, log) do
-            {:ok, { :<-, [], [left, rhs]}, state, log}
-          end
-
-        _ ->
-          {:ok, left, state, log}
-      end
-    end
-  end
-
-  defp parse_qualifier(state, ctx, log) do
-    with {:ok, left, state, log} <- Pratt.parse(state, ctx, log) do
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :in_match_op}, _} ->
-          {:ok, _op, state} = TokenAdapter.next(state)
-          with {:ok, rhs, state, log} <- Pratt.parse(state, ctx, log) do
-            {:ok, { :<-, [], [left, rhs]}, state, log}
-          end
-
-        _ ->
-          {:ok, left, state, log}
-      end
-    end
-  end
-
   defp parse_section_items(acc, state, ctx, log, stop_kinds) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
@@ -300,10 +176,12 @@ defmodule ToxicParser.Grammar.Blocks do
       {:no_clause, state, log} ->
         # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
         # as a binary operator. The -> belongs to the clause parser.
-        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11),
-             state <- consume_optional_eoe(state) do
+        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
+          # Annotate with end_of_expression if followed by EOE
+          {transformed, state} = maybe_annotate_and_consume_eoe(expr, state)
+
           transformed =
-            case expr do
+            case transformed do
               {:stab_op, _, [lhs, rhs]} -> {:->, [], [List.wrap(lhs), rhs]}
               other -> other
             end
@@ -347,27 +225,48 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp consume_optional_eoe(state) do
+  # Annotate expression with end_of_expression metadata if followed by EOE, then consume it
+  defp maybe_annotate_and_consume_eoe(expr, state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, state} ->
+      {:ok, %{kind: :eoe} = eoe_tok, _} ->
         {:ok, _tok, state} = TokenAdapter.next(state)
-        state
+        eoe_meta = build_eoe_meta(eoe_tok)
+        annotated = annotate_eoe(expr, eoe_meta)
+        {annotated, state}
 
       _ ->
-        state
+        {expr, state}
     end
   end
 
-  defp consume_optional_comma(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        state
-
+  # Build end_of_expression metadata from an EOE token
+  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
+       when is_integer(newlines) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [newlines: newlines, line: line, column: column]
       _ ->
-        state
+        []
     end
   end
+
+  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [line: line, column: column]
+      _ ->
+        []
+    end
+  end
+
+  defp build_eoe_meta(_), do: []
+
+  # Annotate an AST node with end_of_expression metadata
+  defp annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
+    {left, [{:end_of_expression, eoe_meta} | meta], right}
+  end
+
+  defp annotate_eoe(ast, _eoe_meta), do: ast
 
   defp build_block([single]), do: single
   defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
