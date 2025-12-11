@@ -51,6 +51,13 @@ defmodule ToxicParser.Grammar.Calls do
           kind == :op_identifier ->
             parse_op_identifier_call(tok, state, ctx, log)
 
+          # do_identifier in matched context: this identifier precedes a do-block
+          # but the do-block belongs to an outer call, not this identifier.
+          # Just return the bare identifier.
+          kind == :do_identifier and ctx == :matched ->
+            ast = Builder.Helpers.from_token(tok)
+            {:ok, ast, state, log}
+
           # Binary operator follows - let Pratt handle expression
           Pratt.bp(next_tok.kind) ->
             state = TokenAdapter.pushback(state, tok)
@@ -60,12 +67,13 @@ defmodule ToxicParser.Grammar.Calls do
           can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call(tok, state, ctx, log)
 
-          # Just a bare identifier
+          # Just a bare identifier - may have trailing do-block
           true ->
             ast = Builder.Helpers.from_token(tok)
             maybe_do_block(ast, state, ctx, log)
         end
 
+      # No next token or at terminator - check for do-block
       _ ->
         ast = Builder.Helpers.from_token(tok)
         maybe_do_block(ast, state, ctx, log)
@@ -93,6 +101,7 @@ defmodule ToxicParser.Grammar.Calls do
       :atom,
       :string,
       :identifier,
+      :do_identifier,
       :alias,
       true,
       false,
@@ -145,7 +154,9 @@ defmodule ToxicParser.Grammar.Calls do
             end
 
           true ->
-            with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+            # Parse args in :matched context to prevent do-block attachment to arguments.
+            # The do-block belongs to the outer call, not to individual args.
+            with {:ok, arg, state, log} <- Expressions.expr(state, :matched, log) do
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, state} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)

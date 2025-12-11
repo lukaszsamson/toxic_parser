@@ -234,51 +234,66 @@ defmodule ToxicParser.Pratt do
             {:ok, dot_tok, state} = TokenAdapter.next(state)
             dot_meta = build_meta(dot_tok.metadata)
 
-            with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
-              combined =
-                case rhs do
-                  # Simple identifier: {member_atom, member_meta}
-                  # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
-                  {member, member_meta} when is_atom(member) ->
-                    {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+            # Check for dot_container: expr.{...}
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"{"}, _} ->
+                {:ok, _open, state} = TokenAdapter.next(state)
 
-                  # Alias on RHS - build combined __aliases__ (dot_alias rule)
-                  # Must come before the general {name, meta, args} pattern
-                  {:__aliases__, rhs_meta, [rhs_alias]} ->
-                    build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
-
-                  # Call with args: {name, meta, args}
-                  {name, meta, args} when is_list(args) ->
-                    {{:., dot_meta, [left, name]}, meta, args}
-
-                  # Other AST node
-                  other ->
-                    {:., dot_meta, [left, other]}
+                with {:ok, args, newlines, close_meta, state, log} <- parse_dot_container_args(state, context, log) do
+                  # Build: {{:., dot_meta, [left, :{}]}, [newlines: n, closing: close_meta] ++ dot_meta, args}
+                  # Only add newlines to metadata if > 0
+                  newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+                  combined = {{:., dot_meta, [left, :{}]}, newlines_meta ++ [closing: close_meta] ++ dot_meta, args}
+                  led(combined, state, log, min_bp, context)
                 end
 
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :"("}, _} ->
-                  {:ok, _open, state} = TokenAdapter.next(state)
-                  {:ok, args, state, log} = ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log)
-                  {:ok, _close, state} = ToxicParser.Grammar.CallsPrivate.expect(state, :")")
-                  # When followed by parens, convert to call form
-                  combined = dot_to_call(combined, args)
-                  led(combined, state, log, min_bp, context)
+              _ ->
+                with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+                  combined =
+                    case rhs do
+                      # Simple identifier: {member_atom, member_meta}
+                      # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
+                      {member, member_meta} when is_atom(member) ->
+                        {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
 
-                {:ok, next_tok, _} ->
-                  # Check for no-parens call argument after dot expression
-                  if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
-                    with {:ok, args, state, log} <- Calls.parse_no_parens_args([], state, context, log) do
-                      combined = dot_to_no_parens_call(combined, args)
-                      led(combined, state, log, min_bp, context)
+                      # Alias on RHS - build combined __aliases__ (dot_alias rule)
+                      # Must come before the general {name, meta, args} pattern
+                      {:__aliases__, rhs_meta, [rhs_alias]} ->
+                        build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
+                      # Call with args: {name, meta, args}
+                      {name, meta, args} when is_list(args) ->
+                        {{:., dot_meta, [left, name]}, meta, args}
+
+                      # Other AST node
+                      other ->
+                        {:., dot_meta, [left, other]}
                     end
-                  else
-                    led(combined, state, log, min_bp, context)
-                  end
 
-                _ ->
-                  led(combined, state, log, min_bp, context)
-              end
+                  case TokenAdapter.peek(state) do
+                    {:ok, %{kind: :"("}, _} ->
+                      {:ok, _open, state} = TokenAdapter.next(state)
+                      {:ok, args, state, log} = ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log)
+                      {:ok, _close, state} = ToxicParser.Grammar.CallsPrivate.expect(state, :")")
+                      # When followed by parens, convert to call form
+                      combined = dot_to_call(combined, args)
+                      led(combined, state, log, min_bp, context)
+
+                    {:ok, next_tok, _} ->
+                      # Check for no-parens call argument after dot expression
+                      if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+                        with {:ok, args, state, log} <- Calls.parse_no_parens_args([], state, context, log) do
+                          combined = dot_to_no_parens_call(combined, args)
+                          led(combined, state, log, min_bp, context)
+                        end
+                      else
+                        led(combined, state, log, min_bp, context)
+                      end
+
+                    _ ->
+                      led(combined, state, log, min_bp, context)
+                  end
+                end
             end
 
           {:"[", _} ->
@@ -386,6 +401,95 @@ defmodule ToxicParser.Pratt do
   defp build_dot_alias(left_expr, rhs_alias, rhs_meta, dot_meta) do
     last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
     {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}
+  end
+
+  # Parse container args for dot_container: expr.{A, B, ...}
+  # Returns {:ok, args, newlines, close_meta, state, log}
+  defp parse_dot_container_args(state, ctx, log) do
+    # Skip leading EOE and count newlines
+    {state, newlines} = skip_eoe_count_newlines(state, 0)
+
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"}"} = close_tok, _} ->
+        {:ok, _close, state} = TokenAdapter.next(state)
+        close_meta = build_meta(close_tok.metadata)
+        {:ok, [], newlines, close_meta, state, log}
+
+      {:ok, _, _} ->
+        with {:ok, args, state, log} <- parse_dot_container_args_loop([], state, ctx, log) do
+          # Skip trailing EOE before close
+          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+          total_newlines = newlines + trailing_newlines
+
+          case TokenAdapter.next(state) do
+            {:ok, %{kind: :"}"} = close_tok, state} ->
+              close_meta = build_meta(close_tok.metadata)
+              {:ok, args, total_newlines, close_meta, state, log}
+
+            {:ok, other, state} ->
+              {:error, {:expected, :"}", got: other.kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp parse_dot_container_args_loop(acc, state, ctx, log) do
+    alias ToxicParser.Grammar.Expressions
+
+    # container_args in elixir_parser.yrl allows unmatched_expr
+    # Use :unmatched context to allow do-blocks inside container
+    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          # After comma, check if we hit EOE or closing brace (trailing comma case)
+          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"}"}, _} ->
+              # Trailing comma - stop here
+              {:ok, acc ++ [expr], state, log}
+
+            {:ok, tok, _} ->
+              # Check if this is keyword data (e.g., foo: x)
+              if Keywords.starts_kw?(tok) do
+                with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                  {:ok, acc ++ [expr, kw_list], state, log}
+                end
+              else
+                parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
+              end
+
+            _ ->
+              parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
+          end
+
+        _ ->
+          {:ok, acc ++ [expr], state, log}
+      end
+    end
+  end
+
+  defp skip_eoe_count_newlines(state, count) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_count_newlines(state, count + n)
+
+      _ ->
+        {state, count}
+    end
   end
 
   # Helper to parse RHS of binary operator
