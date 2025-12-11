@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Containers do
   """
 
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Expressions
+  alias ToxicParser.Grammar.{Expressions, Maps}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -21,7 +21,10 @@ defmodule ToxicParser.Grammar.Containers do
         parse_tuple(state, ctx, log)
 
       {:ok, %{kind: :%{}}, _} ->
-        parse_map(state, ctx, log)
+        Maps.parse_map(state, ctx, log)
+
+      {:ok, %{kind: :"%"}, _} ->
+        Maps.parse_map(state, ctx, log)
 
       {:eof, state} ->
         {:no_container, state}
@@ -56,24 +59,6 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_map(state, ctx, log) do
-    {:ok, _open, state} = TokenAdapter.next(state)
-
-    state =
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :"{"}, _} ->
-          {:ok, _brace, state} = TokenAdapter.next(state)
-          state
-
-        _ ->
-          state
-      end
-
-    with {:ok, pairs, state, log} <- parse_map_pairs([], state, ctx, log) do
-      {:ok, {:%{}, [], Enum.reverse(pairs)}, state, log}
-    end
-  end
-
   defp parse_elements(acc, terminator, state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: ^terminator}, state} ->
@@ -100,45 +85,6 @@ defmodule ToxicParser.Grammar.Containers do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  defp parse_map_pairs(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"}"}, state} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        {:ok, acc, state, log}
-
-      {:eof, state} ->
-        {:ok, acc, state, log}
-
-      {:ok, _tok, _} ->
-        with {:ok, key, state, log} <- Expressions.expr(state, ctx, log),
-             {:ok, _sep, state} <- expect_separator(state),
-             {:ok, value, state, log} <- Expressions.expr(state, ctx, log) do
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, state} ->
-              {:ok, _comma, state} = TokenAdapter.next(state)
-              parse_map_pairs([{key, value} | acc], state, ctx, log)
-
-            {:ok, %{kind: :"}"}, _} ->
-              parse_map_pairs([{key, value} | acc], state, ctx, log)
-
-            _ ->
-              {:error, {:expected_comma_or, :"}"}, state, log}
-          end
-        end
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp expect_separator(state) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: :"=>", value: _}, state} -> {:ok, :"=>", state}
-      {:ok, %{kind: :":", value: _}, state} -> {:ok, :":", state}
-      other -> other
     end
   end
 end

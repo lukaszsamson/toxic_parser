@@ -31,6 +31,27 @@ defmodule ToxicParser.ContainersTest do
   test "parses empty map" do
     state = TokenAdapter.new("%{}")
     log = EventLog.new()
-    assert {:ok, {:%{}, [], []}, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "%{}"
+  end
+
+  test "parses map updates and struct variants" do
+    log = EventLog.new()
+
+    state = TokenAdapter.new("%{map | a: 1}")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "%{map | a: 1}"
+
+    state = TokenAdapter.new("%{map | :a => 1}")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "%{map | a: 1}"
+
+    state = TokenAdapter.new("%Foo{a: 1}")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "%Foo{a: 1}"
+
+    state = TokenAdapter.new("%Foo{struct | a: 1}")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) in ["%Foo{struct | a: 1}", "%Foo{struct | [a: 1]}"]
   end
 end
