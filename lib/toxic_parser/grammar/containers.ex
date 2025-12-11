@@ -444,7 +444,12 @@ defmodule ToxicParser.Grammar.Containers do
         stab_meta = if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
         with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
-          clause = {:->, parens_meta ++ stab_meta, [patterns, body]}
+          # Parens placement rules:
+          # - 0 patterns (empty ()): parens go on stab arrow
+          # - 1 pattern: parens go on the single pattern
+          # - 2+ patterns: parens go on stab arrow
+          {final_patterns, final_stab_meta} = apply_parens_meta(patterns, parens_meta, stab_meta)
+          clause = {:->, final_stab_meta, [final_patterns, body]}
           {:ok, clause, state, log}
         end
 
@@ -464,9 +469,11 @@ defmodule ToxicParser.Grammar.Containers do
               stab_meta = if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
               with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
+                # Apply parens meta before wrapping with guard
+                {final_patterns, final_stab_meta} = apply_parens_meta(patterns, parens_meta, stab_meta)
                 # Wrap patterns with guard in a when clause
-                patterns_with_guard = unwrap_when(patterns, guard, when_meta)
-                clause = {:->, parens_meta ++ stab_meta, [patterns_with_guard, body]}
+                patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
+                clause = {:->, final_stab_meta, [patterns_with_guard, body]}
                 {:ok, clause, state, log}
               end
 
@@ -486,6 +493,33 @@ defmodule ToxicParser.Grammar.Containers do
         {:not_stab, state, log}
     end
   end
+
+  # Apply parens metadata according to Elixir rules:
+  # - 0 patterns: parens go on stab arrow
+  # - 1 pattern: parens go on the single pattern
+  # - 2+ patterns: parens go on stab arrow
+  defp apply_parens_meta([], parens_meta, stab_meta) do
+    # 0 patterns - parens on stab
+    {[], parens_meta ++ stab_meta}
+  end
+
+  defp apply_parens_meta([single_pattern], parens_meta, stab_meta) when parens_meta != [] do
+    # 1 pattern - parens go on the pattern
+    pattern_with_parens = add_parens_to_pattern(single_pattern, parens_meta)
+    {[pattern_with_parens], stab_meta}
+  end
+
+  defp apply_parens_meta(patterns, parens_meta, stab_meta) do
+    # 2+ patterns or no parens_meta - parens on stab
+    {patterns, parens_meta ++ stab_meta}
+  end
+
+  # Add parens metadata to a pattern
+  defp add_parens_to_pattern({name, meta, args}, parens_meta) when is_list(meta) do
+    {name, parens_meta ++ meta, args}
+  end
+
+  defp add_parens_to_pattern(other, _parens_meta), do: other
 
   # Unwrap when: combine patterns with guard
   defp unwrap_when(patterns, guard, when_meta) do
@@ -701,8 +735,16 @@ defmodule ToxicParser.Grammar.Containers do
         # Empty body at EOE - return nil
         {:ok, nil, state, log}
 
+      # For :end terminator, also stop at block identifiers (after, else, catch, rescue)
+      {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
+        {:ok, nil, state, log}
+
       {:ok, _, _} ->
-        Expressions.expr(state, ctx, log)
+        with {:ok, body, state, log} <- Expressions.expr(state, ctx, log) do
+          # Annotate with end_of_expression if followed by EOE
+          body = maybe_annotate_stab_body_eoe(body, state)
+          {:ok, body, state, log}
+        end
 
       {:eof, state} ->
         {:ok, nil, state, log}
@@ -711,6 +753,47 @@ defmodule ToxicParser.Grammar.Containers do
         {:error, diag, state, log}
     end
   end
+
+  # Annotate stab body with end_of_expression metadata if followed by EOE
+  defp maybe_annotate_stab_body_eoe(body, state) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe} = eoe_tok, _} ->
+        eoe_meta = build_eoe_meta(eoe_tok)
+        annotate_body_eoe(body, eoe_meta)
+
+      _ ->
+        body
+    end
+  end
+
+  # Build end_of_expression metadata from EOE token
+  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
+       when is_integer(newlines) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [newlines: newlines, line: line, column: column]
+      _ ->
+        []
+    end
+  end
+
+  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [line: line, column: column]
+      _ ->
+        []
+    end
+  end
+
+  defp build_eoe_meta(_), do: []
+
+  # Annotate an AST node with end_of_expression metadata
+  defp annotate_body_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
+    {left, [{:end_of_expression, eoe_meta} | meta], right}
+  end
+
+  defp annotate_body_eoe(body, _eoe_meta), do: body
 
   # Parse remaining stab clauses after the first one
   defp parse_remaining_stab_clauses(acc, state, ctx, log) do

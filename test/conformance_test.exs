@@ -1537,6 +1537,95 @@ defmodule ToxicParser.ConformanceTest do
   end
 
   describe "unmatched_expr - block_expr" do
+    test "dot_call_identifier call_args_parens do_block" do
+      assert_conforms("foo.() do\n:ok\nend")
+      assert_conforms("foo() do\n:ok\nend")
+      assert_conforms("foo.bar() do\n:ok\nend")
+    end
+
+    test "dot_call_identifier call_args_parens call_args_parens do_block" do
+      assert_conforms("foo.()() do\n:ok\nend")
+      assert_conforms("foo()() do\n:ok\nend")
+      assert_conforms("foo.bar()() do\n:ok\nend")
+    end
+
+    test "dot_do_identifier do_block" do
+      assert_conforms("foo do\n:ok\nend")
+      assert_conforms("foo.bar do\n:ok\nend")
+    end
+
+    test "dot_op_identifier call_args_no_parens_all do_block" do
+      # TODO is it correct?
+      assert_conforms("foo -1 do\n:ok\nend")
+      assert_conforms("foo.bar -1 do\n:ok\nend")
+    end
+
+    test "dot_identifier call_args_no_parens_all do_block" do
+      assert_conforms("foo abc do\n:ok\nend")
+      assert_conforms("foo.bar abc do\n:ok\nend")
+
+      assert_conforms("foo abc, a: b do\n:ok\nend")
+      assert_conforms("foo.bar abc, a: b do\n:ok\nend")
+    end
+
+    test "do_block empty" do
+      # do_block -> do_eoe 'end'
+      assert_conforms("foo do end")
+      assert_conforms("foo do;end")
+      assert_conforms("foo do\nend")
+      assert_conforms("foo do\n;end")
+    end
+
+    test "do_block stab_eoe" do
+      # do_block -> do_eoe stab_eoe 'end'
+
+    end
+
+    test "do_block block_list" do
+      # do_block -> do_eoe block_list 'end'
+      # block_list -> block_item
+      # block_list -> block_item block_list
+      # block_item -> block_eoe stab_eoe
+      # block_item -> block_eoe
+      # block_eoe -> block_identifier
+      # block_eoe -> block_identifier eoe
+      assert_conforms("foo do after end")
+      assert_conforms("foo do else end")
+      assert_conforms("foo do catch end")
+      assert_conforms("foo do rescue end")
+
+      assert_conforms("foo do after end")
+      assert_conforms("foo do;after;end")
+      assert_conforms("foo do\nafter\nend")
+      assert_conforms("foo do\n;after\n;end")
+
+      assert_conforms("foo do after else end")
+
+      assert_conforms("foo do after bar() end")
+      assert_conforms("foo do after bar 1, 2, 3 end")
+      assert_conforms("foo do after bar do\n:ok\nend end")
+
+      assert_conforms("foo do after end")
+      assert_conforms("foo do after -> end")
+      assert_conforms("foo do after -> bar() end")
+      assert_conforms("foo do after bar() -> end")
+      assert_conforms("foo do after (a) -> bar 1, 2, 3 end")
+      assert_conforms("foo do after (a) when x -> bar do\n:ok\nend end")
+    end
+
+    test "do_block stab_eoe block_list" do
+      # do_block -> do_eoe stab_eoe block_list 'end'
+      assert_conforms("foo do x after end")
+      assert_conforms("foo do x 1, 2, 3 after end")
+      assert_conforms("foo do x do\n:ok\nend after end")
+      assert_conforms("foo do -> after end")
+      assert_conforms("foo do bar -> after end")
+      assert_conforms("foo do -> bar after end")
+      assert_conforms("foo do (bar) -> baz after end")
+      assert_conforms("foo do (bar) -> baz after end")
+      assert_conforms("foo do (bar) when x -> baz after end")
+    end
+
     test "do/end blocks" do
       # unmatched_expr -> block_expr : '$1'.
       # block_expr -> dot_do_identifier do_block

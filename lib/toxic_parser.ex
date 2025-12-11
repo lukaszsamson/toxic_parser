@@ -39,7 +39,8 @@ defmodule ToxicParser do
     mode = Keyword.get(opts, :mode, :strict)
     emit_events? = Keyword.get(opts, :emit_events, false)
     emit_env? = Keyword.get(opts, :emit_env, false)
-    ctx = Keyword.get(opts, :expression_context, :matched)
+    # Top-level uses :unmatched context to allow block expressions like `foo do :ok end`
+    ctx = Keyword.get(opts, :expression_context, :unmatched)
 
     state = TokenAdapter.new(source, opts)
     log = EventLog.new()

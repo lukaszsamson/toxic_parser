@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Blocks do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Expressions
+  alias ToxicParser.Grammar.{Containers, Expressions}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -75,12 +75,14 @@ defmodule ToxicParser.Grammar.Blocks do
     {:ok, _kw, state} = TokenAdapter.next(state)
     log = enter_scope(log, kind, kw_tok.metadata)
 
+    # Parse subject in :matched context so it doesn't consume the do-block
+    # that belongs to the case/with/for expression
     subject_result =
       case kind do
         :cond -> {:ok, nil, state, log}
         :try -> {:ok, nil, state, log}
         :receive -> {:ok, nil, state, log}
-        _ -> Pratt.parse(state, ctx, log)
+        _ -> Pratt.parse(state, :matched, log)
       end
 
     kw_meta = Builder.Helpers.token_meta(kw_tok.metadata)
@@ -296,7 +298,9 @@ defmodule ToxicParser.Grammar.Blocks do
         parse_section_items([clause | acc], state, ctx, log, stop_kinds)
 
       {:no_clause, state, log} ->
-        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log),
+        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
+        # as a binary operator. The -> belongs to the clause parser.
+        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11),
              state <- consume_optional_eoe(state) do
           transformed =
             case expr do
@@ -306,168 +310,32 @@ defmodule ToxicParser.Grammar.Blocks do
 
           parse_section_items([transformed | acc], state, ctx, log, stop_kinds)
         end
-
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
     end
   end
 
-  defp try_parse_clause(state, ctx, log, stop_kinds) do
+  defp try_parse_clause(state, ctx, log, _stop_kinds) do
+    # Use Containers.try_parse_stab_clause which properly handles:
+    # - stab_parens_many: (a) -> body, (a, b) -> body, () -> body
+    # - stab pattern expressions: a -> body, a, b -> body
+    # - guards: a when g -> body
+    # Use :end as terminator since block sections end at :end or :block_identifier
+    # Checkpoint so we can rewind if not a stab clause
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-    case parse_clause(checkpoint_state, ctx, log, stop_kinds) do
-      {:ok, clause, new_state, log} ->
-        {:ok, clause, new_state, log}
+    case Containers.try_parse_stab_clause(checkpoint_state, ctx, log, :end) do
+      {:ok, clause, state, log} ->
+        {:ok, clause, state, log}
 
-      {:error, {:expected, :stab_op, _}, _state, _log} ->
+      {:not_stab, _state, log} ->
+        # Rewind to before we tried to parse stab
         {:no_clause, TokenAdapter.rewind(checkpoint_state, ref), log}
 
-      {:error, :unexpected_eof, _state, _log} ->
+      {:error, _reason, _state, log} ->
+        # Rewind on error too - let expression parsing try
         {:no_clause, TokenAdapter.rewind(checkpoint_state, ref), log}
-
-      {:error, reason, _state, log} ->
-        {:error, reason, TokenAdapter.rewind(checkpoint_state, ref), log}
     end
   end
 
-  defp parse_clauses(acc, state, ctx, log, stop_kinds) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _} ->
-        cond do
-          kind in stop_kinds ->
-            {:ok, Enum.reverse(acc), state, log}
-
-          kind == :eoe ->
-            {:ok, _tok, state} = TokenAdapter.next(state)
-            parse_clauses(acc, state, ctx, log, stop_kinds)
-
-          true ->
-            with {:ok, clause, state, log} <- parse_clause(state, ctx, log, stop_kinds) do
-              parse_clauses([clause | acc], state, ctx, log, stop_kinds)
-            end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_clause(state, ctx, log, stop_kinds) do
-    head_meta = peek_meta(state)
-
-    with {:ok, patterns, state, log} <- parse_clause_patterns([], state, ctx, log),
-         {:ok, head_list, state, log} <- attach_guard(patterns, state, ctx, log) do
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :stab_op}, state} ->
-          with {:ok, body, state, log} <- parse_clause_body([], state, ctx, log, stop_kinds),
-               state <- consume_optional_eoe(state) do
-            log =
-              Enum.reduce(head_list, log, fn pattern, acc ->
-                maybe_bind_env(acc, pattern, head_meta)
-              end)
-
-            {:ok, {:->, [], [head_list, body]}, state, log}
-          end
-
-        {:ok, token, state} ->
-          {:error, {:expected, :stab_op, got: token.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, {:expected, :stab_op, got: :eof}, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
-      end
-    end
-  end
-
-  defp parse_clause_patterns(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :stab_op}, _} ->
-        {:ok, Enum.reverse(acc), state, log}
-
-      _ ->
-        with {:ok, pattern, state, log} <- parse_clause_pattern(state, ctx, log) do
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, state} ->
-              {:ok, _comma, state} = TokenAdapter.next(state)
-              parse_clause_patterns([pattern | acc], state, ctx, log)
-
-            {:ok, %{kind: :when_op}, _} ->
-              {:ok, Enum.reverse([pattern | acc]), state, log}
-
-            {:ok, %{kind: :stab_op}, _} ->
-              {:ok, Enum.reverse([pattern | acc]), state, log}
-
-            _ ->
-              {:ok, Enum.reverse([pattern | acc]), state, log}
-          end
-        end
-    end
-  end
-
-  defp parse_clause_pattern(state, ctx, log) do
-    case TokenAdapter.peek_n(state, 2) do
-      {:ok, [tok, next], state} when tok.kind in [:identifier, :atom, :int, :flt, :string, true, false, :nil] and
-                                      next.kind in [:when_op, :stab_op] ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        {:ok, token_literal(tok), state, log}
-
-      _ ->
-        Expressions.expr(state, ctx, log)
-    end
-  end
-
-  defp token_literal(%{kind: :int, value: chars}), do: List.to_integer(chars)
-  defp token_literal(%{kind: :flt, value: chars}), do: List.to_float(chars)
-  defp token_literal(%{kind: :atom, value: atom}), do: atom
-  defp token_literal(%{kind: :string, value: value}), do: value
-  defp token_literal(%{kind: :identifier, value: value}), do: value
-  defp token_literal(%{kind: true}), do: true
-  defp token_literal(%{kind: false}), do: false
-  defp token_literal(%{kind: :nil}), do: nil
-  defp token_literal(%{value: value}), do: value
-
-  defp attach_guard(patterns, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :when_op}, _} ->
-        {:ok, _when, state} = TokenAdapter.next(state)
-        {:ok, guard, state, log} = Pratt.parse(state, ctx, log)
-        guarded = {:when, [], patterns ++ [guard]}
-        {:ok, [guarded], state, log}
-
-      _ ->
-        {:ok, patterns, state, log}
-    end
-  end
-
-  defp parse_clause_body(acc, state, ctx, log, stop_kinds) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _} ->
-        cond do
-          kind in stop_kinds ->
-            {:ok, build_block(Enum.reverse(acc)), state, log}
-
-          kind == :eoe ->
-            {:ok, _tok, state} = TokenAdapter.next(state)
-            {:ok, build_block(Enum.reverse(acc)), state, log}
-
-          true ->
-            with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-              parse_clause_body([expr | acc], state, ctx, log, stop_kinds)
-            end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
 
   defp build_section_value([]), do: build_block([])
 
@@ -504,49 +372,12 @@ defmodule ToxicParser.Grammar.Blocks do
   defp build_block([single]), do: single
   defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
 
-  defp expect_kind(state, kind) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
-    end
-  end
-
   defp enter_scope(log, scope, meta) do
     EventLog.env(log, %{action: :enter_scope, scope: scope, name: nil}, meta)
   end
 
   defp exit_scope(log, scope, meta) do
     EventLog.env(log, %{action: :exit_scope, scope: scope, name: nil}, meta)
-  end
-
-  defp maybe_bind_env(log, {:when, [], [pattern, _guard]}, meta), do: maybe_bind_env(log, pattern, meta)
-  defp maybe_bind_env(log, {:<-, [], [pattern, _]}, meta), do: maybe_bind_env(log, pattern, meta)
-  defp maybe_bind_env(log, {:^, _, [inner]}, meta), do: maybe_bind_env(log, inner, meta)
-  defp maybe_bind_env(log, {:{}, _, parts}, meta), do: Enum.reduce(parts, log, &maybe_bind_env(&2, &1, meta))
-  defp maybe_bind_env(log, list, meta) when is_list(list), do: Enum.reduce(list, log, &maybe_bind_env(&2, &1, meta))
-  defp maybe_bind_env(log, {:%{}, _, pairs}, meta), do: Enum.reduce(pairs, log, fn {k, v}, acc -> acc |> maybe_bind_env(k, meta) |> maybe_bind_env(v, meta) end)
-  defp maybe_bind_env(log, {{:., _, _} = struct, _, fields}, meta), do: Enum.reduce(fields, log, &maybe_bind_env(&2, &1, meta)) |> maybe_bind_env(struct, meta)
-  defp maybe_bind_env(log, name, meta) when is_atom(name), do: EventLog.env(log, %{action: :bind, scope: nil, name: name}, meta)
-  defp maybe_bind_env(log, _other, _meta), do: log
-
-  defp peek_meta(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{metadata: meta}, _} -> meta
-      _ -> empty_meta()
-    end
-  end
-
-  defp empty_meta do
-    %{
-      range: %{start: %{line: 1, offset: 0, column: 1}, end: %{line: 1, offset: 0, column: 1}},
-      delimiter: nil,
-      newlines: 0,
-      synthesized?: false,
-      terminators: [],
-      role: :none
-    }
   end
 
   defp stop_token?(%{kind: kind} = tok, stop_kinds) do

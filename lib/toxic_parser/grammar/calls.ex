@@ -380,7 +380,14 @@ defmodule ToxicParser.Grammar.Calls do
             case ast do
               {name, meta, args} when is_list(args) ->
                 # Prepend do/end metadata to the call's existing metadata
-                {name, block_meta ++ meta, args ++ [sections]}
+                # Remove ambiguous_op: nil and no_parens: true as they don't apply with do-blocks
+                clean_meta = meta |> Keyword.delete(:ambiguous_op) |> Keyword.delete(:no_parens)
+                {name, block_meta ++ clean_meta, args ++ [sections]}
+
+              # Bare identifier: {name, meta, nil} - convert to call with do-block
+              # Grammar: block_expr -> dot_do_identifier do_block
+              {name, meta, nil} when is_atom(name) ->
+                {name, block_meta ++ meta, [sections]}
 
               other ->
                 Builder.Helpers.call(other, [sections], block_meta)

@@ -23,7 +23,8 @@ defmodule ToxicParser.Grammar do
     state = TokenAdapter.new(source, opts)
     log = EventLog.new() |> EventLog.start_node(:root, zero_meta())
 
-    with {:ok, ast, state, log} <- Expressions.expr_list(state, :matched, log) do
+    # Top-level uses :unmatched context to allow block expressions like `foo do :ok end`
+    with {:ok, ast, state, log} <- Expressions.expr_list(state, :unmatched, log) do
       log = EventLog.end_node(log, :root, zero_meta())
       {:ok, ast, state, log}
     end
@@ -31,7 +32,7 @@ defmodule ToxicParser.Grammar do
 
   @doc "Entry point for already-initialized parser state."
   @spec parse(State.t(), EventLog.t(), Pratt.context()) :: result()
-  def parse(%State{} = state, %EventLog{} = log, ctx \\ :matched) do
+  def parse(%State{} = state, %EventLog{} = log, ctx \\ :unmatched) do
     Expressions.expr_list(state, ctx, log)
   end
 

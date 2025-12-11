@@ -505,7 +505,8 @@ defmodule ToxicParser.Pratt do
                     _ ->
                       {left, call_meta, Enum.reverse(args)}
                   end
-                  led(combined, state, log, min_bp, context)
+                  # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
+                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
 
                 {:ok, other, state} ->
                   {:error, {:expected, :")", got: other.kind}, state, log}
@@ -543,7 +544,8 @@ defmodule ToxicParser.Pratt do
                   call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
 
                   combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}
-                  led(combined, state, log, min_bp, context)
+                  # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
+                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
 
                 {:ok, other, state} ->
                   {:error, {:expected, :")", got: other.kind}, state, log}
@@ -613,7 +615,8 @@ defmodule ToxicParser.Pratt do
 
                             # When followed by parens, convert to call form with proper metadata
                             combined = dot_to_call_with_meta(combined, args, total_newlines, close_meta)
-                            led(combined, state, log, min_bp, context)
+                            # Check for nested calls and do-blocks (foo.bar() do...end)
+                            maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
 
                           {:ok, other, state} ->
                             {:error, {:expected, :")", got: other.kind}, state, log}
@@ -630,12 +633,18 @@ defmodule ToxicParser.Pratt do
                       # Bracket access: foo.bar[:key] - handle via led() which processes [
                       led(combined, state, log, min_bp, context)
 
+                    {:ok, %{kind: :do}, _} ->
+                      # Do-block after dot call: foo.bar() do...end
+                      # Only handle when rhs was a call (combined has args list)
+                      maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+
                     {:ok, next_tok, _} ->
                       # Check for no-parens call argument after dot expression
                       if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
                         with {:ok, args, state, log} <- Calls.parse_no_parens_args([], state, context, log) do
                           combined = dot_to_no_parens_call(combined, args)
-                          led(combined, state, log, min_bp, context)
+                          # Check for do-blocks after no-parens call: foo.bar arg do...end
+                          maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
                         end
                       else
                         led(combined, state, log, min_bp, context)
@@ -719,6 +728,84 @@ defmodule ToxicParser.Pratt do
     end
   end
 
+  # Handle nested paren calls (foo.()(), foo()()) and do-blocks (foo.() do...end, foo() do...end)
+  # Grammar rules:
+  #   parens_call -> dot_call_identifier call_args_parens call_args_parens
+  #   block_expr -> dot_call_identifier call_args_parens do_block
+  #   block_expr -> dot_call_identifier call_args_parens call_args_parens do_block
+  defp maybe_nested_call_or_do_block(ast, state, log, min_bp, context) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"("}, _} ->
+        # Another paren call - parse it
+        {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+        # Skip leading EOE and count newlines
+        {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+        with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+          # Skip trailing EOE before close paren
+          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+          case TokenAdapter.next(state) do
+            {:ok, %{kind: :")"} = close_tok, state} ->
+              total_newlines =
+                if args == [] do
+                  leading_newlines + trailing_newlines
+                else
+                  leading_newlines
+                end
+
+              # Get line/column from callee AST
+              callee_meta = extract_meta(ast)
+              close_meta = build_meta(close_tok.metadata)
+
+              newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+              meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+              combined = {ast, meta, Enum.reverse(args)}
+              # Recurse for chained calls like foo()()()
+              maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+
+            {:ok, other, state} ->
+              {:error, {:expected, :")", got: other.kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+        end
+
+      {:ok, %{kind: :do}, _} ->
+        # Do-block - parse and attach to call
+        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+          combined =
+            case ast do
+              {name, meta, args} when is_list(args) ->
+                # Prepend do/end metadata to the call's existing metadata
+                # Remove no_parens: true as it doesn't apply with do-blocks
+                clean_meta = Keyword.delete(meta, :no_parens)
+                {name, block_meta ++ clean_meta, args ++ [sections]}
+
+              # Bare identifier: {name, meta, nil} - convert to call with do-block
+              {name, meta, nil} when is_atom(name) ->
+                {name, block_meta ++ meta, [sections]}
+
+              other ->
+                Builder.Helpers.call(other, [sections], block_meta)
+            end
+
+          # Continue with led() to handle trailing operators
+          led(combined, state, log, min_bp, context)
+        end
+
+      _ ->
+        # No nested call or do-block - continue with led
+        led(ast, state, log, min_bp, context)
+    end
+  end
+
   # Convert a dot expression to a call when followed by parens, with closing metadata
   # If id_meta already has :closing, this is a nested call - wrap the whole thing
   defp dot_to_call_with_meta({{:., dot_meta, dot_args}, id_meta, _inner_args} = callee, args, newlines, close_meta) do
@@ -770,7 +857,7 @@ defmodule ToxicParser.Pratt do
   # Check if a token can be the start of a no-parens call argument
   defp can_be_no_parens_arg?(%{kind: kind}) do
     kind in [
-      :int, :flt, :char, :atom, :string, :identifier, :alias,
+      :int, :flt, :char, :atom, :string, :identifier, :do_identifier, :alias,
       true, false, nil,
       :"{", :"[", :"<<",
       :unary_op, :at_op, :capture_op, :dual_op

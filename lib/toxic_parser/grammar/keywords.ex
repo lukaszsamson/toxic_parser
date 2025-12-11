@@ -62,16 +62,18 @@ defmodule ToxicParser.Grammar.Keywords do
     end
   end
 
-  defp parse_kw_pair(state, ctx, log, min_bp) do
+  defp parse_kw_pair(state, _ctx, log, min_bp) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: kind, value: key}, state} when kind in @kw_kinds ->
         state = skip_eoe(state)
 
         # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
+        # Always use :matched context so keyword values don't consume do-blocks
+        # (the do-block belongs to the outer call, not to the keyword value)
         result = if min_bp > 0 do
-          Pratt.parse_with_min_bp(state, ctx, log, min_bp)
+          Pratt.parse_with_min_bp(state, :matched, log, min_bp)
         else
-          Expressions.expr(state, ctx, log)
+          Expressions.expr(state, :matched, log)
         end
 
         with {:ok, value_ast, state, log} <- result do

@@ -40,7 +40,7 @@ defmodule ToxicParser.Grammar.Dots do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         case Identifiers.classify(tok.kind) do
-          kind when kind in [:identifier, :op_identifier, :dot_identifier, :dot_op_identifier, :bracket_identifier] ->
+          kind when kind in [:identifier, :do_identifier, :op_identifier, :dot_identifier, :dot_do_identifier, :dot_op_identifier, :bracket_identifier] ->
             # Return {member_atom, member_meta} tuple so caller can build proper AST
             {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
 
