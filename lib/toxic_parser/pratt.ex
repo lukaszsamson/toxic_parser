@@ -51,6 +51,28 @@ defmodule ToxicParser.Pratt do
   end
 
   @doc """
+  Parses a base expression with dot operator support for dotted aliases.
+  Used for struct names like `%Foo.Bar{}` where we need to parse the full
+  alias chain (Foo.Bar) but NOT consume {} as tuple/call arguments.
+
+  Only processes dot_op for alias chaining. Does not handle:
+  - Paren calls: foo.bar()
+  - No-parens calls: foo.bar arg
+  - Bracket access: foo.bar[x]
+  - Do-blocks: foo.bar do...end
+  """
+  @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
+  def parse_base_with_dots(%State{} = state, context, %EventLog{} = log) do
+    with {:ok, token, state} <- TokenAdapter.next(state),
+         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
+      led_dot_only(ast, state, log, context)
+    else
+      {:eof, state} -> {:error, :unexpected_eof, state, log}
+      {:error, diag, state} -> {:error, diag, state, log}
+    end
+  end
+
+  @doc """
   Parses an expression with a minimum binding power.
   Used for map updates where we need to stop before the pipe operator.
   Also used for guard expressions in stab clauses where we need to stop before ->.
@@ -108,12 +130,18 @@ defmodule ToxicParser.Pratt do
             parse_unary(token, state, context, log, bp)
 
           nil ->
-            if token.kind == :dual_op do
-              parse_unary(token, state, context, log, 300)
-            else
-              # Just convert to literal AST, no do-block or no-parens call check
-              ast = literal_to_ast(token)
-              {:ok, ast, state, log}
+            cond do
+              token.kind == :dual_op ->
+                parse_unary(token, state, context, log, 300)
+
+              # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
+              token.kind == :ternary_op and token.value == :"//" ->
+                parse_ternary_unary(token, state, context, log)
+
+              true ->
+                # Just convert to literal AST, no do-block or no-parens call check
+                ast = literal_to_ast(token)
+                {:ok, ast, state, log}
             end
         end
     end
@@ -146,15 +174,21 @@ defmodule ToxicParser.Pratt do
             parse_unary(token, state, context, log, bp)
 
           nil ->
-            # Check for dual_op used as unary (e.g., -1, +1)
-            if token.kind == :dual_op do
-              # dual_op as unary has fixed precedence
-              parse_unary(token, state, context, log, 300)
-            else
-              # Not a unary operator - convert to literal AST
-              ast = literal_to_ast(token)
-              # Check if identifier followed by do/end block or no-parens call
-              maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp)
+            cond do
+              # dual_op used as unary (e.g., -1, +1)
+              token.kind == :dual_op ->
+                # dual_op as unary has fixed precedence
+                parse_unary(token, state, context, log, 300)
+
+              # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
+              token.kind == :ternary_op and token.value == :"//" ->
+                parse_ternary_unary(token, state, context, log)
+
+              true ->
+                # Not a unary operator - convert to literal AST
+                ast = literal_to_ast(token)
+                # Check if identifier followed by do/end block or no-parens call
+                maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp)
             end
         end
     end
@@ -387,6 +421,79 @@ defmodule ToxicParser.Pratt do
     end
   end
 
+  # Parse ternary_op :"//" as binary operator (e.g., 1..10//2)
+  # When left is a range {:.., meta, [start, stop]}, combines into {:..//, meta, [start, stop, step]}
+  # Otherwise, produces an error (// must follow ..)
+  defp parse_ternary_op(left, state, min_bp, context, log) do
+    {:ok, op_token, state} = TokenAdapter.next(state)
+    {bp, _assoc} = Precedence.binary(:ternary_op)
+
+    # Skip EOE after operator
+    {state, _newlines} = skip_eoe_after_op(state)
+
+    case TokenAdapter.next(state) do
+      {:ok, rhs_token, state} ->
+        with {:ok, step, state, log} <- parse_rhs(rhs_token, state, context, log, bp) do
+          case left do
+            # Range expression: {:.., meta, [start, stop]} -> {:..//, meta, [start, stop, step]}
+            {:.., range_meta, [start, stop]} ->
+              combined = {:..//, range_meta, [start, stop, step]}
+              led(combined, state, log, min_bp, context)
+
+            # Not a range - this is an error but we still parse it as {:"//", meta, [left, step]}
+            # The error handling follows spitfire's pattern
+            _ ->
+              op_meta = build_meta(op_token.metadata)
+              combined = {op_token.value, op_meta, [left, step]}
+              led(combined, state, log, min_bp, context)
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Parse ternary_op :"//" as unary operator (e.g., //foo)
+  # This produces: {:/, outer_meta, [{:/, inner_meta, nil}, rhs]}
+  # where outer has column+1 and inner has original column
+  defp parse_ternary_unary(op_token, state, context, log) do
+    meta = build_meta(op_token.metadata)
+
+    # Calculate inner/outer metadata with column adjustment
+    {outer_meta, inner_meta} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {line, col} when is_integer(line) and is_integer(col) ->
+          rest_meta = Keyword.drop(meta, [:line, :column])
+          {[line: line, column: col + 1] ++ rest_meta, [line: line, column: col] ++ rest_meta}
+
+        _ ->
+          {meta, meta}
+      end
+
+    # Skip EOE after operator
+    {state, _newlines} = skip_eoe_after_op(state)
+
+    # Parse the operand with unary precedence
+    case TokenAdapter.next(state) do
+      {:ok, operand_token, state} ->
+        with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, 300) do
+          # Build: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+          ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+          {:ok, ast, state, log}
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
   # Parse RHS of binary operator, handling chained operators with proper precedence
   # For identifiers that could be calls with do-blocks (like `if true do...end`),
   # we need special handling but must preserve min_bp for associativity
@@ -424,16 +531,16 @@ defmodule ToxicParser.Pratt do
   defp parse_rhs_identifier(token, state, context, log, min_bp) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
-        # Paren call - delegate to Calls but then led with our min_bp
-        state = TokenAdapter.pushback(state, token)
-        with {:ok, right, state, log} <- Calls.parse(state, context, log) do
-          led(right, state, log, min_bp, context)
+        # Paren call - parse directly to preserve min_bp
+        # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp
+        with {:ok, ast, state, log} <- parse_paren_call_base(token, state, context, log) do
+          led(ast, state, log, min_bp, context)
         end
 
       {:ok, %{kind: :do}, _} ->
-        # Do-block - delegate to Calls but then led with our min_bp
+        # Do-block - delegate to Calls.parse_without_led to preserve min_bp
         state = TokenAdapter.pushback(state, token)
-        with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
           led(right, state, log, min_bp, context)
         end
 
@@ -444,7 +551,7 @@ defmodule ToxicParser.Pratt do
           # This must be checked BEFORE binary operator check
           token.kind == :op_identifier and (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
-            with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
               led(right, state, log, min_bp, context)
             end
 
@@ -456,7 +563,7 @@ defmodule ToxicParser.Pratt do
           # Could be no-parens call argument - delegate to Calls
           is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
-            with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
               led(right, state, log, min_bp, context)
             end
 
@@ -470,6 +577,48 @@ defmodule ToxicParser.Pratt do
         # EOF or error - just return identifier
         ast = Builder.Helpers.from_token(token)
         led(ast, state, log, min_bp, context)
+    end
+  end
+
+  # Parse a paren call without calling led at the end
+  # Used by parse_rhs_identifier to preserve min_bp for associativity
+  defp parse_paren_call_base(callee_tok, state, context, log) do
+    {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+         # Skip trailing EOE before close paren
+         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
+         {:ok, close_tok, state} <- expect_close_paren(state) do
+      # For non-empty calls, only count leading newlines
+      # For empty calls, count all newlines
+      total_newlines =
+        if args == [] do
+          leading_newlines + trailing_newlines
+        else
+          leading_newlines
+        end
+
+      callee_meta = build_meta(callee_tok.metadata)
+      close_meta = build_meta(close_tok.metadata)
+
+      # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+      ast = {callee_tok.value, meta, Enum.reverse(args)}
+      {:ok, ast, state, log}
+    end
+  end
+
+  defp expect_close_paren(state) do
+    case TokenAdapter.next(state) do
+      {:ok, %{kind: :")"} = tok, state} -> {:ok, tok, state}
+      {:ok, tok, state} -> {:error, {:expected, :")", got: tok.kind}, state}
+      {:eof, state} -> {:error, :unexpected_eof, state}
+      {:error, diag, state} -> {:error, diag, state}
     end
   end
 
@@ -711,6 +860,11 @@ defmodule ToxicParser.Pratt do
                   {:error, diag, state, log}
               end
             end
+
+          # Special case: ternary_op :"//" following range_op :".."
+          # Combines into {:..//, meta, [start, stop, step]}
+          {:ternary_op, {bp, _assoc}} when bp >= min_bp ->
+            parse_ternary_op(left, state, min_bp, context, log)
 
           {_, {bp, assoc}} when bp >= min_bp ->
             {:ok, op_token, state} = TokenAdapter.next(state)
@@ -1174,6 +1328,42 @@ defmodule ToxicParser.Pratt do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
+    end
+  end
+
+  # Specialized led that ONLY handles dot operator for alias chaining.
+  # Used by parse_base_with_dots for struct names like %Foo.Bar{}.
+  # Does NOT handle paren calls, no-parens calls, bracket access, or do-blocks.
+  defp led_dot_only(left, state, log, context) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :dot_op} = _dot_tok, _} ->
+        {:ok, dot_tok, state} = TokenAdapter.next(state)
+        dot_meta = build_meta(dot_tok.metadata)
+
+        # Parse the RHS of dot - must be an alias or identifier
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+          combined =
+            case rhs do
+              # Alias on RHS - build combined __aliases__ (dot_alias rule)
+              {:__aliases__, rhs_meta, [rhs_alias]} ->
+                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
+              # Simple identifier: {member_atom, member_meta}
+              {member, member_meta} when is_atom(member) ->
+                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+
+              # Other AST node
+              other ->
+                {:., dot_meta, [left, other]}
+            end
+
+          # Continue to handle chained dots: Foo.Bar.Baz
+          led_dot_only(combined, state, log, context)
+        end
+
+      _ ->
+        # Not a dot operator - return what we have
+        {:ok, left, state, log}
     end
   end
 end

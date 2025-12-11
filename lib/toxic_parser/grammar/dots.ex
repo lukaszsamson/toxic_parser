@@ -52,7 +52,12 @@ defmodule ToxicParser.Grammar.Dots do
             parse_paren_call(tok, state, ctx, log)
 
           _ ->
-            {:error, {:expected, :dot_member, got: tok.kind}, state, log}
+            # Check for quoted identifier: D."foo"
+            if tok.kind == :quoted_identifier_start do
+              parse_quoted_identifier(tok, state, ctx, log)
+            else
+              {:error, {:expected, :dot_member, got: tok.kind}, state, log}
+            end
         end
 
       {:eof, state} ->
@@ -97,6 +102,115 @@ defmodule ToxicParser.Grammar.Dots do
       end
     end
   end
+
+  # Parse quoted identifier: D."foo" or D."foo"() or D."foo" arg (no-parens)
+  # Token sequence: quoted_identifier_start -> string_fragment* -> quoted_identifier_end/quoted_op_identifier_end
+  defp parse_quoted_identifier(start_tok, state, ctx, log) do
+    start_meta = Builder.Helpers.token_meta(start_tok.metadata)
+    delimiter = delimiter_from_value(start_tok.value)
+
+    with {:ok, fragments, end_kind, state, log} <- collect_fragments([], state, :quoted_identifier_end, log),
+         {:ok, _close, state} <- TokenAdapter.next(state) do
+      content = fragments |> Enum.reverse() |> Enum.join("") |> Macro.unescape_string()
+      atom = String.to_atom(content)
+
+      # Build metadata with delimiter
+      meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
+
+      cond do
+        # quoted_op_identifier_end means there's a space before next token -> no-parens call
+        end_kind == :quoted_op_identifier_end ->
+          # D."foo" arg - parse no-parens call arguments
+          with {:ok, args, state, log} <- ToxicParser.Grammar.Calls.parse_no_parens_args([], state, ctx, log) do
+            # Return as call AST: {atom, meta, args}
+            {:ok, {atom, meta_with_delimiter, args}, state, log}
+          end
+
+        # quoted_bracket_identifier_end: D."foo"[1] - return simple identifier, bracket access handled by caller
+        end_kind == :quoted_bracket_identifier_end ->
+          {:ok, {atom, meta_with_delimiter}, state, log}
+
+        # quoted_do_identifier_end: D."foo" do...end - return as call AST, do-block parsed by caller
+        end_kind == :quoted_do_identifier_end ->
+          # Return as call expression {atom, meta, []} so caller can attach do-block
+          {:ok, {atom, meta_with_delimiter, []}, state, log}
+
+        # quoted_paren_identifier_end or ( immediately follows: D."foo"()
+        end_kind == :quoted_paren_identifier_end or match?({:ok, %{kind: :"("}, _}, TokenAdapter.peek(state)) ->
+          {:ok, _open, state} = TokenAdapter.next(state)
+
+          # Skip leading EOE and count newlines
+          {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+          with {:ok, args, state, log} <- parse_paren_args([], state, :matched, log) do
+            # Skip trailing EOE before close paren
+            {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+            case TokenAdapter.next(state) do
+              {:ok, %{kind: :")"} = close_tok, state} ->
+                total_newlines = leading_newlines + trailing_newlines
+                close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+
+                newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+                call_meta = newlines_meta ++ [closing: close_meta] ++ meta_with_delimiter
+
+                # Return as call AST: {atom, call_meta, args}
+                {:ok, {atom, call_meta, Enum.reverse(args)}, state, log}
+
+              {:ok, other, state} ->
+                {:error, {:expected, :")", got: other.kind}, state, log}
+
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+          end
+
+        true ->
+          # Simple quoted identifier without parens
+          {:ok, {atom, meta_with_delimiter}, state, log}
+      end
+    end
+  end
+
+  # Possible end tokens for quoted identifiers
+  # - quoted_identifier_end: D."foo" (no following token)
+  # - quoted_op_identifier_end: D."foo" arg (space before next token - no-parens call)
+  # - quoted_paren_identifier_end: D."foo"() (immediately followed by parens)
+  # - quoted_bracket_identifier_end: D."foo"[1] (immediately followed by bracket)
+  # - quoted_do_identifier_end: D."foo" do...end (space before do-block)
+  @quoted_id_ends [:quoted_identifier_end, :quoted_op_identifier_end, :quoted_paren_identifier_end,
+                   :quoted_bracket_identifier_end, :quoted_do_identifier_end]
+
+  defp collect_fragments(acc, state, target_end, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: ^target_end}, _} ->
+        {:ok, acc, target_end, state, log}
+
+      {:ok, %{kind: kind}, _} when kind in @quoted_id_ends and target_end == :quoted_identifier_end ->
+        # Accept any quoted identifier end token
+        {:ok, acc, kind, state, log}
+
+      {:ok, %{kind: :string_fragment, value: fragment}, _} ->
+        {:ok, _frag, state} = TokenAdapter.next(state)
+        collect_fragments([fragment | acc], state, target_end, log)
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+
+      {:ok, token, _} ->
+        {:error, {:unexpected_string_token, token.kind}, state, log}
+    end
+  end
+
+  defp delimiter_from_value(34), do: "\""
+  defp delimiter_from_value(?'), do: "'"
+  defp delimiter_from_value(_), do: "\""
 
   defp skip_eoe_count_newlines(state, count) do
     case TokenAdapter.peek(state) do

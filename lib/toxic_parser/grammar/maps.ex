@@ -54,6 +54,10 @@ defmodule ToxicParser.Grammar.Maps do
   # map_base_expr: sub_matched_expr, or unary ops applied to map_base_expr
   # sub_matched_expr is a BASE expression without trailing operators
   # Note: dual_op (+ and -) can be used as unary operators here
+  #
+  # Special handling for dotted aliases: %Foo.Bar{} requires parsing the full
+  # alias chain Foo.Bar before {. We use parse_base_with_dots which handles
+  # dot operators for alias chaining but does NOT consume {} as call arguments.
   defp parse_map_base_expr(state, _ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
@@ -66,9 +70,9 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       _ ->
-        # sub_matched_expr - parse a BASE expression (nud only, no trailing operators)
-        # This is critical: %Foo{} should parse Foo as the base, not Foo{}
-        Pratt.parse_base(state, :matched, log)
+        # sub_matched_expr with dot operator support for dotted aliases
+        # parse_base_with_dots handles Foo.Bar.Baz but stops before {}
+        Pratt.parse_base_with_dots(state, :matched, log)
     end
   end
 

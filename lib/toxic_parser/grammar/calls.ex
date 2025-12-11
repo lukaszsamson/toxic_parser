@@ -404,4 +404,165 @@ defmodule ToxicParser.Grammar.Calls do
         Pratt.led(ast, state, log, 0, ctx)
     end
   end
+
+  @doc """
+  Parse a call without calling led() at the end.
+  Used by Pratt parser when it needs to preserve min_bp for proper associativity.
+  The caller is responsible for calling led() with the correct min_bp.
+  """
+  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse_without_led(%State{} = state, ctx, %EventLog{} = log) do
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        case Identifiers.classify(tok.kind) do
+          :other ->
+            Pratt.parse(state, ctx, log)
+
+          ident_kind ->
+            {:ok, _tok, state} = TokenAdapter.next(state)
+            parse_identifier_no_led(ident_kind, tok, state, ctx, log)
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Parse identifier without calling led at the end
+  defp parse_identifier_no_led(kind, tok, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"("}, _} ->
+        parse_paren_call_no_led(tok, state, ctx, log)
+
+      {:ok, %{kind: :"["} = open_tok, _} when kind == :bracket_identifier ->
+        # bracket_identifier followed by [ is bracket access
+        # Note: bracket access calls led internally for chaining, need special handling
+        parse_bracket_access_no_led(tok, open_tok, state, ctx, log)
+
+      {:ok, next_tok, _} ->
+        cond do
+          kind == :op_identifier ->
+            parse_op_identifier_call_no_led(tok, state, ctx, log)
+
+          Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
+            # Binary operator follows - return as bare identifier, caller will handle
+            ast = Builder.Helpers.from_token(tok)
+            {:ok, ast, state, log}
+
+          can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
+            parse_no_parens_call_no_led(tok, state, ctx, log)
+
+          kind == :do_identifier and ctx == :matched ->
+            ast = Builder.Helpers.from_token(tok)
+            {:ok, ast, state, log}
+
+          true ->
+            ast = Builder.Helpers.from_token(tok)
+            maybe_do_block_no_led(ast, state, ctx, log)
+        end
+
+      _ ->
+        ast = Builder.Helpers.from_token(tok)
+        maybe_do_block_no_led(ast, state, ctx, log)
+    end
+  end
+
+  defp parse_paren_call_no_led(callee_tok, state, ctx, log) do
+    {:ok, _open_tok, state} = TokenAdapter.next(state)
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
+         {:ok, close_tok, state} <- expect_token(state, :")") do
+      total_newlines = if args == [], do: leading_newlines + trailing_newlines, else: leading_newlines
+      callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+      ast = {callee_tok.value, meta, Enum.reverse(args)}
+      # Return without calling led
+      {:ok, ast, state, log}
+    end
+  end
+
+  defp parse_bracket_access_no_led(ident_tok, _open_tok, state, ctx, log) do
+    {:ok, open_tok, state} = TokenAdapter.next(state)
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    with {:ok, arg, state, log} <- parse_bracket_arg_no_skip(state, ctx, log) do
+      {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+      case expect_token(state, :"]") do
+        {:ok, close_tok, state} ->
+          subject = Builder.Helpers.from_token(ident_tok)
+          bracket_meta = build_bracket_meta_with_newlines(open_tok, close_tok, leading_newlines)
+          ast = build_access(subject, arg, bracket_meta)
+          # Return without calling led
+          {:ok, ast, state, log}
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
+    end
+  end
+
+  defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log) do
+    with {:ok, first_arg, state, log} <- Expressions.expr(state, :matched, log) do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log) do
+            callee = callee_tok.value
+            meta = Builder.Helpers.token_meta(callee_tok.metadata)
+            ast = {callee, meta, args}
+            maybe_do_block_no_led(ast, state, ctx, log)
+          end
+
+        _ ->
+          callee = callee_tok.value
+          meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
+          ast = {callee, meta, [first_arg]}
+          maybe_do_block_no_led(ast, state, ctx, log)
+      end
+    end
+  end
+
+  defp parse_no_parens_call_no_led(callee_tok, state, ctx, log) do
+    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log) do
+      callee = callee_tok.value
+      meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      ast = {callee, meta, args}
+      maybe_do_block_no_led(ast, state, ctx, log)
+    end
+  end
+
+  defp maybe_do_block_no_led(ast, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :do}, _} when ctx != :matched ->
+        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
+          ast =
+            case ast do
+              {name, meta, args} when is_list(args) ->
+                clean_meta = meta |> Keyword.delete(:ambiguous_op) |> Keyword.delete(:no_parens)
+                {name, block_meta ++ clean_meta, args ++ [sections]}
+
+              {name, meta, nil} when is_atom(name) ->
+                {name, block_meta ++ meta, [sections]}
+
+              other ->
+                Builder.Helpers.call(other, [sections], block_meta)
+            end
+
+          # Return without calling led
+          {:ok, ast, state, log}
+        end
+
+      _ ->
+        # Return without calling led
+        {:ok, ast, state, log}
+    end
+  end
 end

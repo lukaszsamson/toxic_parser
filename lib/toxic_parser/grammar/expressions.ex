@@ -98,6 +98,12 @@ defmodule ToxicParser.Grammar.Expressions do
               {:ok, ast, state, log} ->
                 {:ok, ast, state, log}
 
+              # String was a quoted keyword key like "a": - parse value and return as keyword pair
+              {:keyword_key, key_atom, state, log} ->
+                with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
+                  {:ok, [{key_atom, value_ast}], state, log}
+                end
+
               {:no_string, state} ->
                 case Calls.parse(state, ctx, log) do
                   {:ok, ast, state, log} -> {:ok, ast, state, log}

@@ -254,6 +254,132 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms(~s(:'foo bar'))
       assert_conforms(~s(:'hello world'))
     end
+
+    test "quoted atom interpolated" do
+      assert_conforms(~s(:"hello\#{abc}foo"))
+    end
+  end
+
+  describe "terminals - strings" do
+    test "empty bin string" do
+      assert_conforms(~s(""))
+    end
+
+    test "empty list string" do
+      assert_conforms(~s(''))
+    end
+
+    test "bin string" do
+      assert_conforms(~s("foo"))
+    end
+
+    test "list string" do
+      assert_conforms(~s('foo'))
+    end
+
+    test "bin string with nl" do
+      assert_conforms(~s("fo\\no"))
+    end
+
+    test "list string with nl" do
+      assert_conforms(~s('fo\\no'))
+    end
+
+    test "bin string interpolated" do
+      assert_conforms(~s("fo\#{bar}o"))
+    end
+
+    test "list string interpolated" do
+      assert_conforms(~s('fo\#{bar}o'))
+    end
+  end
+
+  describe "terminals - heredocs" do
+    test "empty bin heredocs" do
+      assert_conforms(~s("""\n\\\n"""))
+    end
+
+    test "empty list heredocs" do
+      assert_conforms(~s('''\n\\\n'''))
+    end
+
+    test "bin heredocs" do
+      assert_conforms(~s("""\nfoo\n"""))
+    end
+
+    test "list heredocs" do
+      assert_conforms(~s('''\nfoo\n'''))
+    end
+
+    test "bin heredocs with indent" do
+      assert_conforms(~s("""\n  foo\n  """))
+    end
+
+    test "list heredocs with indent" do
+      assert_conforms(~s('''\n  foo\n  '''))
+    end
+
+    test "bin heredocs with nl" do
+      assert_conforms(~s("""\nfo\\no\n"""))
+    end
+
+    test "list heredocs with nl" do
+      assert_conforms(~s('''\nfo\\no\n'''))
+    end
+
+    test "bin heredocs interpolated" do
+      assert_conforms(~s("""\nfo\#{bar}o\n"""))
+    end
+
+    test "list heredocs interpolated" do
+      assert_conforms(~s('''\nfo\#{bar}o\n'''))
+    end
+  end
+
+  describe "terminals - sigils" do
+    test "empty bin sigils" do
+      assert_conforms(~s(~x""))
+    end
+
+    test "bin sigils" do
+      assert_conforms(~s(~x"foo"))
+    end
+
+    test "bin sigils with modifiers" do
+      assert_conforms(~s(~x"foo"abc))
+    end
+
+    test "bin sigils with nl" do
+      assert_conforms(~s(~x"fo\\no"))
+    end
+
+    test "bin sigils interpolated" do
+      assert_conforms(~s(~x"fo\#{bar}o"))
+    end
+
+    test "empty bin heredoc sigils" do
+      assert_conforms(~s(~x"""\n\\\n"""))
+    end
+
+    test "bin heredoc sigils" do
+      assert_conforms(~s(~x"""\nfoo\n"""))
+    end
+
+    test "bin heredoc sigils with modifiers" do
+      assert_conforms(~s(~x"""\nfoo\n"""abc))
+    end
+
+    test "bin heredoc sigils with indent" do
+      assert_conforms(~s(~x"""\n  foo\n  """))
+    end
+
+    test "bin heredoc sigils with nl" do
+      assert_conforms(~s(~x"""\nfo\\no\n"""))
+    end
+
+    test "bin heredoc sigils interpolated" do
+      assert_conforms(~s(~x"""\nfo\#{bar}o\n"""))
+    end
   end
 
   describe "terminals - identifiers (identifier)" do
@@ -2137,6 +2263,7 @@ defmodule ToxicParser.ConformanceTest do
     test "pipe chains" do
       assert_conforms("a |> b |> c")
       assert_conforms("1 |> foo() |> bar()")
+      assert_conforms("1 |> if x do\n:ok\nend |> bar 123")
     end
 
     test "match is right-associative" do
@@ -2236,6 +2363,19 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo.()")
       assert_conforms("foo.(1)")
       assert_conforms("foo.(1, 2)")
+    end
+
+    test "quoted identifier" do
+      # identifier
+      assert_conforms("D.\"foo\"")
+      # op_identifier
+      assert_conforms("D.\"foo\" -1")
+      # parens_identifier
+      assert_conforms("D.\"foo\"()")
+      # bracket_identifier
+      assert_conforms("D.\"foo\"[1]")
+      # do_identifier
+      assert_conforms("D.\"foo\" do\n\:ok\nend")
     end
   end
 
