@@ -54,6 +54,7 @@ defmodule ToxicParser.Grammar.Maps do
   # map_base_expr: sub_matched_expr, or unary ops applied to map_base_expr
   # sub_matched_expr is a BASE expression without trailing operators
   # Note: dual_op (+ and -) can be used as unary operators here
+  # Note: ternary_op (//) used as unary becomes {:/, outer, [{:/, inner, nil}, rhs]}
   #
   # Special handling for dotted aliases: %Foo.Bar{} requires parsing the full
   # alias chain Foo.Bar before {. We use parse_base_with_dots which handles
@@ -66,6 +67,27 @@ defmodule ToxicParser.Grammar.Maps do
         with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
+          {:ok, ast, state, log}
+        end
+
+      # ternary_op :"//" used as unary prefix (e.g., %//foo{})
+      # Produces: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+      {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = skip_eoe(state)
+        with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
+          op_meta = token_meta(op_tok.metadata)
+          # Calculate inner/outer metadata with column adjustment
+          {outer_meta, inner_meta} =
+            case {Keyword.get(op_meta, :line), Keyword.get(op_meta, :column)} do
+              {line, col} when is_integer(line) and is_integer(col) ->
+                {[line: line, column: col + 1], [line: line, column: col]}
+
+              _ ->
+                {op_meta, op_meta}
+            end
+
+          ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           {:ok, ast, state, log}
         end
 

@@ -427,7 +427,6 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("MyModule")
     end
 
-    @tag :skip  # Requires dot operator parsing for alias chaining
     test "nested alias" do
       assert_conforms("Foo.Bar")
       assert_conforms("Foo.Bar.Baz")
@@ -440,7 +439,6 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("MyModule2")
     end
 
-    @tag :skip  # Requires dot operator parsing for alias chaining
     test "Elixir prefix" do
       assert_conforms("Elixir.Foo")
       assert_conforms("Elixir.Foo.Bar")
@@ -648,12 +646,11 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("1 ..\n10")
     end
 
-    # Note: // (ternary_op) is only valid after .. (range), not as standalone operator
-    # test "ternary_op_eol (// - default)" do
-    #   assert_conforms("a // b")
-    #   assert_conforms("nil // :default")
-    #   assert_conforms("a //\nb")
-    # end
+    test "ternary_op_eol (// - default)" do
+      assert_conforms("1..a // b")
+      assert_conforms("1..nil // :default")
+      assert_conforms("1..a //\nb")
+    end
 
     test "xor_op_eol (^^^)" do
       assert_conforms("1 ^^^ 2")
@@ -689,6 +686,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("a not\\\nin\n b")
     end
 
+    test "not in rewrite" do
+      assert_conforms("not a in b")
+      assert_conforms("not\na in\nb")
+      assert_conforms("!a in b")
+    end
+
     test "in_match_op_eol (<-, \\\\)" do
       assert_conforms("a <- b")
       assert_conforms("a \\\\ b")
@@ -704,8 +707,7 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "when_op_eol (when)" do
-      # Note: Tests with function calls require full call parsing integration
-      # assert_conforms("a when is_atom(a)")
+      assert_conforms("a when is_atom(a)")
       assert_conforms("x when y")
       assert_conforms("x when y when z")
       assert_conforms("a when\nb")
@@ -819,8 +821,7 @@ defmodule ToxicParser.ConformanceTest do
     test "capture_op_eol (&)" do
       # matched_expr -> capture_op_eol matched_expr
       assert_conforms("&foo")
-      # Note: &Mod.fun/1 requires dot expression parsing
-      # assert_conforms("&Mod.fun/1")
+      assert_conforms("&Mod.fun/1")
       assert_conforms("&\nfoo")
     end
 
@@ -837,13 +838,11 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("bar :atom")
     end
 
-    # Note: Dot call requires dot expression parsing
     test "dot identifier with single matched arg" do
       assert_conforms("foo.bar 1")
       assert_conforms("a.b.c :x")
     end
 
-    # Note: op_identifier requires special spacing handling
     test "op_identifier with single matched arg" do
       # Unary-looking calls like `a -1` are op_identifier
       assert_conforms("a -1")
@@ -885,14 +884,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms(":asd.b")
     end
 
-    @tag :skip
     test "no_parens_zero_expr - bare do_identifier" do
       # no_parens_zero_expr -> dot_identifier
       assert_conforms("foo do\n:ok\nend")
       assert_conforms("bar do\n:ok\nend")
     end
 
-    @tag :skip
     test "no_parens_zero_expr - dot do_identifier" do
       # matched_expr dot_op identifier
       assert_conforms("foo.bar do\n:ok\nend")
@@ -1282,9 +1279,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{!\nfoo}")
       assert_conforms("%{-foo}")
       assert_conforms("%{-\nfoo}")
-      # TODO ternary
-      # assert_conforms("%{//foo}")
-      # assert_conforms("%{//\nfoo}")
+
+      assert_conforms("%{//foo}")
+      assert_conforms("%{//\nfoo}")
+
       # map_base_expr -> ellipsis_op map_base_expr
       assert_conforms("%{...x}")
       assert_conforms("%{...1}")
@@ -1337,9 +1335,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%Foo{!\nfoo}")
       assert_conforms("%Foo{-foo}")
       assert_conforms("%Foo{-\nfoo}")
-      # TODO ternary
-      # assert_conforms("%Foo{//foo}")
-      # assert_conforms("%Foo{//\nfoo}")
+
+      assert_conforms("%Foo{//foo}")
+      assert_conforms("%Foo{//\nfoo}")
+
       # map_base_expr -> ellipsis_op map_base_expr
       assert_conforms("%Foo{...x}")
       assert_conforms("%Foo{...1}")
@@ -1363,9 +1362,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%-\nfoo{}")
       assert_conforms("%!foo{}")
       assert_conforms("%!\nfoo{}")
-      # TODO ternary
-      # assert_conforms("%//foo{}")
-      # assert_conforms("%//\nfoo{}")
+
+      assert_conforms("%//foo{}")
+      assert_conforms("%//\nfoo{}")
+
       assert_conforms("%...foo{}")
     end
 
@@ -1557,7 +1557,9 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("a .. if true do\n:x\nend")
       assert_conforms("a ..\nif true do\n:x\nend")
 
-      # TODO ternary
+      # ternary_op_eol unmatched_expr
+      assert_conforms("a..b//if true do\n:x\nend")
+      assert_conforms("a..b//\nif true do\n:x\nend")
 
       # and_op_eol unmatched_expr
       assert_conforms("true && if true do\n:ok\nend")
@@ -1641,7 +1643,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("not if true do\ntrue\nend")
       assert_conforms("-if true do\n1\nend")
       assert_conforms("-\nif true do\n1\nend")
-      # TODO ternary
+      assert_conforms("//if true do\n1\nend")
+      assert_conforms("//\nif true do\n1\nend")
     end
 
     test "at_op_eol expr" do
@@ -1681,7 +1684,6 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "dot_op_identifier call_args_no_parens_all do_block" do
-      # TODO is it correct?
       assert_conforms("foo -1 do\n:ok\nend")
       assert_conforms("foo.bar -1 do\n:ok\nend")
     end
@@ -1849,7 +1851,9 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("1 ++ foo 2, 3")
       assert_conforms("a --\nbar :x, :y")
 
-      # TODO ternary
+      # ternary_op_eol no_parens_expr
+      assert_conforms("1..2//foo 2, 3")
+      assert_conforms("1..2//\nfoo 2, 3")
 
       # xor_op_eol no_parens_expr
       assert_conforms("1 ^^^ foo 2, 3")
@@ -1915,7 +1919,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("not bar :a, :b")
       assert_conforms("-foo 1, 2")
       assert_conforms("-\nfoo 1, 2")
-      # TODO ternary
+      assert_conforms("//foo 1, 2")
+      assert_conforms("//\nfoo 1, 2")
     end
 
     test "at_op_eol no_parens_expr" do

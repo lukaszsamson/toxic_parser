@@ -1173,6 +1173,14 @@ defmodule ToxicParser.Pratt do
     {:not, not_meta, [{:in, in_meta, [left, right]}]}
   end
 
+  # Deprecated "not expr1 in expr2" rewrite - when in_op follows {:not, _, [operand]} or {:!, _, [operand]}
+  # Rewrites to {:not, InMeta, [{:in, InMeta, [operand, right]}]} or {:!, InMeta, [{:in, InMeta, [operand, right]}]}
+  defp build_binary_op(%{kind: :in_op, value: :in, metadata: meta}, {op, _op_meta, [operand]}, right, _newlines)
+       when op in [:not, :!] do
+    in_meta = build_meta(meta)
+    {op, in_meta, [{:in, in_meta, [operand, right]}]}
+  end
+
   # Assoc operator (=>) annotates LHS with :assoc metadata
   defp build_binary_op(%{kind: :assoc_op, metadata: meta}, left, right, newlines) do
     op_meta = build_meta_with_newlines(meta, newlines)
