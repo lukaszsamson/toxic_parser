@@ -54,4 +54,20 @@ defmodule ToxicParser.ContainersTest do
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
     assert Macro.to_string(ast) in ["%Foo{struct | a: 1}", "%Foo{struct | [a: 1]}"]
   end
+
+  test "parses bitstrings" do
+    log = EventLog.new()
+
+    state = TokenAdapter.new("<<>>")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "<<>>"
+
+    state = TokenAdapter.new("<<1>>")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) == "<<1>>"
+
+    state = TokenAdapter.new("<<x::8>>")
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) =~ "<<"
+  end
 end
