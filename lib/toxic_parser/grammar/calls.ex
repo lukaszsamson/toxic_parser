@@ -39,13 +39,18 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_identifier(_kind, tok, state, ctx, log) do
+  defp parse_identifier(kind, tok, state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
         parse_paren_call(tok, state, ctx, log)
 
       {:ok, next_tok, _} ->
         cond do
+          # op_identifier means tokenizer determined this is a no-parens call
+          # with a unary expression argument (e.g., "a -1" where - is unary)
+          kind == :op_identifier ->
+            parse_op_identifier_call(tok, state, ctx, log)
+
           # Binary operator follows - let Pratt handle expression
           Pratt.bp(next_tok.kind) ->
             state = TokenAdapter.pushback(state, tok)
@@ -64,6 +69,18 @@ defmodule ToxicParser.Grammar.Calls do
       _ ->
         ast = Builder.Helpers.from_token(tok)
         maybe_do_block(ast, state, ctx, log)
+    end
+  end
+
+  # Parse op_identifier call like "a -1" where the argument starts with a unary op
+  # The tokenizer has determined this is a call, not a binary expression
+  defp parse_op_identifier_call(callee_tok, state, ctx, log) do
+    with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+      callee = callee_tok.value
+      # ambiguous_op: nil comes first, per elixir_parser.yrl build_call for op_identifier
+      meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
+      ast = {callee, meta, [arg]}
+      maybe_do_block(ast, state, ctx, log)
     end
   end
 
