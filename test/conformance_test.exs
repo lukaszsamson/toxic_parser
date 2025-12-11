@@ -858,7 +858,6 @@ defmodule ToxicParser.ConformanceTest do
       # tuple -> open_curly container_args close_curly
       assert_conforms("{}")
       assert_conforms("{\n}")
-      assert_conforms("{}")
       assert_conforms("{1, 2}")
       assert_conforms("{\n1, 2}")
       assert_conforms("{1, 2\n}")
@@ -892,8 +891,15 @@ defmodule ToxicParser.ConformanceTest do
     test "bitstring" do
       # access_expr -> bitstring
       assert_conforms("<<>>")
-      assert_conforms("<<1>>")
-      assert_conforms("<<1, 2, 3>>")
+      assert_conforms("<<\n>>")
+      assert_conforms("<<1, 2>>")
+      assert_conforms("<<\n1, 2>>")
+      assert_conforms("<<1, 2\n>>")
+      assert_conforms("<<1, 2,>>")
+
+      assert_conforms("<<1, if a do\n:ok\nend, 3>>")
+      assert_conforms("<<foo, bar: baz>>")
+      assert_conforms("<<foo, bar: baz\n>>")
       assert_conforms("<<x::binary>>")
     end
 
