@@ -827,16 +827,133 @@ defmodule ToxicParser.ConformanceTest do
 
     test "paren stab" do
       # access_expr -> open_paren stab_eoe ')'
-      assert_conforms("(->)")
+      # access_expr -> open_paren ';' stab_eoe ')'
+
+      # stab -> stab_expr
+      # stab -> stab eoe stab_expr
+
       assert_conforms("(1 -> 2)")
-      assert_conforms("(a, b -> a + b)")
+      assert_conforms("(;1 -> 2)")
+      assert_conforms("(1 -> 2\n)")
+      assert_conforms("(;1 -> 2\n)")
+      assert_conforms("(1 -> 2;)")
+      assert_conforms("(;1 -> 2;)")
+      assert_conforms("(1 -> 2\n;)")
+      assert_conforms("(;1 -> 2\n;)")
+
+      assert_conforms("(1 -> 2\n3 -> 4)")
+      assert_conforms("(1 -> 2;3 -> 4)")
+      assert_conforms("(1 -> 2\n;3 -> 4)")
+
+      # stab_expr -> expr
+      assert_conforms("(1)")
+      assert_conforms("(foo)")
+      assert_conforms("(foo())")
+      assert_conforms("(if a do\n:ok\nend)")
+      assert_conforms("(foo 1, 2, 3)")
+      # stab_expr -> stab_op_eol_and_expr
+      # stab_op_eol_and_expr -> stab_op_eol expr
+      # stab_op_eol_and_expr -> stab_op_eol
+      assert_conforms("(-> foo())")
+      assert_conforms("(-> if a do\n:ok\nend)")
+      assert_conforms("(-> foo 1, 2, 3)")
+      assert_conforms("(->\nfoo())")
+      assert_conforms("(->\nif a do\n:ok\nend)")
+      assert_conforms("(->\nfoo 1, 2, 3)")
+      assert_conforms("(->)")
+      assert_conforms("(->\n)")
+      # stab_expr -> empty_paren stab_op_eol_and_expr
+      assert_conforms("(() -> foo())")
+      assert_conforms("((\n) -> foo())")
+      assert_conforms("(() -> if a do\n:ok\nend)")
+      assert_conforms("(() -> foo 1, 2, 3)")
+      assert_conforms("(() ->\nfoo())")
+      assert_conforms("(() ->\nif a do\n:ok\nend)")
+      assert_conforms("(() ->\nfoo 1, 2, 3)")
+      assert_conforms("(() ->)")
+      assert_conforms("(() ->\n)")
+      # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+      assert_conforms("(() when x -> foo())")
+      assert_conforms("(() when bar() -> foo())")
+      assert_conforms("(() when if a do\n:ok\nend -> foo())")
+      assert_conforms("(() when bar 1, 2, 3 -> foo())")
+      assert_conforms("((\n) when x -> foo())")
+      assert_conforms("(() when x -> if a do\n:ok\nend)")
+      assert_conforms("(() when x -> foo 1, 2, 3)")
+      assert_conforms("(() when x ->\nfoo())")
+      assert_conforms("(() when x ->\nif a do\n:ok\nend)")
+      assert_conforms("(() when x ->\nfoo 1, 2, 3)")
+      assert_conforms("(() when x ->)")
+      assert_conforms("(() when x ->\n)")
+      # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
+      # call_args_no_parens_all -> call_args_no_parens_one
+      # call_args_no_parens_all -> call_args_no_parens_ambig
+      # call_args_no_parens_all -> call_args_no_parens_many
+
+      # call_args_no_parens_one -> call_args_no_parens_kw
+      # call_args_no_parens_one -> matched_expr
+      assert_conforms("(x -> foo())")
+      assert_conforms("(1 -> foo())")
+      assert_conforms("(g() -> foo())")
+
+      assert_conforms("(x: 1 -> foo())")
+      assert_conforms("(x: 1, y: :ok -> foo())")
+      assert_conforms("(x: 1,\ny: :ok -> foo())")
+      assert_conforms("(x: 1, y:\n:ok -> foo())")
+      assert_conforms("(x: q() -> foo())")
+      assert_conforms("(x: bar 1, 2 -> foo())")
+
+      # call_args_no_parens_ambig -> no_parens_expr
+      assert_conforms("(x 1, 2, 3 -> foo())")
+
+      # call_args_no_parens_many -> matched_expr ',' call_args_no_parens_kw
+      assert_conforms("(x, a: 1 -> foo())")
+      assert_conforms("(x,\na: 1 -> foo())")
+      assert_conforms("(x(), a: 1 -> foo())")
+      assert_conforms("(x, \na: 1 -> foo())")
+      assert_conforms("(x, a:\n 1 -> foo())")
+      # call_args_no_parens_many -> call_args_no_parens_comma_expr
+      # call_args_no_parens_comma_expr -> matched_expr ',' call_args_no_parens_expr
+      # call_args_no_parens_comma_expr -> call_args_no_parens_comma_expr ',' call_args_no_parens_expr
+      # call_args_no_parens_expr -> matched_expr
+      assert_conforms("(x, y -> foo())")
+      assert_conforms("(x,\ny -> foo())")
+      assert_conforms("(x(), y() -> foo())")
+      assert_conforms("(x(), y(), 1 -> foo())")
+      # call_args_no_parens_many -> call_args_no_parens_comma_expr ',' call_args_no_parens_kw
+      assert_conforms("(x, y: 1 -> foo())")
+      assert_conforms("(x, y(), z: 1 -> foo())")
+      assert_conforms("(x, y(),\nz: 1 -> foo())")
+      assert_conforms("(x, y(), z:\n1 -> foo())")
+
+      # stab_expr -> stab_parens_many stab_op_eol_and_expr
+      # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
+      assert_conforms("((a: 1) -> foo())")
+      assert_conforms("((a:\n1, b: :ok) -> foo())")
+      # stab_parens_many -> open_paren call_args_no_parens_many close_paren
+      assert_conforms("((x, a: 1) -> foo())")
+      assert_conforms("((\nx, a: 1) -> foo())")
+      assert_conforms("((x, y(), a: 1\n) -> foo())")
+      assert_conforms("((x,\na: 1) -> foo())")
+      assert_conforms("((x(), a: 1) -> foo())")
+      assert_conforms("((x, \na: 1) -> foo())")
+      assert_conforms("((x, a:\n 1) -> foo())")
+
+      # stab_expr -> stab_parens_many when_op expr stab_op_eol_and_expr
+      assert_conforms("((a: 1) when x() -> foo())")
+      assert_conforms("((a: 1) when if z do\n:ok\nend -> foo())")
+      assert_conforms("((a: 1) when x 4, 5, 6 -> foo())")
+      assert_conforms("((a:\n1, b: :ok) when x() -> foo())")
+      assert_conforms("((x, a: 1) when x() -> foo())")
+      assert_conforms("((\nx, a: 1) when x() -> foo())")
     end
 
     test "paren with semicolon" do
       # access_expr -> open_paren ';' stab_eoe ')'
       # access_expr -> open_paren ';' close_paren
       assert_conforms("(;)")
-      assert_conforms("(;1 -> 2)")
+      assert_conforms("(\n;)")
+      assert_conforms("(;\n)")
     end
 
     test "empty_paren" do

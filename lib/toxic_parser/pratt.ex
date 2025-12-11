@@ -37,11 +37,12 @@ defmodule ToxicParser.Pratt do
   @doc """
   Parses a base expression (nud only, no trailing operators via led).
   Used for sub_matched_expr in map_base_expr grammar rule.
+  This version does NOT check for do-blocks or no-parens call arguments.
   """
   @spec parse_base(State.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, context, %EventLog{} = log) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, ast, state, log} <- nud(token, state, context, log) do
+         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
       {:ok, ast, state, log}
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -52,11 +53,12 @@ defmodule ToxicParser.Pratt do
   @doc """
   Parses an expression with a minimum binding power.
   Used for map updates where we need to stop before the pipe operator.
+  Also used for guard expressions in stab clauses where we need to stop before ->.
   """
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer()) :: result()
   def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, left, state, log} <- nud(token, state, context, log) do
+         {:ok, left, state, log} <- nud_with_min_bp(token, state, context, log, min_bp) do
       led(left, state, log, min_bp, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -84,6 +86,42 @@ defmodule ToxicParser.Pratt do
 
   # Handle unary operators in nud (null denotation)
   defp nud(token, state, context, log) do
+    nud_with_min_bp(token, state, context, log, 0)
+  end
+
+  # Handle nud for base expressions only - no do-blocks or no-parens calls
+  # This is used by parse_base for struct names like %Foo{} where we want
+  # just the identifier, not trying to parse { as a no-parens call argument
+  defp nud_base(token, state, context, log) do
+    case token.kind do
+      :error_token ->
+        meta = build_meta(token.metadata)
+        ast = Builder.Helpers.error(token.value, meta)
+        {:ok, ast, state, log}
+
+      :capture_int ->
+        parse_capture_int(token, state, log)
+
+      _ ->
+        case Precedence.unary(token.kind) do
+          {bp, _assoc} ->
+            parse_unary(token, state, context, log, bp)
+
+          nil ->
+            if token.kind == :dual_op do
+              parse_unary(token, state, context, log, 300)
+            else
+              # Just convert to literal AST, no do-block or no-parens call check
+              ast = literal_to_ast(token)
+              {:ok, ast, state, log}
+            end
+        end
+    end
+  end
+
+  # Handle unary operators in nud with a minimum binding power constraint
+  # The min_bp is passed through to argument parsing for no-parens calls
+  defp nud_with_min_bp(token, state, context, log, min_bp) do
     case token.kind do
       :error_token ->
         meta = build_meta(token.metadata)
@@ -108,8 +146,8 @@ defmodule ToxicParser.Pratt do
             else
               # Not a unary operator - convert to literal AST
               ast = literal_to_ast(token)
-              # Check if identifier followed by do/end block
-              maybe_do_block(ast, token, state, context, log)
+              # Check if identifier followed by do/end block or no-parens call
+              maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp)
             end
         end
     end
@@ -138,16 +176,36 @@ defmodule ToxicParser.Pratt do
   end
 
   # Check for do/end block after an identifier (for RHS of binary ops)
-  # Note: No-parens call detection is handled by Calls module, not here
-  defp maybe_do_block(ast, token, state, context, log) do
-    if token.kind == :identifier do
+  # Handles both :identifier and :do_identifier (e.g., `if`, `unless`, `case`, etc.)
+  # Note: This function returns JUST the AST without calling led, so the caller
+  # can call led with the appropriate min_bp.
+  # This version threads min_bp through to argument parsing so that operators
+  # like -> in guard expressions are not consumed as binary operators.
+  defp maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp) do
+    if token.kind in [:identifier, :do_identifier] do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :do}, _} ->
-          with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
-            # Attach do block to the identifier as a call with do/end metadata
-            token_meta = Builder.Helpers.token_meta(token.metadata)
-            call_ast = {token.value, block_meta ++ token_meta, [sections]}
-            {:ok, call_ast, state, log}
+          # In matched context, do_identifier tokens should NOT consume the do-block
+          # The do-block belongs to an outer call, not to this argument
+          if token.kind == :do_identifier and context == :matched do
+            {:ok, ast, state, log}
+          else
+            with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+              # Attach do block to the identifier as a call with do/end metadata
+              token_meta = Builder.Helpers.token_meta(token.metadata)
+              call_ast = {token.value, block_meta ++ token_meta, [sections]}
+              {:ok, call_ast, state, log}
+            end
+          end
+
+        {:ok, next_tok, _} ->
+          # Check if this could be a no-parens call (e.g., `if a do :ok end`)
+          if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+            # Parse as no-parens call but WITHOUT calling led at the end
+            # The caller (parse_with_min_bp) will call led with the correct min_bp
+            parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+          else
+            {:ok, ast, state, log}
           end
 
         _ ->
@@ -155,6 +213,87 @@ defmodule ToxicParser.Pratt do
       end
     else
       {:ok, ast, state, log}
+    end
+  end
+
+  # Parse a no-parens call in nud context (for identifiers followed by args)
+  # This is similar to Calls.parse_no_parens_call but doesn't call led at the end
+  # This version uses min_bp to stop argument parsing before certain operators
+  defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp) do
+    with {:ok, args, state, log} <- parse_no_parens_args_with_min_bp([], state, context, log, min_bp) do
+      callee = callee_tok.value
+      meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      ast = {callee, meta, args}
+      # Check for do-block ONLY, don't call led (caller will do that)
+      maybe_do_block_no_led(ast, state, context, log)
+    end
+  end
+
+  # Check for do-block after call, but don't call led
+  defp maybe_do_block_no_led(ast, state, context, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :do}, _} ->
+        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+          ast =
+            case ast do
+              {name, meta, args} when is_list(args) ->
+                # Prepend do/end metadata to the call's existing metadata
+                {name, block_meta ++ meta, args ++ [sections]}
+
+              other ->
+                Builder.Helpers.call(other, [sections], block_meta)
+            end
+
+          {:ok, ast, state, log}
+        end
+
+      _ ->
+        {:ok, ast, state, log}
+    end
+  end
+
+  # Parse no-parens call arguments with a minimum binding power constraint
+  # This stops parsing before operators with binding power < min_bp
+  defp parse_no_parens_args_with_min_bp(acc, state, ctx, log, min_bp) do
+    case TokenAdapter.peek(state) do
+      # Check for operator that should stop us
+      {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+        {:ok, Enum.reverse(acc), state, log}
+
+      {:ok, %{kind: kind} = tok, _} ->
+        # Check if we should stop at this operator due to min_bp
+        case Precedence.binary(kind) do
+          {bp, _} when bp < min_bp ->
+            # Stop before this operator (e.g., -> with bp=10 when min_bp=11)
+            {:ok, Enum.reverse(acc), state, log}
+
+          _ ->
+            cond do
+              Keywords.starts_kw?(tok) ->
+                with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                  {:ok, Enum.reverse([[kw_list] | acc]), state, log}
+                end
+
+              true ->
+                # Parse arg with min_bp constraint
+                with {:ok, arg, state, log} <- parse_with_min_bp(state, :matched, log, min_bp) do
+                  case TokenAdapter.peek(state) do
+                    {:ok, %{kind: :","}, _} ->
+                      {:ok, _comma, state} = TokenAdapter.next(state)
+                      parse_no_parens_args_with_min_bp([arg | acc], state, ctx, log, min_bp)
+
+                    _ ->
+                      {:ok, Enum.reverse([arg | acc]), state, log}
+                  end
+                end
+            end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
     end
   end
 
@@ -276,7 +415,7 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
-          # Nested parens call: expr()(args) - call the result of expr with args
+          # Parens call: identifier(args) or expr()(args) (nested call)
           # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
           {:"(", _} ->
             {:ok, _open_tok, state} = TokenAdapter.next(state)
@@ -306,7 +445,14 @@ defmodule ToxicParser.Pratt do
                   newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
                   call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
 
-                  combined = {left, call_meta, Enum.reverse(args)}
+                  # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
+                  # Otherwise it's a nested call: {left, call_meta, args}
+                  combined = case left do
+                    {name, _meta, nil} when is_atom(name) ->
+                      {name, call_meta, Enum.reverse(args)}
+                    _ ->
+                      {left, call_meta, Enum.reverse(args)}
+                  end
                   led(combined, state, log, min_bp, context)
 
                 {:ok, other, state} ->
@@ -769,6 +915,16 @@ defmodule ToxicParser.Pratt do
 
   # Identifier: wrap in tuple with nil context (variable reference)
   defp literal_to_ast(%{kind: :identifier, value: atom, metadata: meta}) do
+    {atom, build_meta(meta), nil}
+  end
+
+  # Paren identifier: same as identifier, ( will be handled by led
+  defp literal_to_ast(%{kind: :paren_identifier, value: atom, metadata: meta}) do
+    {atom, build_meta(meta), nil}
+  end
+
+  # Do identifier: same as identifier
+  defp literal_to_ast(%{kind: :do_identifier, value: atom, metadata: meta}) do
     {atom, build_meta(meta), nil}
   end
 

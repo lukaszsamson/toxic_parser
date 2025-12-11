@@ -23,17 +23,23 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list usable in call argument position."
   @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_call(%State{} = state, ctx, %EventLog{} = log) do
-    parse_kw_list([], state, ctx, log)
+    parse_kw_list([], state, ctx, log, 0)
+  end
+
+  @doc "Parses a keyword list with a minimum binding power constraint."
+  @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse_kw_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
+    parse_kw_list([], state, ctx, log, min_bp)
   end
 
   @doc "Parses a keyword list usable in data (container) position."
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_data(%State{} = state, ctx, %EventLog{} = log) do
-    parse_kw_list([], state, ctx, log)
+    parse_kw_list([], state, ctx, log, 0)
   end
 
-  defp parse_kw_list(acc, state, ctx, log) do
-    case parse_kw_pair(state, ctx, log) do
+  defp parse_kw_list(acc, state, ctx, log, min_bp) do
+    case parse_kw_pair(state, ctx, log, min_bp) do
       {:ok, pair, state, log} ->
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :","}, _} ->
@@ -44,7 +50,7 @@ defmodule ToxicParser.Grammar.Keywords do
                 {:ok, Enum.reverse([pair | acc]), state, log}
 
               _ ->
-                parse_kw_list([pair | acc], state, ctx, log)
+                parse_kw_list([pair | acc], state, ctx, log, min_bp)
             end
 
           _ ->
@@ -56,12 +62,19 @@ defmodule ToxicParser.Grammar.Keywords do
     end
   end
 
-  defp parse_kw_pair(state, ctx, log) do
+  defp parse_kw_pair(state, ctx, log, min_bp) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: kind, value: key}, state} when kind in @kw_kinds ->
         state = skip_eoe(state)
 
-        with {:ok, value_ast, state, log} <- Expressions.expr(state, ctx, log) do
+        # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
+        result = if min_bp > 0 do
+          Pratt.parse_with_min_bp(state, ctx, log, min_bp)
+        else
+          Expressions.expr(state, ctx, log)
+        end
+
+        with {:ok, value_ast, state, log} <- result do
           key_ast = Builder.Helpers.literal(key)
           {:ok, {key_ast, value_ast}, state, log}
         end
