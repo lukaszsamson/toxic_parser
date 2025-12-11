@@ -1723,6 +1723,9 @@ defmodule ToxicParser.ConformanceTest do
       # no_parens_many_expr -> dot_op_identifier call_args_no_parens_many_strict
       assert_conforms("foo -1, 2")
       assert_conforms("foo +1, -2")
+
+      assert_conforms("foo.bar -1, 2")
+      assert_conforms("foo.bar +1, -2")
     end
   end
 

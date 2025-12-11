@@ -87,15 +87,33 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  # Parse op_identifier call like "a -1" where the argument starts with a unary op
+  # Parse op_identifier call like "a -1" or "a -1, 2" where the first argument starts with a unary op
   # The tokenizer has determined this is a call, not a binary expression
+  # Grammar: no_parens_many_expr -> op_identifier call_args_no_parens_ambig
+  #          no_parens_one_ambig -> op_identifier call_args_no_parens_ambig
   defp parse_op_identifier_call(callee_tok, state, ctx, log) do
-    with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
-      callee = callee_tok.value
-      # ambiguous_op: nil comes first, per elixir_parser.yrl build_call for op_identifier
-      meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
-      ast = {callee, meta, [arg]}
-      maybe_do_block(ast, state, ctx, log)
+    # Parse first arg (the unary expression)
+    with {:ok, first_arg, state, log} <- Expressions.expr(state, :matched, log) do
+      # Check for comma to see if there are more args
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          # Multiple args - continue parsing
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log) do
+            callee = callee_tok.value
+            # No ambiguous_op metadata when multiple args
+            meta = Builder.Helpers.token_meta(callee_tok.metadata)
+            ast = {callee, meta, args}
+            maybe_do_block(ast, state, ctx, log)
+          end
+
+        _ ->
+          # Single arg - add ambiguous_op: nil metadata
+          callee = callee_tok.value
+          meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
+          ast = {callee, meta, [first_arg]}
+          maybe_do_block(ast, state, ctx, log)
+      end
     end
   end
 
