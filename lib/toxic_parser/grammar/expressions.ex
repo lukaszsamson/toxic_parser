@@ -94,9 +94,18 @@ defmodule ToxicParser.Grammar.Expressions do
             {:error, reason, state, log}
 
           {:no_container, state} ->
-            case Calls.parse(state, ctx, log) do
-              {:ok, ast, state, log} -> {:ok, ast, state, log}
-              {:error, reason, state, log} -> {:error, reason, state, log}
+            case ToxicParser.Grammar.Strings.parse(state, ctx, log) do
+              {:ok, ast, state, log} ->
+                {:ok, ast, state, log}
+
+              {:no_string, state} ->
+                case Calls.parse(state, ctx, log) do
+                  {:ok, ast, state, log} -> {:ok, ast, state, log}
+                  {:error, reason, state, log} -> {:error, reason, state, log}
+                end
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
             end
         end
     end
