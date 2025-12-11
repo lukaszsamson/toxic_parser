@@ -182,37 +182,79 @@ defmodule ToxicParser.Pratt do
   # This version threads min_bp through to argument parsing so that operators
   # like -> in guard expressions are not consumed as binary operators.
   defp maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp) do
-    if token.kind in [:identifier, :do_identifier] do
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :do}, _} ->
-          # In matched context, do_identifier tokens should NOT consume the do-block
-          # The do-block belongs to an outer call, not to this argument
-          if token.kind == :do_identifier and context == :matched do
+    case token.kind do
+      # do_identifier can attach do-blocks (e.g., `if cond do ... end`)
+      :do_identifier ->
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :do}, _} ->
+            # In matched context, do_identifier tokens should NOT consume the do-block
+            # The do-block belongs to an outer call, not to this argument
+            if context == :matched do
+              {:ok, ast, state, log}
+            else
+              with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+                token_meta = Builder.Helpers.token_meta(token.metadata)
+                call_ast = {token.value, block_meta ++ token_meta, [sections]}
+                {:ok, call_ast, state, log}
+              end
+            end
+
+          {:ok, next_tok, _} ->
+            # do_identifier can also have no-parens args before do-block
+            if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+            else
+              {:ok, ast, state, log}
+            end
+
+          _ ->
             {:ok, ast, state, log}
-          else
+        end
+
+      # op_identifier indicates no-parens call (tokenizer detected arg-like token follows)
+      # e.g., `foo -1` tokenizes foo as :op_identifier
+      :op_identifier ->
+        case TokenAdapter.peek(state) do
+          {:ok, next_tok, _} ->
+            if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+            else
+              {:ok, ast, state, log}
+            end
+
+          _ ->
+            {:ok, ast, state, log}
+        end
+
+      # Plain :identifier - can start no-parens calls but NOT when followed by dual_op
+      # e.g., `x + y` - x is :identifier, + is dual_op with spaces, so it's binary op
+      # e.g., `if a do :ok end` - if is :identifier, a is do_identifier, so it's no-parens call
+      :identifier ->
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :do}, _} ->
+            # identifier followed by do - parse as call with do-block
             with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
-              # Attach do block to the identifier as a call with do/end metadata
               token_meta = Builder.Helpers.token_meta(token.metadata)
               call_ast = {token.value, block_meta ++ token_meta, [sections]}
               {:ok, call_ast, state, log}
             end
-          end
 
-        {:ok, next_tok, _} ->
-          # Check if this could be a no-parens call (e.g., `if a do :ok end`)
-          if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
-            # Parse as no-parens call but WITHOUT calling led at the end
-            # The caller (parse_with_min_bp) will call led with the correct min_bp
-            parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
-          else
+          {:ok, next_tok, _} ->
+            # For plain identifiers, only parse no-parens call if next token is NOT dual_op
+            # (dual_op after identifier with spaces is binary operator, not unary argument)
+            if next_tok.kind != :dual_op and (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
+              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+            else
+              {:ok, ast, state, log}
+            end
+
+          _ ->
             {:ok, ast, state, log}
-          end
+        end
 
-        _ ->
-          {:ok, ast, state, log}
-      end
-    else
-      {:ok, ast, state, log}
+      # Other tokens (literals, etc.) - just return AST
+      _ ->
+        {:ok, ast, state, log}
     end
   end
 

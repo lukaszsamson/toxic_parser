@@ -39,13 +39,35 @@ defmodule ToxicParser.Grammar.Blocks do
   end
 
   defp parse_fn(fn_tok, state, ctx, log) do
+    alias ToxicParser.Grammar.Containers
+
     {:ok, _fn, state} = TokenAdapter.next(state)
+    fn_meta = token_meta(fn_tok.metadata)
     log = enter_scope(log, :fn, fn_tok.metadata)
 
-    with {:ok, clauses, state, log} <- parse_clauses([], state, ctx, log, [:end]),
-         {:ok, _end, state} <- expect_kind(state, :end) do
+    # Skip optional EOE after fn and count newlines
+    {state, newlines} = skip_eoe_count_newlines(state, 0)
+
+    # Use the same stab_eoe parsing as paren stabs, but with :end terminator
+    with {:ok, clauses, state, log} <- Containers.parse_stab_eoe_until([], state, ctx, log, :end),
+         {:ok, end_meta, state} <- expect_kind_with_meta(state, :end) do
       log = exit_scope(log, :fn, fn_tok.metadata)
-      {:ok, {:fn, [], clauses}, state, log}
+      end_location = token_meta(end_meta)
+      # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+      meta = newlines_meta ++ [closing: end_location] ++ fn_meta
+      {:ok, {:fn, meta, clauses}, state, log}
+    end
+  end
+
+  defp skip_eoe_count_newlines(state, count) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_count_newlines(state, count + n)
+
+      _ ->
+        {state, count}
     end
   end
 

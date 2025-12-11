@@ -818,11 +818,120 @@ defmodule ToxicParser.ConformanceTest do
 
     test "fn expression" do
       # access_expr -> fn_eoe stab_eoe 'end'
-      assert_conforms("fn -> :ok end")
-      assert_conforms("fn x -> x end")
-      assert_conforms("fn x, y -> x + y end")
-      assert_conforms("fn\n-> :ok end")
-      assert_conforms("fn x ->\nx\nend")
+      # stab -> stab_expr
+      # stab -> stab eoe stab_expr
+
+
+      assert_conforms("fn 1 -> 2 end")
+      assert_conforms("fn 1 -> 2\n end")
+      assert_conforms("fn 1 -> 2; end")
+      assert_conforms("fn 1 -> 2\n; end")
+
+      assert_conforms("fn;1 -> 2 end")
+      assert_conforms("fn\n1 -> 2 end")
+      assert_conforms("fn\n;1 -> 2 end")
+
+      assert_conforms("fn 1 -> 2\n3 -> 4 end")
+      assert_conforms("fn 1 -> 2;3 -> 4 end")
+      assert_conforms("fn 1 -> 2\n;3 -> 4 end")
+
+      # stab_expr -> expr
+      # this case is an error
+      # stab_expr -> stab_op_eol_and_expr
+      # stab_op_eol_and_expr -> stab_op_eol expr
+      # stab_op_eol_and_expr -> stab_op_eol
+      assert_conforms("fn -> foo() end")
+      assert_conforms("fn -> if a do\n:ok\nend end")
+      assert_conforms("fn -> foo 1, 2, 3 end")
+      assert_conforms("fn ->\nfoo() end")
+      assert_conforms("fn ->\nif a do\n:ok\nend end")
+      assert_conforms("fn ->\nfoo 1, 2, 3 end")
+      assert_conforms("fn -> end")
+      assert_conforms("fn ->\nend")
+      # stab_expr -> empty_paren stab_op_eol_and_expr
+      assert_conforms("fn () -> foo() end")
+      assert_conforms("fn (\n) -> foo() end")
+      assert_conforms("fn () -> if a do\n:ok\nend end")
+      assert_conforms("fn () -> foo 1, 2, 3 end")
+      assert_conforms("fn () ->\nfoo() end")
+      assert_conforms("fn () ->\nif a do\n:ok\nend end")
+      assert_conforms("fn () ->\nfoo 1, 2, 3 end")
+      assert_conforms("fn () -> end")
+      assert_conforms("fn () ->\nend")
+      # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+      assert_conforms("fn () when x -> foo() end")
+      assert_conforms("fn () when bar() -> foo() end")
+      assert_conforms("fn () when if a do\n:ok\nend -> foo() end")
+      assert_conforms("fn () when bar 1, 2, 3 -> foo() end")
+      assert_conforms("fn (\n) when x -> foo() end")
+      assert_conforms("fn () when x -> if a do\n:ok\nend end")
+      assert_conforms("fn () when x -> foo 1, 2, 3 end")
+      assert_conforms("fn () when x ->\nfoo() end")
+      assert_conforms("fn () when x ->\nif a do\n:ok\nend end")
+      assert_conforms("fn () when x ->\nfoo 1, 2, 3 end")
+      assert_conforms("fn () when x -> end")
+      assert_conforms("fn () when x ->\nend")
+      # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
+      # call_args_no_parens_all -> call_args_no_parens_one
+      # call_args_no_parens_all -> call_args_no_parens_ambig
+      # call_args_no_parens_all -> call_args_no_parens_many
+
+      # call_args_no_parens_one -> call_args_no_parens_kw
+      # call_args_no_parens_one -> matched_expr
+      assert_conforms("fn x -> foo() end")
+      assert_conforms("fn 1 -> foo() end")
+      assert_conforms("fn g() -> foo() end")
+
+      assert_conforms("fn x: 1 -> foo() end")
+      assert_conforms("fn x: 1, y: :ok -> foo() end")
+      assert_conforms("fn x: 1,\ny: :ok -> foo() end")
+      assert_conforms("fn x: 1, y:\n:ok -> foo() end")
+      assert_conforms("fn x: q() -> foo() end")
+      assert_conforms("fn x: bar 1, 2 -> foo() end")
+
+      # call_args_no_parens_ambig -> no_parens_expr
+      assert_conforms("fn x 1, 2, 3 -> foo() end")
+
+      # call_args_no_parens_many -> matched_expr ',' call_args_no_parens_kw
+      assert_conforms("fn x, a: 1 -> foo() end")
+      assert_conforms("fn x,\na: 1 -> foo() end")
+      assert_conforms("fn x(), a: 1 -> foo() end")
+      assert_conforms("fn x, \na: 1 -> foo() end")
+      assert_conforms("fn x, a:\n 1 -> foo() end")
+      # call_args_no_parens_many -> call_args_no_parens_comma_expr
+      # call_args_no_parens_comma_expr -> matched_expr ',' call_args_no_parens_expr
+      # call_args_no_parens_comma_expr -> call_args_no_parens_comma_expr ',' call_args_no_parens_expr
+      # call_args_no_parens_expr -> matched_expr
+      assert_conforms("fn x, y -> foo() end")
+      assert_conforms("fn x,\ny -> foo() end")
+      assert_conforms("fn x(), y() -> foo() end")
+      assert_conforms("fn x(), y(), 1 -> foo() end")
+      # call_args_no_parens_many -> call_args_no_parens_comma_expr ',' call_args_no_parens_kw
+      assert_conforms("fn x, y: 1 -> foo() end")
+      assert_conforms("fn x, y(), z: 1 -> foo() end")
+      assert_conforms("fn x, y(),\nz: 1 -> foo() end")
+      assert_conforms("fn x, y(), z:\n1 -> foo() end")
+
+      # stab_expr -> stab_parens_many stab_op_eol_and_expr
+      # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
+      assert_conforms("fn (a: 1) -> foo() end")
+      assert_conforms("fn (a:\n1, b: :ok) -> foo() end")
+      # stab_parens_many -> open_paren call_args_no_parens_many close_paren
+      assert_conforms("fn (x, a: 1) -> foo() end")
+      assert_conforms("fn (\nx, a: 1) -> foo() end")
+      assert_conforms("fn (x, y(), a: 1\n) -> foo() end")
+      assert_conforms("fn (x,\na: 1) -> foo() end")
+      assert_conforms("fn (x(), a: 1) -> foo() end")
+      assert_conforms("fn (x, \na: 1) -> foo() end")
+      assert_conforms("fn (x, a:\n 1) -> foo() end")
+
+      # stab_expr -> stab_parens_many when_op expr stab_op_eol_and_expr
+      assert_conforms("fn (a: 1) when x() -> foo() end")
+      assert_conforms("fn (a: 1) when if z do\n:ok\nend -> foo() end")
+      assert_conforms("fn (a: 1) when x 4, 5, 6 -> foo() end")
+      assert_conforms("fn (a:\n1, b: :ok) when x() -> foo() end")
+      assert_conforms("fn (x, a: 1) when x() -> foo() end")
+      assert_conforms("fn (\nx, a: 1) when x() -> foo() end")
     end
 
     test "paren stab" do
