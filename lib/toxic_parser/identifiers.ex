@@ -13,6 +13,12 @@ defmodule ToxicParser.Identifiers do
           | :bracket_identifier
           | :do_identifier
           | :op_identifier
+          | :dot_identifier
+          | :dot_paren_identifier
+          | :dot_bracket_identifier
+          | :dot_do_identifier
+          | :dot_op_identifier
+          | :dot_call_identifier
           | :other
   def classify(kind) do
     case kind do

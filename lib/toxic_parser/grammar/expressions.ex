@@ -28,6 +28,8 @@ defmodule ToxicParser.Grammar.Expressions do
 
     case expr(state, ctx, log) do
       {:ok, first, state, log} ->
+        # Check for trailing EOE and annotate expression
+        {first, state} = maybe_annotate_eoe(first, state)
         collect_exprs([first], state, ctx, log)
 
       {:error, :unexpected_eof, state, log} ->
@@ -49,6 +51,33 @@ defmodule ToxicParser.Grammar.Expressions do
   """
   @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr(%State{} = state, ctx, %EventLog{} = log) do
+    case ctx do
+      :matched -> matched_expr(state, log)
+      :unmatched -> unmatched_expr(state, log)
+      :no_parens -> no_parens_expr(state, log)
+      _ -> matched_expr(state, log)
+    end
+  end
+
+  @doc "Parses a matched expression (no trailing do-block attachment)."
+  @spec matched_expr(State.t(), EventLog.t()) :: result()
+  def matched_expr(%State{} = state, %EventLog{} = log) do
+    parse_with_layers(state, :matched, log)
+  end
+
+  @doc "Parses an unmatched expression (do-block capable context)."
+  @spec unmatched_expr(State.t(), EventLog.t()) :: result()
+  def unmatched_expr(%State{} = state, %EventLog{} = log) do
+    parse_with_layers(state, :unmatched, log)
+  end
+
+  @doc "Parses a no-parens expression (call-ambiguous context)."
+  @spec no_parens_expr(State.t(), EventLog.t()) :: result()
+  def no_parens_expr(%State{} = state, %EventLog{} = log) do
+    parse_with_layers(state, :no_parens, log)
+  end
+
+  defp parse_with_layers(state, ctx, log) do
     case Blocks.parse(state, ctx, log) do
       {:ok, ast, state, log} ->
         {:ok, ast, state, log}
@@ -87,6 +116,8 @@ defmodule ToxicParser.Grammar.Expressions do
           {:ok, _, _} ->
             case expr(state, ctx, log) do
               {:ok, next_expr, state, log} ->
+                # Annotate expression with trailing EOE if present
+                {next_expr, state} = maybe_annotate_eoe(next_expr, state)
                 collect_exprs([next_expr | acc], state, ctx, log)
 
               {:error, _reason, state, log} ->
@@ -146,4 +177,62 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp token_to_meta(_), do: []
+
+  # Annotate an expression with end_of_expression metadata if followed by EOE.
+  # This implements the `annotate_eoe` pattern from elixir_parser.yrl.
+  defp maybe_annotate_eoe(ast, state) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe} = eoe_token, _} ->
+        eoe_meta = build_eoe_meta(eoe_token)
+        annotated = annotate_eoe(ast, eoe_meta)
+        {annotated, state}
+
+      _ ->
+        {ast, state}
+    end
+  end
+
+  # Build end_of_expression metadata from an EOE token.
+  # Format: [newlines: N, line: L, column: C] when newlines count is available
+  # Based on elixir_parser.yrl end_of_expression/1:
+  # - Always include newlines if it's an integer (including 0)
+  # - Otherwise just include line/column
+  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
+       when is_integer(newlines) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [newlines: newlines, line: line, column: column]
+
+      _ ->
+        []
+    end
+  end
+
+  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
+    case meta do
+      %{range: %{start: %{line: line, column: column}}} ->
+        [line: line, column: column]
+
+      _ ->
+        []
+    end
+  end
+
+  defp build_eoe_meta(_), do: []
+
+  # Annotate an AST node with end_of_expression metadata.
+  # Based on elixir_parser.yrl annotate_eoe/2:
+  # - For stab expressions, annotate the RHS body
+  # - For other 3-tuples with list metadata, prepend end_of_expression
+  # - Skip stab operators themselves (they handle their own EOE)
+  defp annotate_eoe({:->, stab_meta, [stab_args, {left, meta, right}]}, eoe_meta)
+       when is_list(meta) do
+    {:->, stab_meta, [stab_args, {left, [{:end_of_expression, eoe_meta} | meta], right}]}
+  end
+
+  defp annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) and left != :-> do
+    {left, [{:end_of_expression, eoe_meta} | meta], right}
+  end
+
+  defp annotate_eoe(ast, _eoe_meta), do: ast
 end

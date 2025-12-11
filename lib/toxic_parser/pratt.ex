@@ -124,20 +124,71 @@ defmodule ToxicParser.Pratt do
 
   # Parse RHS of binary operator, handling chained operators with proper precedence
   # For identifiers that could be calls with do-blocks (like `if true do...end`),
-  # we need to go through Calls.parse instead of just nud
+  # we need special handling but must preserve min_bp for associativity
   defp parse_rhs(token, state, context, log, min_bp) do
     # Check if this is an identifier that could be a call with arguments
     if Identifiers.classify(token.kind) != :other do
-      # Push back the token and let Calls.parse handle it
-      state = TokenAdapter.pushback(state, token)
-      with {:ok, right, state, log} <- Calls.parse(state, context, log) do
-        led(right, state, log, min_bp, context)
-      end
+      # Handle identifier specially to preserve min_bp
+      parse_rhs_identifier(token, state, context, log, min_bp)
     else
       with {:ok, right, state, log} <- nud(token, state, context, log) do
         led(right, state, log, min_bp, context)
       end
     end
+  end
+
+  # Parse identifier on RHS, handling calls while preserving min_bp for associativity
+  defp parse_rhs_identifier(token, state, context, log, min_bp) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"("}, _} ->
+        # Paren call - delegate to Calls but then led with our min_bp
+        state = TokenAdapter.pushback(state, token)
+        with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+          led(right, state, log, min_bp, context)
+        end
+
+      {:ok, %{kind: :do}, _} ->
+        # Do-block - delegate to Calls but then led with our min_bp
+        state = TokenAdapter.pushback(state, token)
+        with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+          led(right, state, log, min_bp, context)
+        end
+
+      {:ok, next_tok, _} ->
+        cond do
+          # Binary operator follows - just return identifier, led will handle with min_bp
+          bp(next_tok.kind) ->
+            ast = Builder.Helpers.from_token(token)
+            led(ast, state, log, min_bp, context)
+
+          # Could be no-parens call argument - delegate to Calls
+          is_no_parens_arg?(next_tok) ->
+            state = TokenAdapter.pushback(state, token)
+            with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+              led(right, state, log, min_bp, context)
+            end
+
+          # Just a bare identifier
+          true ->
+            ast = Builder.Helpers.from_token(token)
+            led(ast, state, log, min_bp, context)
+        end
+
+      _ ->
+        # EOF or error - just return identifier
+        ast = Builder.Helpers.from_token(token)
+        led(ast, state, log, min_bp, context)
+    end
+  end
+
+  # Check if a token can be the start of a no-parens call argument
+  defp is_no_parens_arg?(%{kind: kind}) do
+    kind in [
+      :int, :flt, :char, :atom, :string, :identifier, :alias,
+      true, false, nil,
+      :"{", :"[", :"<<",
+      :unary_op, :at_op, :capture_op, :dual_op
+    ]
   end
 
   defp led(left, state, log, min_bp, context) do

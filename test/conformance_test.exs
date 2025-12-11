@@ -414,6 +414,8 @@ defmodule ToxicParser.ConformanceTest do
       # Simple binary operation is matched
       assert_conforms("1 + 2")
       assert_conforms("a * b")
+      assert_conforms(";a * b")
+      assert_conforms("a * b\n")
     end
 
     test "expr -> no_parens_expr" do
@@ -421,12 +423,22 @@ defmodule ToxicParser.ConformanceTest do
       # Call with multiple args, no parens
       assert_conforms("foo 1, 2")
       assert_conforms("bar :a, :b, :c")
+      assert_conforms(";foo 1, 2")
+      assert_conforms("foo 1, 2\n")
     end
 
     test "expr -> unmatched_expr" do
       # expr -> unmatched_expr : '$1'.
       # Block expression (do/end)
       assert_conforms("if true do\n:ok\nend")
+      assert_conforms(";if true do\n:ok\nend")
+      assert_conforms("if true do\n:ok\nend\n")
+    end
+
+    test "combinations" do
+      assert_conforms("1 + 2; foo 1, 2\n if true do\n:ok\nend")
+      assert_conforms("if true do\n:ok\nend; 1 + 2\n; foo 1, 2")
+      assert_conforms("foo 1, 2; if true do\n:ok\nend\n 1 + 2")
     end
   end
 
@@ -506,11 +518,17 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "in_op_eol (in)" do
-      # Note: Tests with list RHS require container parsing integration
-      # assert_conforms("1 in [1, 2, 3]")
       assert_conforms("a in b")
       assert_conforms("a in b in c")
-      # assert_conforms("1 in\n[1]")
+      assert_conforms("a in\n b")
+      assert_conforms("a\\\nin\\\nb")
+    end
+
+    test "in_op_eol (not in)" do
+      assert_conforms("a not in b")
+      assert_conforms("a not in b not in c")
+      assert_conforms("a not in\n b")
+      assert_conforms("a not\\\nin\n b")
     end
 
     test "in_match_op_eol (<-, \\\\)" do
