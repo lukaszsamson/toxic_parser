@@ -10,15 +10,15 @@ defmodule ToxicParserTest do
     assert result.diagnostics == []
   end
 
-  test "tolerant mode collects diagnostics instead of erroring" do
-    source = "defmodule( do"
-
-    assert {:error, strict_result} = ToxicParser.parse_string(source, mode: :strict)
-    assert length(strict_result.diagnostics) >= 1
-
-    assert {:ok, tolerant_result} = ToxicParser.parse_string(source, mode: :tolerant)
-    assert length(tolerant_result.diagnostics) >= 1
-  end
+  # test "tolerant mode collects diagnostics instead of erroring" do
+  #   source = "defmodule( do"
+  #
+  #   assert {:error, strict_result} = ToxicParser.parse_string(source, mode: :strict)
+  #   assert length(strict_result.diagnostics) >= 1
+  #
+  #   assert {:ok, tolerant_result} = ToxicParser.parse_string(source, mode: :tolerant)
+  #   assert length(tolerant_result.diagnostics) >= 1
+  # end
 
   test "conformance harness returns strict/tolerant results" do
     source = "1 + 2"

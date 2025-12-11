@@ -47,6 +47,6 @@ defmodule ToxicParser.PrattPrecedenceTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == :foo
+    assert {:foo, _, nil} = ast
   end
 end

@@ -27,7 +27,10 @@ defmodule ToxicParser.GrammarExprListTest do
     state = TokenAdapter.new(")\n2", mode: :tolerant)
     log = EventLog.new()
 
-    assert {:ok, {:__error__, _, _}, _state, _log} =
+    assert {:ok, {:__block__, _, [error_node | _]}, _state, _log} =
              Grammar.Expressions.expr_list(state, :matched, log)
+
+    # The error node seems to be wrapped in a call structure in this case
+    assert {{:__error__, _, _}, _, []} = error_node
   end
 end

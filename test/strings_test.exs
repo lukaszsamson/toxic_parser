@@ -14,7 +14,7 @@ defmodule ToxicParser.StringsTest do
     state = TokenAdapter.new(~S('abc'))
     log = EventLog.new()
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == 'abc'
+    assert ast == ~c'abc'
   end
 
   test "parses sigil" do

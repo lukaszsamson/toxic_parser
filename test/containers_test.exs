@@ -25,7 +25,7 @@ defmodule ToxicParser.ContainersTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == {:{}, [], [1, 2]}
+    assert ast == {1, 2}
   end
 
   test "parses empty map" do

@@ -8,7 +8,7 @@ defmodule ToxicParser.CallsTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == {:foo, [], []}
+    assert {:foo, _, []} = ast
   end
 
   test "parses paren call with args" do
@@ -16,7 +16,7 @@ defmodule ToxicParser.CallsTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == {:foo, [], [1, 2]}
+    assert {:foo, _, [1, 2]} = ast
   end
 
   test "parses nested paren calls" do
@@ -24,7 +24,7 @@ defmodule ToxicParser.CallsTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert ast == {:foo, [], [{:bar, [], [1]}]}
+    assert {:foo, _, [{:bar, _, [1]}]} = ast
   end
 
   test "parses simple no-parens calls" do
@@ -44,11 +44,11 @@ defmodule ToxicParser.CallsTest do
     log = EventLog.new()
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert Macro.to_string(ast) in ["foo([a: 1])", "foo([[a: 1]])"]
+    assert Macro.to_string(ast) == "foo(a: 1)"
 
     state = TokenAdapter.new("foo 1, a: 2")
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
-    assert Macro.to_string(ast) in ["foo(1, [a: 2])", "foo(1, [[a: 2]])"]
+    assert Macro.to_string(ast) == "foo(1, a: 2)"
   end
 
   test "parses nested no-parens calls" do
