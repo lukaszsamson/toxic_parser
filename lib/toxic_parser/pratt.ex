@@ -414,6 +414,15 @@ defmodule ToxicParser.Pratt do
 
       {:ok, next_tok, _} ->
         cond do
+          # op_identifier means tokenizer determined this is a no-parens call
+          # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
+          # This must be checked BEFORE binary operator check
+          token.kind == :op_identifier and (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
+            state = TokenAdapter.pushback(state, token)
+            with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+              led(right, state, log, min_bp, context)
+            end
+
           # Binary operator follows - just return identifier, led will handle with min_bp
           bp(next_tok.kind) ->
             ast = Builder.Helpers.from_token(token)

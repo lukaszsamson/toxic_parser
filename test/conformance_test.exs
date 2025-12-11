@@ -645,20 +645,16 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("1 |> a -2")
 
       # identifier call_args_no_parens_kw
-      # TODO
-      # assert_conforms("1 |> a x: 2")
+      assert_conforms("1 |> a x: 2")
 
       # matched_expr dot_op identifier matched_expr
-      # TODO
-      # assert_conforms("1 |> a.b 2")
+      assert_conforms("1 |> a.b 2")
 
       # matched_expr dot_op op_identifier matched_expr
-      # TODO
-      # assert_conforms("1 |> a.b -2")
+      assert_conforms("1 |> a.b -2")
 
       # matched_expr dot_op identifier call_args_no_parens_kw
-      # TODO
-      # assert_conforms("1 |> a.b x: 2")
+      assert_conforms("1 |> a.b x: 2")
     end
   end
 
