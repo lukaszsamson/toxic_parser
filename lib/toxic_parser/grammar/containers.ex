@@ -150,7 +150,7 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # Parse stab expressions inside parens
-  defp parse_paren_stab(open_meta, state, ctx, log) do
+  defp parse_paren_stab(_open_meta, state, ctx, log) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
       state = skip_eoe(state)
       case TokenAdapter.next(state) do
@@ -916,17 +916,6 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  # Parse expression in parentheses (simple case, no stab)
-  # Need to capture open/close metadata for parens: metadata
-  defp parse_expr_in_paren(state, ctx, log) do
-    # We need open_tok but it was consumed in parse_paren
-    # Actually we need to restructure - for now, peek back to get open_meta
-    # This is called after we've already consumed ( and skipped EOE
-    # We don't have access to open_tok here, so we need to pass it through
-    # For now, let me refactor to pass open_meta through
-    parse_expr_in_paren_impl(nil, state, ctx, log)
-  end
-
   defp parse_expr_in_paren_with_meta(open_meta, state, ctx, log) do
     parse_expr_in_paren_impl(open_meta, state, ctx, log)
   end
@@ -1000,15 +989,6 @@ defmodule ToxicParser.Grammar.Containers do
   defp token_meta(%{range: %{start: %{line: line, column: column}}}), do: [line: line, column: column]
   defp token_meta(_), do: []
 
-  defp expect(state, kind) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
-    end
-  end
-
   defp parse_list(state, ctx, log) do
     with {:ok, ast, state, log} <- parse_list_base(state, ctx, log) do
       # Continue with Pratt's led() to handle trailing operators
@@ -1037,84 +1017,6 @@ defmodule ToxicParser.Grammar.Containers do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  # Parse list elements following the list_args grammar
-  defp parse_list_elements(acc, state, ctx, log) do
-    # Check if next token starts a keyword list
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # Parse keyword data and finish (list_args -> kw_data)
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            # Skip EOE before close
-            {state, _newlines} = skip_eoe_count_newlines(state, 0)
-            case TokenAdapter.next(state) do
-              {:ok, %{kind: :"]"}, state} ->
-                ast = Enum.reverse(acc) ++ kw_list
-                # Continue with Pratt's led() to handle trailing operators
-                Pratt.led(ast, state, log, 0, ctx)
-
-              {:ok, tok, state} ->
-                {:error, {:expected, :"]", got: tok.kind}, state, log}
-
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
-
-              {:error, diag, state} ->
-                {:error, diag, state, log}
-            end
-          end
-        else
-          parse_list_element(acc, state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_list_element(acc, state, ctx, log) do
-    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-      # Skip EOE after expression
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
-
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
-          # Skip EOE after comma
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
-          # Check for trailing comma or close
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"]"}, _} ->
-              {:ok, _close, state} = TokenAdapter.next(state)
-              ast = Enum.reverse([expr | acc])
-              # Continue with Pratt's led() to handle trailing operators
-              Pratt.led(ast, state, log, 0, ctx)
-
-            _ ->
-              parse_list_elements([expr | acc], state, ctx, log)
-          end
-
-        {:ok, %{kind: :"]"}, _} ->
-          {:ok, _close, state} = TokenAdapter.next(state)
-          ast = Enum.reverse([expr | acc])
-          # Continue with Pratt's led() to handle trailing operators
-          Pratt.led(ast, state, log, 0, ctx)
-
-        {:ok, tok, state} ->
-          {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
-      end
     end
   end
 
