@@ -45,17 +45,58 @@ defmodule ToxicParser.Grammar.Calls do
         parse_paren_call(tok, state, ctx, log)
 
       {:ok, next_tok, _} ->
-        if Pratt.bp(next_tok.kind) do
-          state = TokenAdapter.pushback(state, tok)
-          Pratt.parse(state, ctx, log)
-        else
-          ast = Builder.Helpers.from_token(tok)
-          maybe_do_block(ast, state, ctx, log)
+        cond do
+          # Binary operator follows - let Pratt handle expression
+          Pratt.bp(next_tok.kind) ->
+            state = TokenAdapter.pushback(state, tok)
+            Pratt.parse(state, ctx, log)
+
+          # Could be no-parens call argument
+          can_be_no_parens_arg?(next_tok) ->
+            parse_no_parens_call(tok, state, ctx, log)
+
+          # Just a bare identifier
+          true ->
+            ast = Builder.Helpers.from_token(tok)
+            maybe_do_block(ast, state, ctx, log)
         end
 
       _ ->
         ast = Builder.Helpers.from_token(tok)
         maybe_do_block(ast, state, ctx, log)
+    end
+  end
+
+  # Check if a token can be the start of a no-parens call argument
+  defp can_be_no_parens_arg?(%{kind: kind}) do
+    kind in [
+      :int,
+      :flt,
+      :char,
+      :atom,
+      :string,
+      :identifier,
+      :alias,
+      true,
+      false,
+      nil,
+      :"{",
+      :"[",
+      :"<<",
+      :unary_op,
+      :at_op,
+      :capture_op,
+      :dual_op
+    ]
+  end
+
+  # Parse a no-parens call like `foo 1` or `foo x`
+  defp parse_no_parens_call(callee_tok, state, ctx, log) do
+    with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+      callee = callee_tok.value
+      meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      ast = {callee, meta, [arg]}
+      maybe_do_block(ast, state, ctx, log)
     end
   end
 

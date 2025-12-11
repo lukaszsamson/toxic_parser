@@ -94,9 +94,11 @@ defmodule ToxicParser.Builder.Helpers do
     value
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}) do
+  @doc "Extracts line/column metadata from a token's metadata."
+  @spec token_meta(map()) :: keyword()
+  def token_meta(%{range: %{start: %{line: line, column: column}}}) do
     [line: line, column: column]
   end
 
-  defp token_meta(_), do: []
+  def token_meta(_), do: []
 end
