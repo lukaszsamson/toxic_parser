@@ -780,16 +780,33 @@ defmodule ToxicParser.ConformanceTest do
   describe "matched_expr - access_expr" do
     test "bracket_expr - access syntax" do
       # access_expr -> bracket_expr
+      # bracket_expr -> dot_bracket_identifier bracket_arg
       # bracket_expr -> access_expr bracket_arg
+      # dot_bracket_identifier -> bracket_identifier
+      # dot_bracket_identifier -> matched_expr dot_op bracket_identifier
       assert_conforms("foo[:bar]")
+      assert_conforms("foo[\n:bar]")
+      assert_conforms("foo[:bar\n]")
+      assert_conforms("foo[:bar,]")
       assert_conforms("foo[0]")
+      assert_conforms("foo[a b]")
+      assert_conforms("foo[if a do\n:ok\nend]")
+      assert_conforms("foo[a: 1]")
+      assert_conforms("foo[a: 1,]")
       assert_conforms("foo[:a][:b]")
+      assert_conforms("foo.bar[0]")
+      assert_conforms("foo.\nbar[0]")
+      assert_conforms("1.bar[0]")
+      assert_conforms("foo.bar[0][:ok]")
     end
 
     test "bracket_at_expr - @ with access" do
       # bracket_at_expr -> at_op_eol access_expr bracket_arg
       assert_conforms("@foo[1]")
-      assert_conforms("@foo[:key]")
+      assert_conforms("@\nfoo[1]")
+      assert_conforms("@foo.bar[:key]")
+      assert_conforms("@foo[1][:ok]")
+      assert_conforms("@foo.bar[1][:ok]")
     end
 
     test "capture_int" do

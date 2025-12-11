@@ -44,6 +44,11 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, %{kind: :"("}, _} ->
         parse_paren_call(tok, state, ctx, log)
 
+      {:ok, %{kind: :"["} = open_tok, _} when kind == :bracket_identifier ->
+        # bracket_identifier followed by [ is bracket access: foo[:bar]
+        # Grammar: bracket_expr -> dot_bracket_identifier bracket_arg
+        parse_bracket_access(tok, open_tok, state, ctx, log)
+
       {:ok, next_tok, _} ->
         cond do
           # op_identifier means tokenizer determined this is a no-parens call
@@ -92,6 +97,84 @@ defmodule ToxicParser.Grammar.Calls do
       ast = {callee, meta, [arg]}
       maybe_do_block(ast, state, ctx, log)
     end
+  end
+
+  # Parse bracket access expression: foo[:bar]
+  # Grammar: bracket_expr -> dot_bracket_identifier bracket_arg
+  # Produces: {{:., meta, [Access, :get]}, meta, [subject, key]}
+  defp parse_bracket_access(ident_tok, _open_tok, state, ctx, log) do
+    # Consume the opening bracket
+    {:ok, open_tok, state} = TokenAdapter.next(state)
+
+    # Skip leading EOE and count newlines (only leading newlines matter for metadata)
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    # Parse the bracket argument (container_expr or kw_data)
+    with {:ok, arg, state, log} <- parse_bracket_arg_no_skip(state, ctx, log) do
+      # Skip trailing EOE before close bracket (don't count these)
+      {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+      case expect_token(state, :"]") do
+        {:ok, close_tok, state} ->
+          # Build access expression
+          subject = Builder.Helpers.from_token(ident_tok)
+          bracket_meta = build_bracket_meta_with_newlines(open_tok, close_tok, leading_newlines)
+          ast = build_access(subject, arg, bracket_meta)
+          # Continue with led() to handle chained access like foo[:a][:b]
+          Pratt.led(ast, state, log, 0, ctx)
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
+    end
+  end
+
+  # Parse bracket_arg: the content inside [...]
+  # Grammar:
+  #   bracket_arg -> open_bracket kw_data close_bracket
+  #   bracket_arg -> open_bracket container_expr close_bracket
+  #   bracket_arg -> open_bracket container_expr ',' close_bracket
+  # Note: caller handles EOE skipping before calling this
+  defp parse_bracket_arg_no_skip(state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          # kw_data case: [a: 1, b: 2]
+          Keywords.parse_kw_data(state, ctx, log)
+        else
+          # container_expr case
+          with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+            # Check for trailing comma (allowed by grammar)
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :","}, _} ->
+                {:ok, _comma, state} = TokenAdapter.next(state)
+                {:ok, expr, state, log}
+
+              _ ->
+                {:ok, expr, state, log}
+            end
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Build metadata for bracket access with newlines
+  defp build_bracket_meta_with_newlines(open_tok, close_tok, newlines) do
+    open_meta = Builder.Helpers.token_meta(open_tok.metadata)
+    close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+  end
+
+  # Build Access.get call AST
+  defp build_access(subject, key, meta) do
+    {{:., meta, [Access, :get]}, meta, [subject, key]}
   end
 
   # Check if a token can be the start of a no-parens call argument

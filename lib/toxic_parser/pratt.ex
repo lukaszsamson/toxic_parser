@@ -166,11 +166,22 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
-        with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, min_bp) do
+        # Special case: at_op + bracket_identifier (e.g., @foo[1])
+        # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
+        # The @foo becomes the subject, bracket access is handled at outer level
+        if op_token.kind == :at_op and operand_token.kind == :bracket_identifier do
           op = op_token.value
           meta = build_meta(op_token.metadata)
+          operand = Builder.Helpers.from_token(operand_token)
           ast = Builder.Helpers.unary(op, operand, meta)
           {:ok, ast, state, log}
+        else
+          with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, min_bp) do
+            op = op_token.value
+            meta = build_meta(op_token.metadata)
+            ast = Builder.Helpers.unary(op, operand, meta)
+            {:ok, ast, state, log}
+          end
         end
 
       {:eof, state} ->
@@ -347,7 +358,7 @@ defmodule ToxicParser.Pratt do
               end
             end
 
-          {:dot_op, _} ->
+          {:dot_op, {bp, _}} when bp >= min_bp ->
             {:ok, dot_tok, state} = TokenAdapter.next(state)
             dot_meta = build_meta(dot_tok.metadata)
 
@@ -417,6 +428,10 @@ defmodule ToxicParser.Pratt do
                         end
                       end
 
+                    {:ok, %{kind: :"["}, _} ->
+                      # Bracket access: foo.bar[:key] - handle via led() which processes [
+                      led(combined, state, log, min_bp, context)
+
                     {:ok, next_tok, _} ->
                       # Check for no-parens call argument after dot expression
                       if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
@@ -435,12 +450,34 @@ defmodule ToxicParser.Pratt do
             end
 
           {:"[", _} ->
-            {:ok, _open, state} = TokenAdapter.next(state)
+            {:ok, open_tok, state} = TokenAdapter.next(state)
 
-            with {:ok, indices, state, log} <- parse_access_indices([], state, context, log),
-                 {:ok, _close, state} <- TokenAdapter.next(state) do
-              combined = Builder.Helpers.access(left, Enum.reverse(indices), [])
-              led(combined, state, log, min_bp, context)
+            # Skip leading EOE and count newlines (only leading newlines matter for metadata)
+            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+            with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
+              # Skip trailing EOE before close bracket (don't count these)
+              {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+              case TokenAdapter.next(state) do
+                {:ok, %{kind: :"]"} = close_tok, state} ->
+                  # Build metadata with from_brackets, newlines, closing, line, column
+                  open_meta = build_meta(open_tok.metadata)
+                  close_meta = build_meta(close_tok.metadata)
+                  newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+                  bracket_meta = [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+                  combined = {{:., bracket_meta, [Access, :get]}, bracket_meta, [left | Enum.reverse(indices)]}
+                  led(combined, state, log, min_bp, context)
+
+                {:ok, other, state} ->
+                  {:error, {:expected, :"]", got: other.kind}, state, log}
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
             end
 
           {_, {bp, assoc}} when bp >= min_bp ->

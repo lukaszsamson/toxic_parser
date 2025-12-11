@@ -80,6 +80,10 @@ defmodule ToxicParser.Builder.Helpers do
     identifier(name, token_meta(meta))
   end
 
+  def from_token(%{kind: :bracket_identifier, value: name, metadata: meta}) do
+    identifier(name, token_meta(meta))
+  end
+
   def from_token(%{kind: :alias, value: name, metadata: meta}) do
     # Aliases need both :last and regular location metadata
     m = token_meta(meta)
