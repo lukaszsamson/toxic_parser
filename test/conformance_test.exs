@@ -1409,7 +1409,7 @@ defmodule ToxicParser.ConformanceTest do
 
       # match_op_eol unmatched_expr
       assert_conforms("1 = if true do\n:ok\nend")
-      assert_conforms("1 =\n if true do\n:ok\nend")
+      assert_conforms("1 =\nif true do\n:ok\nend")
 
       # dual_op_eol unmatched_expr
       assert_conforms("1 + if true do\n:ok\nend")
@@ -1417,33 +1417,64 @@ defmodule ToxicParser.ConformanceTest do
 
       # mult_op_eol unmatched_expr
       assert_conforms("1 * if true do\n:ok\nend")
+      assert_conforms("1 *\nif true do\n:ok\nend")
 
       # power_op_eol unmatched_expr
       assert_conforms("1 ** if true do\n:ok\nend")
+      assert_conforms("1 **\nif true do\n:ok\nend")
 
       # concat_op_eol unmatched_expr
-      # NOTE: Using :x instead of "x" - string parsing has a separate bug
       assert_conforms("a <> if true do\n:x\nend")
+      assert_conforms("a <>\nif true do\n:x\nend")
+
+      # range_op_eol unmatched_expr
+      assert_conforms("a .. if true do\n:x\nend")
+      assert_conforms("a ..\nif true do\n:x\nend")
+
+      # TODO ternary
 
       # and_op_eol unmatched_expr
       assert_conforms("true && if true do\n:ok\nend")
-      assert_conforms("a and if true do\n:ok\nend")
+      assert_conforms("a and\nif true do\n:ok\nend")
 
       # or_op_eol unmatched_expr
       assert_conforms("false || if true do\n:ok\nend")
-      assert_conforms("a or if true do\n:ok\nend")
+      assert_conforms("a or\nif true do\n:ok\nend")
 
       # in_op_eol unmatched_expr
       assert_conforms("1 in if true do\n[1]\nend")
+      assert_conforms("1 in\nif true do\n[1]\nend")
+
+      assert_conforms("1 not in if true do\n[1]\nend")
+      assert_conforms("1 not in\nif true do\n[1]\nend")
+
+      # in_match_op_eol unmatched_expr
+      assert_conforms("1 <- if true do\n[1]\nend")
+      assert_conforms("1 <-\nif true do\n[1]\nend")
+
+      # type_op_eol unmatched_expr
+      assert_conforms("1 :: if true do\n[1]\nend")
+      assert_conforms("1 ::\nif true do\n[1]\nend")
+
+      # when_op_eol unmatched_expr
+      assert_conforms("1 when if true do\n[1]\nend")
+      assert_conforms("1 when\nif true do\n[1]\nend")
+
+      # pipe_op_eol unmatched_expr
+      assert_conforms("1 | if true do\n1\nend")
+      assert_conforms("1 |\nif true do\n1\nend")
 
       # comp_op_eol unmatched_expr
       assert_conforms("1 == if true do\n1\nend")
+      assert_conforms("1 ==\nif true do\n1\nend")
 
       # rel_op_eol unmatched_expr
       assert_conforms("1 < if true do\n2\nend")
+      assert_conforms("1 <\nif true do\n2\nend")
 
       # arrow_op_eol unmatched_expr
       assert_conforms("a |> if true do\n:ok\nend")
+      assert_conforms("a |>\nif true do\n:ok\nend")
     end
 
     test "unmatched_expr matched_op_expr" do
@@ -1451,9 +1482,9 @@ defmodule ToxicParser.ConformanceTest do
       # do/end block followed by binary op with matched expr
 
       assert_conforms("if true do\n:ok\nend + 1")
-      assert_conforms("if true do\n:ok\nend * 2")
+      assert_conforms("if true do\n:ok\nend *\n2")
       assert_conforms("if true do\n:ok\nend == :ok")
-      assert_conforms("if true do\n:ok\nend |> foo")
+      assert_conforms("if true do\n:ok\nend |>\nfoo")
     end
 
     test "unmatched_expr unmatched_op_expr" do
@@ -1461,7 +1492,7 @@ defmodule ToxicParser.ConformanceTest do
       # do/end block with do/end block on the right
 
       assert_conforms("if true do\n:ok\nend + if false do\n:error\nend")
-      assert_conforms("if true do\n:ok\nend == if false do\n:error\nend")
+      assert_conforms("if true do\n:ok\nend ==\nif false do\n:error\nend")
     end
 
     test "unmatched_expr no_parens_op_expr" do
@@ -1470,7 +1501,7 @@ defmodule ToxicParser.ConformanceTest do
       # Triggers warn_no_parens_after_do_op
 
       assert_conforms("if true do\n:ok\nend + foo 1, 2")
-      assert_conforms("if true do\n:ok\nend == bar :a, :b")
+      assert_conforms("if true do\n:ok\nend ==\nbar :a, :b")
     end
   end
 
@@ -1480,18 +1511,23 @@ defmodule ToxicParser.ConformanceTest do
       # Unary op applied to any expr (including unmatched)
 
       assert_conforms("!if true do\n:ok\nend")
+      assert_conforms("!\nif true do\n:ok\nend")
       assert_conforms("not if true do\ntrue\nend")
       assert_conforms("-if true do\n1\nend")
+      assert_conforms("-\nif true do\n1\nend")
+      # TODO ternary
     end
 
     test "at_op_eol expr" do
       # unmatched_expr -> at_op_eol expr : build_unary_op('$1', '$2').
       assert_conforms("@if true do\n:ok\nend")
+      assert_conforms("@\nif true do\n:ok\nend")
     end
 
     test "capture_op_eol expr" do
       # unmatched_expr -> capture_op_eol expr : build_unary_op('$1', '$2').
       assert_conforms("&if true do\n:ok\nend")
+      assert_conforms("&\nif true do\n:ok\nend")
     end
 
     test "ellipsis_op expr" do
