@@ -825,6 +825,7 @@ defmodule ToxicParser.ConformanceTest do
     test "empty_paren" do
       # access_expr -> empty_paren
       assert_conforms("()")
+      assert_conforms("(\n)")
     end
 
     test "parenthesized expression" do
@@ -880,9 +881,40 @@ defmodule ToxicParser.ConformanceTest do
 
     test "dot_alias" do
       # access_expr -> dot_alias
+
+      # dot_alias -> alias
       assert_conforms("Foo")
+      # dot_alias -> matched_expr dot_op alias
       assert_conforms("Foo.Bar")
       assert_conforms("foo.Bar")
+    end
+
+    test "dot_alias tuple call" do
+      # access_expr -> dot_alias
+
+      # dot_alias -> matched_expr dot_op open_curly '}'
+      assert_conforms("Foo.{}")
+      assert_conforms("Foo.{\n}")
+      assert_conforms("foo.{}")
+      assert_conforms("Foo.Bar.{}")
+
+      # dot_alias -> matched_expr dot_op open_curly container_args close_curly
+
+      # container_args allow any number of matched_expr, unmatched_expr optionally followed by kw_data
+
+      assert_conforms("Foo.{a}")
+      assert_conforms("Foo.{A}")
+      assert_conforms("Foo.{A\n}")
+
+      assert_conforms("Foo.{A,}")
+      assert_conforms("Foo.{A,\n}")
+
+      assert_conforms("Foo.{A, b.C}")
+
+      assert_conforms("Foo.{foo: x}")
+      assert_conforms("Foo.{A, foo: x}")
+
+      assert_conforms("Foo.{A, if a do\n:ok\nend}")
     end
 
     test "parens_call" do

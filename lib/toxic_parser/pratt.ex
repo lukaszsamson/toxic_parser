@@ -60,6 +60,10 @@ defmodule ToxicParser.Pratt do
         ast = Builder.Helpers.error(token.value, meta)
         {:ok, ast, state, log}
 
+      # capture_int (&) followed by int - special form like &1, &2
+      :capture_int ->
+        parse_capture_int(token, state, log)
+
       _ ->
         case Precedence.unary(token.kind) do
           {bp, _assoc} ->
@@ -78,6 +82,28 @@ defmodule ToxicParser.Pratt do
               maybe_do_block(ast, token, state, context, log)
             end
         end
+    end
+  end
+
+  # Parse capture_int followed by int (e.g., &1, &2)
+  # Rule: access_expr -> capture_int int : build_unary_op('$1', number_value('$2'))
+  defp parse_capture_int(capture_token, state, log) do
+    case TokenAdapter.next(state) do
+      {:ok, %{kind: :int} = int_token, state} ->
+        meta = build_meta(capture_token.metadata)
+        # Extract the integer value from the int token
+        int_value = literal_to_ast(int_token)
+        ast = {:&, meta, [int_value]}
+        {:ok, ast, state, log}
+
+      {:ok, other_token, state} ->
+        {:error, {:expected, :int, got: other_token.kind}, state, log}
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
     end
   end
 
@@ -216,11 +242,16 @@ defmodule ToxicParser.Pratt do
                   {member, member_meta} when is_atom(member) ->
                     {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
 
+                  # Alias on RHS - build combined __aliases__ (dot_alias rule)
+                  # Must come before the general {name, meta, args} pattern
+                  {:__aliases__, rhs_meta, [rhs_alias]} ->
+                    build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
                   # Call with args: {name, meta, args}
                   {name, meta, args} when is_list(args) ->
                     {{:., dot_meta, [left, name]}, meta, args}
 
-                  # Alias or other AST node
+                  # Other AST node
                   other ->
                     {:., dot_meta, [left, other]}
                 end
@@ -339,6 +370,22 @@ defmodule ToxicParser.Pratt do
       :"{", :"[", :"<<",
       :unary_op, :at_op, :capture_op, :dual_op
     ]
+  end
+
+  # Build combined __aliases__ for dot_alias rule (Foo.Bar -> {:__aliases__, meta, [:Foo, :Bar]})
+  # When left is already an __aliases__, append the new segment
+  defp build_dot_alias({:__aliases__, left_meta, left_segments}, rhs_alias, rhs_meta, _dot_meta) do
+    # Extract just the line/column from rhs_meta's :last value (or from rhs_meta itself)
+    last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
+    new_meta = Keyword.put(left_meta, :last, last_meta)
+    {:__aliases__, new_meta, left_segments ++ [rhs_alias]}
+  end
+
+  # When left is some other expression, wrap both in __aliases__
+  # Meta is [last: alias_location] ++ dot_location
+  defp build_dot_alias(left_expr, rhs_alias, rhs_meta, dot_meta) do
+    last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
+    {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}
   end
 
   # Helper to parse RHS of binary operator
