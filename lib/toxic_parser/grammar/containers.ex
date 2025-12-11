@@ -101,8 +101,95 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_list(state, ctx, log) do
     {:ok, _open, state} = TokenAdapter.next(state)
 
-    with {:ok, elements, state, log} <- parse_container_args(:"]", state, ctx, log) do
-      {:ok, elements, state, log}
+    # Skip leading EOE
+    {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
+    case TokenAdapter.peek(state) do
+      # Empty list
+      {:ok, %{kind: :"]"}, _} ->
+        {:ok, _close, state} = TokenAdapter.next(state)
+        {:ok, [], state, log}
+
+      {:ok, _, _} ->
+        parse_list_elements([], state, ctx, log)
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Parse list elements following the list_args grammar
+  defp parse_list_elements(acc, state, ctx, log) do
+    # Check if next token starts a keyword list
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          # Parse keyword data and finish (list_args -> kw_data)
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+            # Skip EOE before close
+            {state, _newlines} = skip_eoe_count_newlines(state, 0)
+            case TokenAdapter.next(state) do
+              {:ok, %{kind: :"]"}, state} ->
+                {:ok, Enum.reverse(acc) ++ kw_list, state, log}
+
+              {:ok, tok, state} ->
+                {:error, {:expected, :"]", got: tok.kind}, state, log}
+
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+          end
+        else
+          parse_list_element(acc, state, ctx, log)
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp parse_list_element(acc, state, ctx, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+      # Skip EOE after expression
+      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          # Skip EOE after comma
+          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          # Check for trailing comma or close
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"]"}, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              {:ok, Enum.reverse([expr | acc]), state, log}
+
+            _ ->
+              parse_list_elements([expr | acc], state, ctx, log)
+          end
+
+        {:ok, %{kind: :"]"}, _} ->
+          {:ok, _close, state} = TokenAdapter.next(state)
+          {:ok, Enum.reverse([expr | acc]), state, log}
+
+        {:ok, tok, state} ->
+          {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state, log}
+
+        {:error, diag, state} ->
+          {:error, diag, state, log}
+      end
     end
   end
 
@@ -236,57 +323,4 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_container_args(terminator, state, ctx, log) do
-    parse_container_args_base([], terminator, state, ctx, log)
-    |> append_kw_tail_if_present(terminator, ctx, log)
-  end
-
-  defp parse_container_args_base(acc, terminator, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: ^terminator}, state} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        {:ok, acc, state, log}
-
-      {:ok, _tok, _state} ->
-        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, state} ->
-              {:ok, _comma, state} = TokenAdapter.next(state)
-              parse_container_args_base([expr | acc], terminator, state, ctx, log)
-
-            {:ok, %{kind: ^terminator}, _} ->
-              parse_container_args_base([expr | acc], terminator, state, ctx, log)
-
-            _ ->
-              {:error, {:expected_comma_or, terminator}, state, log}
-          end
-        end
-
-      {:eof, state} ->
-        {:ok, acc, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp append_kw_tail_if_present({:ok, acc, state, log}, _terminator, ctx, log0) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log0) do
-            {:ok, Enum.reverse([kw_list | acc]), state, log}
-          end
-        else
-          {:ok, Enum.reverse(acc), state, log}
-        end
-
-      _ ->
-        {:ok, Enum.reverse(acc), state, log}
-    end
-  end
-
-  defp append_kw_tail_if_present({:error, reason, state, log}, _terminator, _ctx, _log0) do
-    {:error, reason, state, log}
-  end
 end

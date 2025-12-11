@@ -837,10 +837,18 @@ defmodule ToxicParser.ConformanceTest do
     test "list" do
       # access_expr -> list
       assert_conforms("[]")
+      assert_conforms("[\n]")
       assert_conforms("[1]")
       assert_conforms("[1, 2, 3]")
+      assert_conforms("[1, 2, 3,]")
+      assert_conforms("[1, 2, 3\n]")
       assert_conforms("[a: 1]")
+      assert_conforms("[\na: 1]")
+      assert_conforms("[a: 1,]")
+      assert_conforms("[a: 1\n]")
       assert_conforms("[1, a: 1]")
+      assert_conforms("[1, if a do\n:ok\nend]")
+      assert_conforms("[1, if a do\n:ok\nend, x: y]")
     end
 
     test "tuple" do
