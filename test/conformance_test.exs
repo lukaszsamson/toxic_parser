@@ -977,8 +977,11 @@ defmodule ToxicParser.ConformanceTest do
       # access_expr -> parens_call
       # parens_call -> dot_call_identifier call_args_parens call_args_parens
       assert_conforms("foo()()")
+      assert_conforms("foo.()()")
       assert_conforms("foo(1)(2)")
       assert_conforms("foo.bar()()")
+      assert_conforms("1.bar()()")
+      assert_conforms("1.bar(if a do\n:ok\nend)(bar 1, 2, 3)")
     end
   end
 

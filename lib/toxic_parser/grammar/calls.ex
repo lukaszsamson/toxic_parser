@@ -153,9 +153,60 @@ defmodule ToxicParser.Grammar.Calls do
       meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
 
       ast = {callee_tok.value, meta, Enum.reverse(args)}
-      maybe_do_block(ast, state, ctx, log)
+      # Check for nested call: foo()() - another paren call on the result
+      maybe_nested_call(ast, state, ctx, log)
     end
   end
+
+  # Handle nested paren calls: foo()(), foo(1)(2), etc.
+  # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
+  defp maybe_nested_call(ast, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"("}, _} ->
+        parse_nested_paren_call(ast, state, ctx, log)
+
+      _ ->
+        maybe_do_block(ast, state, ctx, log)
+    end
+  end
+
+  defp parse_nested_paren_call(callee_ast, state, ctx, log) do
+    {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+         # Skip trailing EOE before close paren
+         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
+         {:ok, close_tok, state} <- expect_token(state, :")") do
+      # For non-empty calls, only count leading newlines
+      # For empty calls, count all newlines
+      total_newlines =
+        if args == [] do
+          leading_newlines + trailing_newlines
+        else
+          leading_newlines
+        end
+
+      # Get line/column from callee AST
+      callee_meta = extract_meta(callee_ast)
+      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+
+      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+      ast = {callee_ast, meta, Enum.reverse(args)}
+      # Recurse for chained calls like foo()()()
+      maybe_nested_call(ast, state, ctx, log)
+    end
+  end
+
+  defp extract_meta({_name, meta, _args}) when is_list(meta) do
+    Keyword.take(meta, [:line, :column])
+  end
+
+  defp extract_meta(_), do: []
 
   defp skip_eoe_count_newlines(state, count) do
     case TokenAdapter.peek(state) do

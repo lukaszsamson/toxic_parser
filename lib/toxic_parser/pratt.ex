@@ -230,6 +230,50 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
+          # Nested parens call: expr()(args) - call the result of expr with args
+          # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
+          {:"(", _} ->
+            {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+            # Skip leading EOE and count newlines
+            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+            with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+              # Skip trailing EOE before close paren
+              {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+              case TokenAdapter.next(state) do
+                {:ok, %{kind: :")"} = close_tok, state} ->
+                  # For non-empty calls, only count leading newlines
+                  # For empty calls, count all newlines
+                  total_newlines =
+                    if args == [] do
+                      leading_newlines + trailing_newlines
+                    else
+                      leading_newlines
+                    end
+
+                  close_meta = build_meta(close_tok.metadata)
+                  # Get line/column from left AST (the callee)
+                  callee_meta = extract_meta(left)
+
+                  newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+                  call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+                  combined = {left, call_meta, Enum.reverse(args)}
+                  led(combined, state, log, min_bp, context)
+
+                {:ok, other, state} ->
+                  {:error, {:expected, :")", got: other.kind}, state, log}
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+            end
+
           # dot_call_op: expr.(args) - anonymous function call
           {:dot_call_op, _} ->
             {:ok, dot_tok, state} = TokenAdapter.next(state)
@@ -404,12 +448,21 @@ defmodule ToxicParser.Pratt do
   end
 
   # Convert a dot expression to a call when followed by parens, with closing metadata
-  defp dot_to_call_with_meta({{:., dot_meta, dot_args}, id_meta, []}, args, newlines, close_meta) do
-    # Remove no_parens: true and build proper call metadata
-    base_meta = Keyword.delete(id_meta, :no_parens)
-    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-    call_meta = newlines_meta ++ [closing: close_meta] ++ base_meta
-    {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
+  # If id_meta already has :closing, this is a nested call - wrap the whole thing
+  defp dot_to_call_with_meta({{:., dot_meta, dot_args}, id_meta, _inner_args} = callee, args, newlines, close_meta) do
+    if Keyword.has_key?(id_meta, :closing) do
+      # Already a call - wrap it as nested call
+      callee_meta = Keyword.take(id_meta, [:line, :column])
+      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+      call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+      {callee, call_meta, Enum.reverse(args)}
+    else
+      # First call on dot expression - convert to call form
+      base_meta = Keyword.delete(id_meta, :no_parens)
+      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+      call_meta = newlines_meta ++ [closing: close_meta] ++ base_meta
+      {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
+    end
   end
 
   defp dot_to_call_with_meta({:., dot_meta, dot_args}, args, newlines, close_meta) do
@@ -657,6 +710,13 @@ defmodule ToxicParser.Pratt do
   end
 
   defp build_meta(_), do: []
+
+  # Extract line/column metadata from an AST node (for nested calls)
+  defp extract_meta({_name, meta, _args}) when is_list(meta) do
+    Keyword.take(meta, [:line, :column])
+  end
+
+  defp extract_meta(_), do: []
 
   # Build metadata with newlines count if present
   defp build_meta_with_newlines(token_meta, 0) do
