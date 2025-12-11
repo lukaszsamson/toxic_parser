@@ -107,16 +107,132 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_tuple(state, ctx, log) do
-    {:ok, _open, state} = TokenAdapter.next(state)
+    {:ok, open_tok, state} = TokenAdapter.next(state)
+    open_meta = token_meta(open_tok.metadata)
 
-    with {:ok, elements, state, log} <- parse_container_args(:"}", state, ctx, log) do
+    with {:ok, elements, newlines, close_meta, state, log} <- parse_tuple_args(state, ctx, log) do
+      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+      meta = newlines_meta ++ [closing: close_meta] ++ open_meta
+
+      # 2-element tuples are represented as literal {a, b}
+      # Other sizes use {:{}, meta, elements}
       ast =
         case elements do
-          [] -> {:{}, [], []}
-          list -> {:{}, [], list}
+          [a, b] -> {a, b}
+          _ -> {:{}, meta, elements}
         end
 
       {:ok, ast, state, log}
+    end
+  end
+
+  defp parse_tuple_args(state, ctx, log) do
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    case TokenAdapter.peek(state) do
+      # Empty tuple
+      {:ok, %{kind: :"}"} = close_tok, _} ->
+        {:ok, _close, state} = TokenAdapter.next(state)
+        close_meta = token_meta(close_tok.metadata)
+        {:ok, [], leading_newlines, close_meta, state, log}
+
+      {:ok, _, _} ->
+        with {:ok, elements, close_meta, state, log} <- parse_tuple_elements([], state, ctx, log) do
+          {:ok, elements, leading_newlines, close_meta, state, log}
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp skip_eoe_count_newlines(state, count) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_count_newlines(state, count + n)
+
+      _ ->
+        {state, count}
+    end
+  end
+
+  # Parse tuple elements, returning close token metadata
+  defp parse_tuple_elements(acc, state, ctx, log) do
+    # Check if next token starts a keyword list
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          # Parse keyword data and finish
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+            # Skip EOE before close
+            {state, _newlines} = skip_eoe_count_newlines(state, 0)
+            case TokenAdapter.next(state) do
+              {:ok, %{kind: :"}"} = close_tok, state} ->
+                close_meta = token_meta(close_tok.metadata)
+                {:ok, Enum.reverse([kw_list | acc]), close_meta, state, log}
+
+              {:ok, tok, state} ->
+                {:error, {:expected, :"}", got: tok.kind}, state, log}
+
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+          end
+        else
+          parse_tuple_element(acc, state, ctx, log)
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp parse_tuple_element(acc, state, ctx, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+      # Skip EOE after expression
+      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          {:ok, _comma, state} = TokenAdapter.next(state)
+          # Skip EOE after comma
+          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          # Check for trailing comma or close
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"}"} = close_tok, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              close_meta = token_meta(close_tok.metadata)
+              {:ok, Enum.reverse([expr | acc]), close_meta, state, log}
+
+            _ ->
+              parse_tuple_elements([expr | acc], state, ctx, log)
+          end
+
+        {:ok, %{kind: :"}"} = close_tok, _} ->
+          {:ok, _close, state} = TokenAdapter.next(state)
+          close_meta = token_meta(close_tok.metadata)
+          {:ok, Enum.reverse([expr | acc]), close_meta, state, log}
+
+        {:ok, tok, state} ->
+          {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state, log}
+
+        {:error, diag, state} ->
+          {:error, diag, state, log}
+      end
     end
   end
 
