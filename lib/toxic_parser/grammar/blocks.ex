@@ -61,32 +61,35 @@ defmodule ToxicParser.Grammar.Blocks do
         _ -> Pratt.parse(state, ctx, log)
       end
 
+    kw_meta = Builder.Helpers.token_meta(kw_tok.metadata)
+
     case kind do
       :for ->
         with {:ok, qualifiers, state, log} <- parse_for_qualifiers([], state, ctx, log),
-             {:ok, block_kw, state, log} <- parse_do_block(state, ctx, log) do
-          ast = {:for, [], Enum.reverse(qualifiers) ++ [block_kw]}
+             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
+          # Attach do/end meta to the call, then line/column
+          ast = {:for, block_meta ++ kw_meta, Enum.reverse(qualifiers) ++ [sections]}
           log = exit_scope(log, kind, kw_tok.metadata)
           {:ok, ast, state, log}
         end
 
       :with ->
         with {:ok, qualifiers, state, log} <- parse_with_qualifiers([], state, ctx, log),
-             {:ok, block_kw, state, log} <- parse_do_block(state, ctx, log) do
-          ast = {:with, [], Enum.reverse(qualifiers) ++ [block_kw]}
+             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
+          ast = {:with, block_meta ++ kw_meta, Enum.reverse(qualifiers) ++ [sections]}
           log = exit_scope(log, kind, kw_tok.metadata)
           {:ok, ast, state, log}
         end
 
       _ ->
         with {:ok, subject, state, log} <- subject_result,
-             {:ok, block_kw, state, log} <- parse_do_block(state, ctx, log) do
+             {:ok, {block_meta, sections}, state, log} <- parse_do_block(state, ctx, log) do
           ast =
             case kind do
-              :case -> {:case, [], [subject, block_kw]}
-              :cond -> {:cond, [], [block_kw]}
-              :try -> {:try, [], [block_kw]}
-              :receive -> {:receive, [], [block_kw]}
+              :case -> {:case, block_meta ++ kw_meta, [subject, sections]}
+              :cond -> {:cond, block_meta ++ kw_meta, [sections]}
+              :try -> {:try, block_meta ++ kw_meta, [sections]}
+              :receive -> {:receive, block_meta ++ kw_meta, [sections]}
             end
 
           log = exit_scope(log, kind, kw_tok.metadata)
@@ -96,21 +99,28 @@ defmodule ToxicParser.Grammar.Blocks do
   end
 
   @doc """
-  Parses `do ... end` blocks and returns a keyword list to attach to calls.
+  Parses `do ... end` blocks and returns a tuple with:
+  - block_meta: metadata for do/end positions to attach to the call node
+  - sections: keyword list of block contents
+
   Handles labeled sections (`else/catch/rescue/after`).
   """
   @spec parse_do_block(State.t(), Pratt.context(), EventLog.t()) ::
-          {:ok, keyword(Macro.t()), State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
+          {:ok, {keyword(), keyword(Macro.t())}, State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_do_block(state, ctx, log) do
     case TokenAdapter.next(state) do
-      {:ok, %{kind: :do, metadata: meta}, state} ->
-        log = enter_scope(log, :do_block, meta)
+      {:ok, %{kind: :do, metadata: do_meta}, state} ->
+        log = enter_scope(log, :do_block, do_meta)
+        do_location = token_meta(do_meta)
 
         with {:ok, sections, state, log} <-
                parse_labeled_sections([], :do, state, ctx, log),
-             {:ok, _end, state} <- expect_kind(state, :end) do
-          log = exit_scope(log, :do_block, meta)
-          {:ok, sections, state, log}
+             {:ok, end_meta, state} <- expect_kind_with_meta(state, :end) do
+          log = exit_scope(log, :do_block, do_meta)
+          end_location = token_meta(end_meta)
+          # Build do/end metadata like elixir_parser.yrl does
+          block_meta = [do: do_location, end: end_location]
+          {:ok, {block_meta, sections}, state, log}
         end
 
       {:ok, token, state} ->
@@ -121,6 +131,20 @@ defmodule ToxicParser.Grammar.Blocks do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
+    end
+  end
+
+  defp token_meta(%{range: %{start: %{line: line, column: column}}}) do
+    [line: line, column: column]
+  end
+  defp token_meta(_), do: []
+
+  defp expect_kind_with_meta(state, kind) do
+    case TokenAdapter.next(state) do
+      {:ok, %{kind: ^kind, metadata: meta}, state} -> {:ok, meta, state}
+      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
+      {:eof, state} -> {:error, :unexpected_eof, state}
+      {:error, diag, state} -> {:error, diag, state}
     end
   end
 

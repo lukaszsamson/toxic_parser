@@ -138,14 +138,15 @@ defmodule ToxicParser.Grammar.Calls do
   defp maybe_do_block(ast, state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :do}, _} ->
-        with {:ok, block_kw, state, log} <- Blocks.parse_do_block(state, ctx, log) do
+        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
           ast =
             case ast do
               {name, meta, args} when is_list(args) ->
-                {name, meta, args ++ [block_kw]}
+                # Prepend do/end metadata to the call's existing metadata
+                {name, block_meta ++ meta, args ++ [sections]}
 
               other ->
-                Builder.Helpers.call(other, [block_kw])
+                Builder.Helpers.call(other, [sections], block_meta)
             end
 
           {:ok, ast, state, log}

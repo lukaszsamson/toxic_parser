@@ -10,7 +10,8 @@ defmodule ToxicParser.Pratt do
   metadata.
   """
 
-  alias ToxicParser.{Builder, EventLog, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, Precedence, State, TokenAdapter}
+  alias ToxicParser.Grammar.{Blocks, Calls}
 
   @type context :: :matched | :unmatched | :no_parens
 
@@ -65,8 +66,30 @@ defmodule ToxicParser.Pratt do
         else
           # Not a unary operator - convert to literal AST
           ast = literal_to_ast(token)
-          {:ok, ast, state, log}
+          # Check if identifier followed by do/end block
+          maybe_do_block(ast, token, state, context, log)
         end
+    end
+  end
+
+  # Check for do/end block after an identifier (for RHS of binary ops)
+  # Note: No-parens call detection is handled by Calls module, not here
+  defp maybe_do_block(ast, token, state, context, log) do
+    if token.kind == :identifier do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :do}, _} ->
+          with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+            # Attach do block to the identifier as a call with do/end metadata
+            token_meta = Builder.Helpers.token_meta(token.metadata)
+            call_ast = {token.value, block_meta ++ token_meta, [sections]}
+            {:ok, call_ast, state, log}
+          end
+
+        _ ->
+          {:ok, ast, state, log}
+      end
+    else
+      {:ok, ast, state, log}
     end
   end
 
@@ -100,9 +123,20 @@ defmodule ToxicParser.Pratt do
   end
 
   # Parse RHS of binary operator, handling chained operators with proper precedence
+  # For identifiers that could be calls with do-blocks (like `if true do...end`),
+  # we need to go through Calls.parse instead of just nud
   defp parse_rhs(token, state, context, log, min_bp) do
-    with {:ok, right, state, log} <- nud(token, state, context, log) do
-      led(right, state, log, min_bp, context)
+    # Check if this is an identifier that could be a call with arguments
+    if Identifiers.classify(token.kind) != :other do
+      # Push back the token and let Calls.parse handle it
+      state = TokenAdapter.pushback(state, token)
+      with {:ok, right, state, log} <- Calls.parse(state, context, log) do
+        led(right, state, log, min_bp, context)
+      end
+    else
+      with {:ok, right, state, log} <- nud(token, state, context, log) do
+        led(right, state, log, min_bp, context)
+      end
     end
   end
 
