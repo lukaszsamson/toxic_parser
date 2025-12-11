@@ -58,8 +58,8 @@ defmodule ToxicParser.Grammar.Calls do
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
-          # Binary operator follows - let Pratt handle expression
-          Pratt.bp(next_tok.kind) ->
+          # Binary operator or dot operator follows - let Pratt handle expression
+          Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
             state = TokenAdapter.pushback(state, tok)
             Pratt.parse(state, ctx, log)
 
@@ -127,12 +127,53 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   defp parse_paren_call(callee_tok, state, ctx, log) do
-    {:ok, _open, state} = TokenAdapter.next(state)
+    {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
-         {:ok, _close, state} <- expect(state, :")") do
-      ast = Builder.Helpers.call(callee_tok.value, Enum.reverse(args))
+         # Skip trailing EOE before close paren
+         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
+         {:ok, close_tok, state} <- expect_token(state, :")") do
+      # For non-empty calls, only count leading newlines
+      # For empty calls, count all newlines
+      total_newlines =
+        if args == [] do
+          leading_newlines + trailing_newlines
+        else
+          leading_newlines
+        end
+
+      callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+
+      # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+      ast = {callee_tok.value, meta, Enum.reverse(args)}
       maybe_do_block(ast, state, ctx, log)
+    end
+  end
+
+  defp skip_eoe_count_newlines(state, count) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_count_newlines(state, count + n)
+
+      _ ->
+        {state, count}
+    end
+  end
+
+  defp expect_token(state, kind) do
+    case TokenAdapter.next(state) do
+      {:ok, %{kind: ^kind} = token, state} -> {:ok, token, state}
+      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
+      {:eof, state} -> {:error, :unexpected_eof, state}
+      {:error, diag, state} -> {:error, diag, state}
     end
   end
 
@@ -195,15 +236,6 @@ defmodule ToxicParser.Grammar.Calls do
 
       _ ->
         {:ok, ast, state, log}
-    end
-  end
-
-  defp expect(state, kind) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
     end
   end
 end

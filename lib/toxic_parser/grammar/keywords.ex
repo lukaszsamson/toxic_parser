@@ -36,9 +36,16 @@ defmodule ToxicParser.Grammar.Keywords do
     case parse_kw_pair(state, ctx, log) do
       {:ok, pair, state, log} ->
         case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, state} ->
+          {:ok, %{kind: :","}, _} ->
             {:ok, _comma, state} = TokenAdapter.next(state)
-            parse_kw_list([pair | acc], state, ctx, log)
+            # Check for trailing comma - if next is a terminator, stop
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :">>",:do] ->
+                {:ok, Enum.reverse([pair | acc]), state, log}
+
+              _ ->
+                parse_kw_list([pair | acc], state, ctx, log)
+            end
 
           _ ->
             {:ok, Enum.reverse([pair | acc]), state, log}

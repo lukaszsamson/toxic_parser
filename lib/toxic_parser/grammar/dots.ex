@@ -66,10 +66,46 @@ defmodule ToxicParser.Grammar.Dots do
   defp parse_paren_call(tok, state, ctx, log) do
     {:ok, _open, state} = TokenAdapter.next(state)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
-         {:ok, _close, state} <- expect(state, :")") do
-      callee = Builder.Helpers.from_token(tok)
-      {:ok, Builder.Helpers.call(callee, Enum.reverse(args)), state, log}
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
+      # Skip trailing EOE before close paren
+      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+      case TokenAdapter.next(state) do
+        {:ok, %{kind: :")"} = close_tok, state} ->
+          total_newlines = leading_newlines + trailing_newlines
+          callee_meta = Builder.Helpers.token_meta(tok.metadata)
+          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+
+          # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+          callee = Builder.Helpers.from_token(tok)
+          {:ok, {callee, meta, Enum.reverse(args)}, state, log}
+
+        {:ok, other, state} ->
+          {:error, {:expected, :")", got: other.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state}
+
+        {:error, diag, state} ->
+          {:error, diag, state}
+      end
+    end
+  end
+
+  defp skip_eoe_count_newlines(state, count) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe_count_newlines(state, count + n)
+
+      _ ->
+        {state, count}
     end
   end
 
@@ -95,15 +131,6 @@ defmodule ToxicParser.Grammar.Dots do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  defp expect(state, kind) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
     end
   end
 end

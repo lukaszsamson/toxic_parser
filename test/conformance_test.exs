@@ -922,14 +922,59 @@ defmodule ToxicParser.ConformanceTest do
 
     test "parens_call" do
       # access_expr -> parens_call
+      # parens_call -> dot_call_identifier call_args_parens
+
+      # dot_call_identifier -> dot_paren_identifier
+      # dot_call_identifier -> matched_expr dot_call_op
+
+      # dot_paren_identifier -> paren_identifier
+      # dot_paren_identifier -> matched_expr dot_op paren_identifier
+
+      # dot_op -> '.'
+      # dot_op -> '.' eol
       assert_conforms("foo()")
+      assert_conforms("foo(\n)")
       assert_conforms("foo(1)")
+      assert_conforms("foo(\n1)")
+      assert_conforms("foo(1\n)")
+      assert_conforms("foo.(1)")
+      assert_conforms("1.(1)")
+      assert_conforms("1.\n(1)")
       assert_conforms("foo(1, 2)")
       assert_conforms("foo.bar()")
+      assert_conforms("foo.\nbar()")
       assert_conforms("foo.bar(1)")
     end
 
+    test "parens_call no_parens_expr" do
+      # only single no_parens_expr allowed
+      assert_conforms("foo(bar 1, 2, 3)")
+      assert_conforms("foo(\nbar 1, 2, 3)")
+      assert_conforms("foo(bar 1, 2, 3\n)")
+    end
+
+    test "parens_call unmatched_expr" do
+      assert_conforms("foo(if a do\n:ok\nend)")
+      assert_conforms("foo(1, if a do\n:ok\nend)")
+      assert_conforms("foo(if a do\n:ok\nend, 1)")
+    end
+
+    test "parens_call kw_call" do
+      assert_conforms("foo(bar: 1)")
+      assert_conforms("foo(\nbar: 1)")
+      assert_conforms("foo(bar: 1\n)", normalize_container_newlines: true)
+      assert_conforms("foo(bar: 1,)")
+      assert_conforms("foo(bar: 1, baz: :ok)")
+
+      assert_conforms("foo(x, bar: 1)")
+      assert_conforms("foo(\nx, bar: 1)")
+      assert_conforms("foo(\nx, bar: 1\n)")
+
+      assert_conforms("foo(if a do\n:ok\nend, bar: 1)")
+    end
+
     test "nested parens_call" do
+      # access_expr -> parens_call
       # parens_call -> dot_call_identifier call_args_parens call_args_parens
       assert_conforms("foo()()")
       assert_conforms("foo(1)(2)")
@@ -1718,6 +1763,20 @@ defmodule ToxicParser.ConformanceTest do
     normalized_meta = Keyword.delete(meta, :newlines)
     normalized_args = Enum.map(args, &normalize_container_newlines/1)
     {:%{}, normalized_meta, normalized_args}
+  end
+
+  # Regular function calls with non-empty args - strip :newlines if args present
+  # Reference parser bug: empty calls get newlines but non-empty don't
+  defp normalize_container_newlines({name, meta, args})
+       when is_atom(name) and is_list(meta) and is_list(args) and args != [] do
+    if Keyword.has_key?(meta, :closing) do
+      normalized_meta = Keyword.delete(meta, :newlines)
+      normalized_args = Enum.map(args, &normalize_container_newlines/1)
+      {name, normalized_meta, normalized_args}
+    else
+      normalized_args = Enum.map(args, &normalize_container_newlines/1)
+      {name, normalize_container_newlines(meta), normalized_args}
+    end
   end
 
   # Generic 3-tuple (most AST nodes)

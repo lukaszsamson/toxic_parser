@@ -230,6 +230,44 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
+          # dot_call_op: expr.(args) - anonymous function call
+          {:dot_call_op, _} ->
+            {:ok, dot_tok, state} = TokenAdapter.next(state)
+            dot_meta = build_meta(dot_tok.metadata)
+
+            # The dot_call_op is followed by (args)
+            # Build: {{:., dot_meta, [left]}, call_meta, args}
+            {:ok, _open_tok, state} = TokenAdapter.next(state)  # consume (
+
+            # Skip leading EOE and count newlines
+            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+            with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+              # Skip trailing EOE before close paren
+              {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+              case TokenAdapter.next(state) do
+                {:ok, %{kind: :")"} = close_tok, state} ->
+                  total_newlines = leading_newlines + trailing_newlines
+                  close_meta = build_meta(close_tok.metadata)
+
+                  newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+                  call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
+
+                  combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}
+                  led(combined, state, log, min_bp, context)
+
+                {:ok, other, state} ->
+                  {:error, {:expected, :")", got: other.kind}, state, log}
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+            end
+
           {:dot_op, _} ->
             {:ok, dot_tok, state} = TokenAdapter.next(state)
             dot_meta = build_meta(dot_tok.metadata)
@@ -273,11 +311,32 @@ defmodule ToxicParser.Pratt do
                   case TokenAdapter.peek(state) do
                     {:ok, %{kind: :"("}, _} ->
                       {:ok, _open, state} = TokenAdapter.next(state)
-                      {:ok, args, state, log} = ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log)
-                      {:ok, _close, state} = ToxicParser.Grammar.CallsPrivate.expect(state, :")")
-                      # When followed by parens, convert to call form
-                      combined = dot_to_call(combined, args)
-                      led(combined, state, log, min_bp, context)
+                      # Skip leading EOE and count newlines
+                      {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+                      with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+                        # Skip trailing EOE before close paren
+                        {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+                        case TokenAdapter.next(state) do
+                          {:ok, %{kind: :")"} = close_tok, state} ->
+                            total_newlines = leading_newlines + trailing_newlines
+                            close_meta = build_meta(close_tok.metadata)
+
+                            # When followed by parens, convert to call form with proper metadata
+                            combined = dot_to_call_with_meta(combined, args, total_newlines, close_meta)
+                            led(combined, state, log, min_bp, context)
+
+                          {:ok, other, state} ->
+                            {:error, {:expected, :")", got: other.kind}, state, log}
+
+                          {:eof, state} ->
+                            {:error, :unexpected_eof, state, log}
+
+                          {:error, diag, state} ->
+                            {:error, diag, state, log}
+                        end
+                      end
 
                     {:ok, next_tok, _} ->
                       # Check for no-parens call argument after dot expression
@@ -344,21 +403,27 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Convert a dot expression to a call when followed by parens
-  # {{:., dot_meta, [left, member]}, id_meta, []} + args -> {{:., dot_meta, [left, member]}, call_meta, args}
-  defp dot_to_call({{:., dot_meta, dot_args}, id_meta, []}, args) do
-    # Remove no_parens: true and add closing meta for the call
-    call_meta = Keyword.delete(id_meta, :no_parens)
+  # Convert a dot expression to a call when followed by parens, with closing metadata
+  defp dot_to_call_with_meta({{:., dot_meta, dot_args}, id_meta, []}, args, newlines, close_meta) do
+    # Remove no_parens: true and build proper call metadata
+    base_meta = Keyword.delete(id_meta, :no_parens)
+    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    call_meta = newlines_meta ++ [closing: close_meta] ++ base_meta
     {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
   end
 
-  defp dot_to_call({:., dot_meta, dot_args}, args) do
-    {{:., dot_meta, dot_args}, [], Enum.reverse(args)}
+  defp dot_to_call_with_meta({:., dot_meta, dot_args}, args, newlines, close_meta) do
+    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
+    {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
   end
 
-  defp dot_to_call(other, args) do
-    Builder.Helpers.call(other, Enum.reverse(args))
+  defp dot_to_call_with_meta(other, args, newlines, close_meta) do
+    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    meta = newlines_meta ++ [closing: close_meta]
+    {other, meta, Enum.reverse(args)}
   end
+
 
   # Convert a dot expression to a no-parens call
   # {{:., dot_meta, [left, member]}, [no_parens: true | id_meta], []} + args

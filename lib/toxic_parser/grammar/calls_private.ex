@@ -18,8 +18,11 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_paren_args(acc, state, ctx, log) do
+    # Skip EOE before checking for close paren or next arg
+    state = skip_eoe(state)
+
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :")"}, state} ->
+      {:ok, %{kind: :")"}, _} ->
         {:ok, acc, state, log}
 
       {:ok, tok, _state} ->
@@ -31,13 +34,16 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
           true ->
             with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+              # Skip EOE after arg before checking for comma
+              state = skip_eoe(state)
+
               case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, state} ->
+                {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
                   parse_paren_args([arg | acc], state, ctx, log)
 
                 _ ->
-                  parse_paren_args([arg | acc], state, ctx, log)
+                  {:ok, [arg | acc], state, log}
               end
             end
         end
@@ -47,6 +53,17 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
+    end
+  end
+
+  defp skip_eoe(state) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :eoe}, _} ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_eoe(state)
+
+      _ ->
+        state
     end
   end
 end
