@@ -11,6 +11,7 @@ defmodule ToxicParser.Pratt do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Precedence, State, TokenAdapter}
+  alias ToxicParser.Grammar.Keywords
   alias ToxicParser.Grammar.{Blocks, Calls}
 
   @type context :: :matched | :unmatched | :no_parens
@@ -162,7 +163,7 @@ defmodule ToxicParser.Pratt do
             led(ast, state, log, min_bp, context)
 
           # Could be no-parens call argument - delegate to Calls
-          is_no_parens_arg?(next_tok) ->
+          is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
             with {:ok, right, state, log} <- Calls.parse(state, context, log) do
               led(right, state, log, min_bp, context)
@@ -213,32 +214,22 @@ defmodule ToxicParser.Pratt do
             # Skip EOE tokens after operator (allows "1 +\n2")
             {state, newlines} = skip_eoe_after_op(state)
 
-            case TokenAdapter.next(state) do
-              {:ok, rhs_token, state} ->
-                # Parse RHS with appropriate min_bp for associativity
-                with {:ok, right, state, log} <- parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
-                  # Use the actual operator value (e.g. :=, :+) not the token kind (e.g. :match_op)
-                  op = op_token.value
-                  # Add newlines metadata if there were newlines after the operator
-                  meta = build_meta_with_newlines(op_token.metadata, newlines)
-
-                  combined =
-                    Builder.Helpers.binary(
-                      op,
-                      left,
-                      right,
-                      meta
-                    )
-
-                  # Continue with original min_bp to allow chaining same-precedence left-assoc ops
-                  led(combined, state, log, min_bp, context)
+            case TokenAdapter.peek(state) do
+              {:ok, rhs_tok, _}
+              when context == :no_parens and op_token.kind == :when_op ->
+                if Keywords.starts_kw?(rhs_tok) do
+                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, context, log) do
+                    op = op_token.value
+                    meta = build_meta_with_newlines(op_token.metadata, newlines)
+                    combined = Builder.Helpers.binary(op, left, kw_list, meta)
+                    led(combined, state, log, min_bp, context)
+                  end
+                else
+                  parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log)
                 end
 
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
-
-              {:error, diag, state} ->
-                {:error, diag, state, log}
+              _ ->
+                parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log)
             end
 
           _ ->
@@ -252,6 +243,44 @@ defmodule ToxicParser.Pratt do
         {:error, diag, state, log}
     end
   end
+
+  # Helper to parse RHS of binary operator
+  defp parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log) do
+    case TokenAdapter.next(state) do
+      {:ok, rhs_token, state} ->
+        with {:ok, right, state, log} <- parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
+          combined = build_binary_op(op_token, left, right, newlines)
+          led(combined, state, log, min_bp, context)
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Build binary operation AST, with special handling for "not in" rewrite
+  # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
+  defp build_binary_op(%{kind: :in_op, value: {:"not in", in_location}, metadata: meta}, left, right, newlines) do
+    not_meta = build_meta_with_newlines(meta, newlines)
+    in_meta = build_meta_from_location(in_location)
+    {:not, not_meta, [{:in, in_meta, [left, right]}]}
+  end
+
+  defp build_binary_op(op_token, left, right, newlines) do
+    op = op_token.value
+    meta = build_meta_with_newlines(op_token.metadata, newlines)
+    Builder.Helpers.binary(op, left, right, meta)
+  end
+
+  # Build metadata from a raw Toxic location tuple
+  defp build_meta_from_location({{line, column}, _, _}) do
+    [line: line, column: column]
+  end
+
+  defp build_meta_from_location(_), do: []
 
   # Integer: extract parsed value from raw token metadata
   defp literal_to_ast(%{kind: :int, raw: {:int, {_, _, parsed_value}, _}}) do

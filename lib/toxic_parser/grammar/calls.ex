@@ -8,7 +8,7 @@ defmodule ToxicParser.Grammar.Calls do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Blocks, Expressions}
+  alias ToxicParser.Grammar.{Blocks, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -52,7 +52,7 @@ defmodule ToxicParser.Grammar.Calls do
             Pratt.parse(state, ctx, log)
 
           # Could be no-parens call argument
-          can_be_no_parens_arg?(next_tok) ->
+          can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call(tok, state, ctx, log)
 
           # Just a bare identifier
@@ -90,12 +90,12 @@ defmodule ToxicParser.Grammar.Calls do
     ]
   end
 
-  # Parse a no-parens call like `foo 1` or `foo x`
+  # Parse a no-parens call like `foo 1`, `foo 1, 2`, or `foo a: 1`.
   defp parse_no_parens_call(callee_tok, state, ctx, log) do
-    with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log) do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
-      ast = {callee, meta, [arg]}
+      ast = {callee, meta, args}
       maybe_do_block(ast, state, ctx, log)
     end
   end
@@ -115,16 +115,57 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, %{kind: :")"}, state} ->
         {:ok, acc, state, log}
 
-      {:ok, _tok, _state} ->
-        with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, state} ->
-              {:ok, _comma, state} = TokenAdapter.next(state)
-              parse_paren_args([arg | acc], state, ctx, log)
+      {:ok, tok, _state} ->
+        cond do
+          Keywords.starts_kw?(tok) ->
+            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+              {:ok, [kw_list | acc], state, log}
+            end
 
-            _ ->
-              parse_paren_args([arg | acc], state, ctx, log)
-          end
+          true ->
+            with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :","}, state} ->
+                  {:ok, _comma, state} = TokenAdapter.next(state)
+                  parse_paren_args([arg | acc], state, ctx, log)
+
+                _ ->
+                  parse_paren_args([arg | acc], state, ctx, log)
+              end
+            end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp parse_no_parens_args(acc, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+        {:ok, Enum.reverse(acc), state, log}
+
+      {:ok, tok, _} ->
+        cond do
+          Keywords.starts_kw?(tok) ->
+            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+              {:ok, Enum.reverse([[kw_list] | acc]), state, log}
+            end
+
+          true ->
+            with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :","}, state} ->
+                  {:ok, _comma, state} = TokenAdapter.next(state)
+                  parse_no_parens_args([arg | acc], state, ctx, log)
+
+                _ ->
+                  {:ok, Enum.reverse([arg | acc]), state, log}
+              end
+            end
         end
 
       {:eof, state} ->

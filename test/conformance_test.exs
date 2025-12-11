@@ -593,6 +593,39 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("a <|> b")
       assert_conforms("a |>\nb")
     end
+
+    test "matched_expr matched_op_expr - arrow_op_eol no_parens_one_expr" do
+      # no_parens_one_expr -> dot_op_identifier call_args_no_parens_one
+      # no_parens_one_expr -> dot_identifier call_args_no_parens_one
+      # call_args_no_parens_one -> call_args_no_parens_kw
+      # call_args_no_parens_one -> matched_expr
+      # dot_identifier -> identifier
+      # dot_identifier -> matched_expr dot_op identifier
+      # dot_op_identifier -> op_identifier
+      # dot_op_identifier -> matched_expr dot_op op_identifier
+      # call_args_no_parens_kw -> call_args_no_parens_kw_expr
+      # call_args_no_parens_kw -> call_args_no_parens_kw_expr ',' call_args_no_parens_kw
+      # call_args_no_parens_kw_expr -> kw_eol matched_expr
+      # call_args_no_parens_kw_expr -> kw_eol no_parens_expr
+
+      # identifier matched_expr
+      assert_conforms("1 |> a 2")
+
+      # op_identifier matched_expr
+      assert_conforms("1 |> a -2")
+
+      # identifier call_args_no_parens_kw
+      assert_conforms("1 |> a x: 2")
+
+      # matched_expr dot_op identifier matched_expr
+      assert_conforms("1 |> a.b 2")
+
+      # matched_expr dot_op op_identifier matched_expr
+      assert_conforms("1 |> a.b -2")
+
+      # matched_expr dot_op identifier call_args_no_parens_kw
+      assert_conforms("1 |> a.b x: 2")
+    end
   end
 
   describe "matched_expr - unary operations" do
@@ -600,6 +633,7 @@ defmodule ToxicParser.ConformanceTest do
       # matched_expr -> unary_op_eol matched_expr
       assert_conforms("!true")
       assert_conforms("not false")
+      assert_conforms("not\nfalse")
       assert_conforms("^x")
       assert_conforms("~~~1")
       assert_conforms("!\ntrue")
@@ -643,21 +677,24 @@ defmodule ToxicParser.ConformanceTest do
       # no_parens_one_expr -> dot_identifier call_args_no_parens_one
       assert_conforms("foo 1")
       assert_conforms("bar :atom")
-      assert_conforms("baz x")
+      # assert_conforms("baz x: 1")
+      # assert_conforms("baz x: 1, y: :ok")
     end
 
     # Note: Dot call requires dot expression parsing
     # test "dot identifier with single matched arg" do
     #   assert_conforms("foo.bar 1")
     #   assert_conforms("a.b.c :x")
+    #   assert_conforms("a.b.c x: 1")
+    #   assert_conforms("a.b.c x: 1, y: :ok")
     # end
 
     # Note: op_identifier requires special spacing handling
-    # test "op_identifier with single matched arg" do
-    #   # Unary-looking calls like `a -1` are op_identifier
-    #   assert_conforms("a -1")
-    #   assert_conforms("a +1")
-    # end
+    test "op_identifier with single matched arg" do
+      # Unary-looking calls like `a -1` are op_identifier
+      assert_conforms("a -1")
+      assert_conforms("a +1")
+    end
 
     # Note: keyword args require keyword parsing
     # test "identifier with keyword arg" do
