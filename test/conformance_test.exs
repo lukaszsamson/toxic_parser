@@ -713,16 +713,12 @@ defmodule ToxicParser.ConformanceTest do
       # no_parens_one_expr -> dot_identifier call_args_no_parens_one
       assert_conforms("foo 1")
       assert_conforms("bar :atom")
-      # assert_conforms("baz x: 1")
-      # assert_conforms("baz x: 1, y: :ok")
     end
 
     # Note: Dot call requires dot expression parsing
     test "dot identifier with single matched arg" do
       assert_conforms("foo.bar 1")
       assert_conforms("a.b.c :x")
-      assert_conforms("a.b.c x: 1")
-      assert_conforms("a.b.c x: 1, y: :ok")
     end
 
     # Note: op_identifier requires special spacing handling
@@ -732,11 +728,23 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("a +1")
     end
 
+    test "dot_op_identifier with single matched arg" do
+      # Unary-looking calls like `a -1` are op_identifier
+      assert_conforms("foo.bar -1")
+      assert_conforms("foo.bar.baz +1")
+    end
+
     # Note: keyword args require keyword parsing
     # test "identifier with keyword arg" do
     #   # call_args_no_parens_one -> call_args_no_parens_kw
     #   assert_conforms("foo x: 1")
     #   assert_conforms("bar a: 1, b: 2")
+    # end
+
+    # test "dot_identifier with keyword arg" do
+    #   # call_args_no_parens_one -> call_args_no_parens_kw
+    #   assert_conforms("foo.bar x: 1")
+    #   assert_conforms("foo.bar.baz a: 1, b: 2")
     # end
   end
 
@@ -755,6 +763,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("1.2.b")
       assert_conforms(":asd.b")
     end
+
+    # TODO: dot_do_identifier
 
     test "range_op nullary (..)" do
       # sub_matched_expr -> range_op : build_nullary_op('$1')

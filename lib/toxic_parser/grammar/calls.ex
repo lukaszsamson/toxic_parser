@@ -129,7 +129,10 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp parse_paren_args(acc, state, ctx, log), do: ToxicParser.Grammar.CallsPrivate.parse_paren_args(acc, state, ctx, log)
 
-  defp parse_no_parens_args(acc, state, ctx, log) do
+  @doc """
+  Parse no-parens call arguments (exported for use by Pratt parser for dot calls).
+  """
+  def parse_no_parens_args(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
         {:ok, Enum.reverse(acc), state, log}

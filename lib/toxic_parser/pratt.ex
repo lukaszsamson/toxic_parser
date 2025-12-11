@@ -234,6 +234,17 @@ defmodule ToxicParser.Pratt do
                   combined = dot_to_call(combined, args)
                   led(combined, state, log, min_bp, context)
 
+                {:ok, next_tok, _} ->
+                  # Check for no-parens call argument after dot expression
+                  if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+                    with {:ok, args, state, log} <- Calls.parse_no_parens_args([], state, context, log) do
+                      combined = dot_to_no_parens_call(combined, args)
+                      led(combined, state, log, min_bp, context)
+                    end
+                  else
+                    led(combined, state, log, min_bp, context)
+                  end
+
                 _ ->
                   led(combined, state, log, min_bp, context)
               end
@@ -301,6 +312,33 @@ defmodule ToxicParser.Pratt do
 
   defp dot_to_call(other, args) do
     Builder.Helpers.call(other, Enum.reverse(args))
+  end
+
+  # Convert a dot expression to a no-parens call
+  # {{:., dot_meta, [left, member]}, [no_parens: true | id_meta], []} + args
+  # -> {{:., dot_meta, [left, member]}, id_meta, args}
+  defp dot_to_no_parens_call({{:., dot_meta, dot_args}, id_meta, []}, args) do
+    # Remove no_parens: true for the call form
+    call_meta = Keyword.delete(id_meta, :no_parens)
+    {{:., dot_meta, dot_args}, call_meta, args}
+  end
+
+  defp dot_to_no_parens_call({:., dot_meta, dot_args}, args) do
+    {{:., dot_meta, dot_args}, [], args}
+  end
+
+  defp dot_to_no_parens_call(other, args) do
+    Builder.Helpers.call(other, args)
+  end
+
+  # Check if a token can be the start of a no-parens call argument
+  defp can_be_no_parens_arg?(%{kind: kind}) do
+    kind in [
+      :int, :flt, :char, :atom, :string, :identifier, :alias,
+      true, false, nil,
+      :"{", :"[", :"<<",
+      :unary_op, :at_op, :capture_op, :dual_op
+    ]
   end
 
   # Helper to parse RHS of binary operator
