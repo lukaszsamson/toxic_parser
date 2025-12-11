@@ -110,38 +110,7 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_paren_args(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :")"}, state} ->
-        {:ok, acc, state, log}
-
-      {:ok, tok, _state} ->
-        cond do
-          Keywords.starts_kw?(tok) ->
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
-              {:ok, [kw_list | acc], state, log}
-            end
-
-          true ->
-            with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, state} ->
-                  {:ok, _comma, state} = TokenAdapter.next(state)
-                  parse_paren_args([arg | acc], state, ctx, log)
-
-                _ ->
-                  parse_paren_args([arg | acc], state, ctx, log)
-              end
-            end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
+  defp parse_paren_args(acc, state, ctx, log), do: ToxicParser.Grammar.CallsPrivate.parse_paren_args(acc, state, ctx, log)
 
   defp parse_no_parens_args(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do

@@ -13,6 +13,7 @@ defmodule ToxicParser.Identifiers do
           | :bracket_identifier
           | :do_identifier
           | :op_identifier
+          | :alias
           | :dot_identifier
           | :dot_paren_identifier
           | :dot_bracket_identifier
@@ -27,6 +28,7 @@ defmodule ToxicParser.Identifiers do
       :bracket_identifier -> :bracket_identifier
       :do_identifier -> :do_identifier
       :op_identifier -> :op_identifier
+      :alias -> :alias
       :dot_identifier -> :dot_identifier
       :dot_paren_identifier -> :dot_paren_identifier
       :dot_bracket_identifier -> :dot_bracket_identifier

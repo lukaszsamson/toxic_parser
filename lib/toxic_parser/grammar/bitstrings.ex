@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   Parsing for bitstring literals (<<>>).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.Expressions
 
   @type result ::

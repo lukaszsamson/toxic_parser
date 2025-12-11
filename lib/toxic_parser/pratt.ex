@@ -12,7 +12,7 @@ defmodule ToxicParser.Pratt do
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Precedence, State, TokenAdapter}
   alias ToxicParser.Grammar.Keywords
-  alias ToxicParser.Grammar.{Blocks, Calls}
+  alias ToxicParser.Grammar.{Blocks, Calls, Dots}
 
   @type context :: :matched | :unmatched | :no_parens
 
@@ -196,6 +196,31 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
+          {:dot_op, _} ->
+            {:ok, _dot, state} = TokenAdapter.next(state)
+
+            with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+              combined =
+                case rhs do
+                  {name, meta, args} when is_list(args) ->
+                    {{:., [], [left, name]}, meta, args}
+
+                  other ->
+                    Builder.Helpers.dot(left, other)
+                end
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :"("}, _} ->
+                  {:ok, _open, state} = TokenAdapter.next(state)
+                  {:ok, args, state, log} = ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log)
+                  {:ok, _close, state} = ToxicParser.Grammar.CallsPrivate.expect(state, :")")
+                  combined = Builder.Helpers.call(combined, Enum.reverse(args))
+                  led(combined, state, log, min_bp, context)
+
+                _ ->
+                  led(combined, state, log, min_bp, context)
+              end
+            end
+
           {:"[", _} ->
             {:ok, _open, state} = TokenAdapter.next(state)
 

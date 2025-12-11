@@ -73,7 +73,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, _close, state} = TokenAdapter.next(state)
         {:ok, acc, state, log}
 
-      {:ok, tok, _state} ->
+      {:ok, _tok, _state} ->
         with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :","}, state} ->

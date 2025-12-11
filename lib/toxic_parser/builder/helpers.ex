@@ -28,6 +28,12 @@ defmodule ToxicParser.Builder.Helpers do
     {:., meta, [base, member]}
   end
 
+  @doc "Builds a dot call AST (`expr.(...)`)."
+  @spec dot_call(Macro.t(), [Macro.t()], keyword()) :: Macro.t()
+  def dot_call(base, args, meta \\ []) do
+    {{:., meta, [base, :call]}, meta, args}
+  end
+
   @doc "Builds an access AST (`expr[...]`) with indices."
   @spec access(Macro.t(), [Macro.t()], keyword()) :: Macro.t()
   def access(subject, indices, meta \\ []) do
