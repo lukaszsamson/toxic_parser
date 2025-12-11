@@ -870,22 +870,156 @@ defmodule ToxicParser.ConformanceTest do
 
     test "map" do
       # access_expr -> map
+      # map -> map_op map_args
       assert_conforms("%{}")
+      assert_conforms("%{\n}")
       assert_conforms("%{a: 1}")
+      assert_conforms("%{a: 1,}")
+      assert_conforms("%{a: 1,\n}")
+
+      # assoc_expr -> matched_expr assoc_op_eol matched_expr
       assert_conforms("%{:a => 1}")
+      assert_conforms("%{:a =>\n1}")
+      # assoc_expr -> unmatched_expr assoc_op_eol unmatched_expr
+      assert_conforms("%{if a do\n:ok\nend => unless b do\n:error\nend}")
+      assert_conforms("%{if a do\n:ok\nend =>\nunless b do\n:error\nend}")
+      # assoc_expr -> matched_expr assoc_op_eol unmatched_expr
+      assert_conforms("%{:a => if a do\n:ok\nend}")
+      assert_conforms("%{:a =>\nif a do\n:ok\nend}")
+      # assoc_expr -> unmatched_expr assoc_op_eol matched_expr
+      assert_conforms("%{if a do\n:ok\nend => 1}")
+      assert_conforms("%{if a do\n:ok\nend =>\n1}")
+      # assoc_expr -> map_base_expr
+      # map_base_expr -> sub_matched_expr
+      assert_conforms("%{x}")
+      assert_conforms("%{1}")
+      assert_conforms("%{:ok}")
+      assert_conforms("%{foo()}")
+      # map_base_expr -> at_op_eol map_base_expr
+      assert_conforms("%{@foo}")
+      assert_conforms("%{@\nfoo}")
+      # map_base_expr -> unary_op_eol map_base_expr
+      assert_conforms("%{!foo}")
+      assert_conforms("%{!\nfoo}")
+      assert_conforms("%{-foo}")
+      assert_conforms("%{-\nfoo}")
+      # TODO ternary
+      # assert_conforms("%{//foo}")
+      # assert_conforms("%{//\nfoo}")
+      # map_base_expr -> ellipsis_op map_base_expr
+      assert_conforms("%{...x}")
+      assert_conforms("%{...1}")
+
+      assert_conforms("%{x,}")
+      assert_conforms("%{x\n}")
+
+      assert_conforms("%{x, foo: 1}")
+      assert_conforms("%{x, foo: 1,}")
+      assert_conforms("%{x, foo: 1\n}")
+
       assert_conforms("%{a: 1, b: 2}")
       assert_conforms("%{1 => 2}")
+
+      assert_conforms("%{:a => 1, b: 2}")
     end
 
     test "struct" do
+      # map -> '%' map_base_expr map_args
+      # map -> '%' map_base_expr eol map_args
       assert_conforms("%Foo{}")
+      assert_conforms("%Foo{\n}")
       assert_conforms("%Foo{a: 1}")
+      assert_conforms("%Foo{a: 1,}")
+      assert_conforms("%Foo{a: 1,\n}")
+
+      # assoc_expr -> matched_expr assoc_op_eol matched_expr
+      assert_conforms("%Foo{:a => 1}")
+      assert_conforms("%Foo{:a =>\n1}")
+      # assoc_expr -> unmatched_expr assoc_op_eol unmatched_expr
+      assert_conforms("%Foo{if a do\n:ok\nend => unless b do\n:error\nend}")
+      assert_conforms("%Foo{if a do\n:ok\nend =>\nunless b do\n:error\nend}")
+      # assoc_expr -> matched_expr assoc_op_eol unmatched_expr
+      assert_conforms("%Foo{:a => if a do\n:ok\nend}")
+      assert_conforms("%Foo{:a =>\nif a do\n:ok\nend}")
+      # assoc_expr -> unmatched_expr assoc_op_eol matched_expr
+      assert_conforms("%Foo{if a do\n:ok\nend => 1}")
+      assert_conforms("%Foo{if a do\n:ok\nend =>\n1}")
+      # assoc_expr -> map_base_expr
+      # map_base_expr -> sub_matched_expr
+      assert_conforms("%Foo{x}")
+      assert_conforms("%Foo{1}")
+      assert_conforms("%Foo{:ok}")
+      assert_conforms("%Foo{foo()}")
+      # map_base_expr -> at_op_eol map_base_expr
+      assert_conforms("%Foo{@foo}")
+      assert_conforms("%Foo{@\nfoo}")
+      # map_base_expr -> unary_op_eol map_base_expr
+      assert_conforms("%Foo{!foo}")
+      assert_conforms("%Foo{!\nfoo}")
+      assert_conforms("%Foo{-foo}")
+      assert_conforms("%Foo{-\nfoo}")
+      # TODO ternary
+      # assert_conforms("%Foo{//foo}")
+      # assert_conforms("%Foo{//\nfoo}")
+      # map_base_expr -> ellipsis_op map_base_expr
+      assert_conforms("%Foo{...x}")
+      assert_conforms("%Foo{...1}")
+
+      assert_conforms("%Foo{x,}")
+      assert_conforms("%Foo{x\n}")
+
+      assert_conforms("%Foo{x, foo: 1}")
+      assert_conforms("%Foo{x, foo: 1,}")
+      assert_conforms("%Foo{x, foo: 1\n}")
+
       assert_conforms("%Foo{a: 1, b: 2}")
+      assert_conforms("%Foo{1 => 2}")
+
+      assert_conforms("%Foo{:a => 1, b: 2}")
+
+      assert_conforms("%x{}")
+      assert_conforms("%@foo{}")
+      assert_conforms("%@\nfoo{}")
+      assert_conforms("%-foo{}")
+      assert_conforms("%-\nfoo{}")
+      assert_conforms("%!foo{}")
+      assert_conforms("%!\nfoo{}")
+      # TODO ternary
+      # assert_conforms("%//foo{}")
+      # assert_conforms("%//\nfoo{}")
+      assert_conforms("%...foo{}")
     end
 
     test "map update" do
+      assert_conforms("%{map | :a => 1}")
+      assert_conforms("%{map |\n:a => 1}")
+      assert_conforms("%{map | :a => 1,}")
+      assert_conforms("%{map | :a => 1\n}")
+      assert_conforms("%{\nmap | :a => 1}")
+      assert_conforms("%{if foo do\n:ok\nend | :a => 1, b => 2}")
+
       assert_conforms("%{map | a: 1}")
-      assert_conforms("%{map | a: 1, b: 2}")
+      assert_conforms("%{\nmap | a: 1}")
+      assert_conforms("%{map | a: 1,}")
+      assert_conforms("%{map | a: 1\n}")
+      assert_conforms("%{if foo do\n:ok\nend | a: 1, b: 2}")
+      assert_conforms("%{if foo do\n:ok\nend | :a => 1, b: 2}")
+    end
+
+    test "struct update" do
+      assert_conforms("%Foo{map | :a => 1}")
+      assert_conforms("%Foo{map |\n:a => 1}")
+      assert_conforms("%Foo{map | :a => 1,}")
+      assert_conforms("%Foo{map | :a => 1\n}")
+      assert_conforms("%Foo{\nmap | :a => 1}")
+      assert_conforms("%Foo{if foo do\n:ok\nend | :a => 1, b => 2}")
+
+      assert_conforms("%foo{map | a: 1}")
+      assert_conforms("%foo{\nmap | a: 1}")
+      assert_conforms("%foo{map | a: 1,}")
+      assert_conforms("%foo{map | a: 1\n}")
+      assert_conforms("%foo{if foo do\n:ok\nend | a: 1, b: 2}")
+      assert_conforms("%foo{if foo do\n:ok\nend | :a => 1, b: 2}")
     end
 
     test "bitstring" do

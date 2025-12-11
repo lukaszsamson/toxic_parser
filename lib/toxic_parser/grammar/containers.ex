@@ -26,7 +26,7 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, %{kind: :%{}}, _} ->
         Maps.parse_map(state, ctx, log)
 
-      {:ok, %{kind: :"%"}, _} ->
+      {:ok, %{kind: :%}, _} ->
         Maps.parse_map(state, ctx, log)
 
       {:ok, %{kind: :"<<", value: _}, _} ->

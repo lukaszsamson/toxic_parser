@@ -34,6 +34,36 @@ defmodule ToxicParser.Pratt do
     end
   end
 
+  @doc """
+  Parses a base expression (nud only, no trailing operators via led).
+  Used for sub_matched_expr in map_base_expr grammar rule.
+  """
+  @spec parse_base(State.t(), context(), EventLog.t()) :: result()
+  def parse_base(%State{} = state, context, %EventLog{} = log) do
+    with {:ok, token, state} <- TokenAdapter.next(state),
+         {:ok, ast, state, log} <- nud(token, state, context, log) do
+      {:ok, ast, state, log}
+    else
+      {:eof, state} -> {:error, :unexpected_eof, state, log}
+      {:error, diag, state} -> {:error, diag, state, log}
+    end
+  end
+
+  @doc """
+  Parses an expression with a minimum binding power.
+  Used for map updates where we need to stop before the pipe operator.
+  """
+  @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp) do
+    with {:ok, token, state} <- TokenAdapter.next(state),
+         {:ok, left, state, log} <- nud(token, state, context, log) do
+      led(left, state, log, min_bp, context)
+    else
+      {:eof, state} -> {:error, :unexpected_eof, state, log}
+      {:error, diag, state} -> {:error, diag, state, log}
+    end
+  end
+
   @doc "Exposes binary binding power."
   @spec bp(atom()) :: Precedence.bp() | nil
   def bp(kind) do
@@ -219,14 +249,19 @@ defmodule ToxicParser.Pratt do
   # Check if a token can be the start of a no-parens call argument
   defp is_no_parens_arg?(%{kind: kind}) do
     kind in [
-      :int, :flt, :char, :atom, :string, :identifier, :alias,
+      :int, :flt, :char, :atom, :string, :identifier, :do_identifier, :alias,
       true, false, nil,
       :"{", :"[", :"<<",
       :unary_op, :at_op, :capture_op, :dual_op
     ]
   end
 
-  defp led(left, state, log, min_bp, context) do
+  @doc """
+  Continue parsing with left-hand expression, looking for trailing operators.
+  This is exposed for modules like Calls that need to continue parsing after
+  building a call expression.
+  """
+  def led(left, state, log, min_bp, context) do
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
@@ -635,11 +670,27 @@ defmodule ToxicParser.Pratt do
     {:not, not_meta, [{:in, in_meta, [left, right]}]}
   end
 
+  # Assoc operator (=>) annotates LHS with :assoc metadata
+  defp build_binary_op(%{kind: :assoc_op, metadata: meta}, left, right, newlines) do
+    op_meta = build_meta_with_newlines(meta, newlines)
+    assoc_meta = Keyword.take(op_meta, [:line, :column])
+    # Annotate LHS with :assoc metadata
+    annotated_left = annotate_assoc(left, assoc_meta)
+    Builder.Helpers.binary(:"=>", annotated_left, right, op_meta)
+  end
+
   defp build_binary_op(op_token, left, right, newlines) do
     op = op_token.value
     meta = build_meta_with_newlines(op_token.metadata, newlines)
     Builder.Helpers.binary(op, left, right, meta)
   end
+
+  # Annotate expression with :assoc metadata (for LHS of => operator)
+  defp annotate_assoc({name, meta, args}, assoc_meta) when is_list(meta) do
+    {name, [assoc: assoc_meta] ++ meta, args}
+  end
+
+  defp annotate_assoc(other, _assoc_meta), do: other
 
   # Build metadata from a raw Toxic location tuple
   defp build_meta_from_location({{line, column}, _, _}) do

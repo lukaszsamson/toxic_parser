@@ -51,21 +51,23 @@ defmodule ToxicParser.Grammar.Calls do
           kind == :op_identifier ->
             parse_op_identifier_call(tok, state, ctx, log)
 
-          # do_identifier in matched context: this identifier precedes a do-block
-          # but the do-block belongs to an outer call, not this identifier.
-          # Just return the bare identifier.
-          kind == :do_identifier and ctx == :matched ->
-            ast = Builder.Helpers.from_token(tok)
-            {:ok, ast, state, log}
-
           # Binary operator or dot operator follows - let Pratt handle expression
           Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
             state = TokenAdapter.pushback(state, tok)
             Pratt.parse(state, ctx, log)
 
-          # Could be no-parens call argument
+          # Could be no-parens call argument - parse the call
+          # This must come BEFORE the do_identifier check below, because
+          # `if a do :ok end` should parse `if` with arg `a` and do-block
           can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call(tok, state, ctx, log)
+
+          # do_identifier in matched context with no arguments: this identifier
+          # precedes a do-block but the do-block belongs to an outer call.
+          # Just return the bare identifier.
+          kind == :do_identifier and ctx == :matched ->
+            ast = Builder.Helpers.from_token(tok)
+            {:ok, ast, state, log}
 
           # Just a bare identifier - may have trailing do-block
           true ->
@@ -282,11 +284,13 @@ defmodule ToxicParser.Grammar.Calls do
                 Builder.Helpers.call(other, [sections], block_meta)
             end
 
-          {:ok, ast, state, log}
+          # Continue with Pratt's led() to handle trailing operators like =>
+          Pratt.led(ast, state, log, 0, ctx)
         end
 
       _ ->
-        {:ok, ast, state, log}
+        # Continue with Pratt's led() to handle trailing operators
+        Pratt.led(ast, state, log, 0, ctx)
     end
   end
 end
