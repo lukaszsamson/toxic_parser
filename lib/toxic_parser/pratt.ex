@@ -688,8 +688,10 @@ defmodule ToxicParser.Pratt do
             {state, newlines} = skip_eoe_after_op(state)
 
             case TokenAdapter.peek(state) do
-              {:ok, rhs_tok, _}
-              when context == :no_parens and op_token.kind == :when_op ->
+              # Special case: when operator followed by keyword list
+              # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
+              # This applies regardless of context (not just :no_parens)
+              {:ok, rhs_tok, _} when op_token.kind == :when_op ->
                 if Keywords.starts_kw?(rhs_tok) do
                   with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, context, log) do
                     op = op_token.value

@@ -759,7 +759,22 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms(":asd.b")
     end
 
-    # TODO: dot_do_identifier
+    @tag :skip
+    test "no_parens_zero_expr - bare do_identifier" do
+      # no_parens_zero_expr -> dot_identifier
+      assert_conforms("foo do\n:ok\nend")
+      assert_conforms("bar do\n:ok\nend")
+    end
+
+    @tag :skip
+    test "no_parens_zero_expr - dot do_identifier" do
+      # matched_expr dot_op identifier
+      assert_conforms("foo.bar do\n:ok\nend")
+      assert_conforms("a.b.c do\n:ok\nend")
+      assert_conforms("2.b do\n:ok\nend")
+      assert_conforms("1.2.b do\n:ok\nend")
+      assert_conforms(":asd.b do\n:ok\nend")
+    end
 
     test "range_op nullary (..)" do
       # sub_matched_expr -> range_op : build_nullary_op('$1')
@@ -1565,34 +1580,72 @@ defmodule ToxicParser.ConformanceTest do
 
       # match_op_eol no_parens_expr
       assert_conforms("1 = foo 2, 3")
-      assert_conforms("a = bar :x, :y")
+      assert_conforms("a =\nbar :x, :y")
 
       # dual_op_eol no_parens_expr
       assert_conforms("1 + foo 2, 3")
-      assert_conforms("a - bar :x, :y")
+      assert_conforms("a -\nbar :x, :y")
 
       # mult_op_eol no_parens_expr
       assert_conforms("1 * foo 2, 3")
-      assert_conforms("a / bar :x, :y")
+      assert_conforms("a /\nbar :x, :y")
+
+      # power_op_eol no_parens_expr
+      assert_conforms("1 ** foo 2, 3")
+      assert_conforms("a **\nbar :x, :y")
+
+      # concat_op_eol no_parens_expr
+      assert_conforms("1 ++ foo 2, 3")
+      assert_conforms("a --\nbar :x, :y")
+
+      # TODO ternary
+
+      # xor_op_eol no_parens_expr
+      assert_conforms("1 ^^^ foo 2, 3")
+      assert_conforms("a ^^^\nbar :x, :y")
 
       # and_op_eol no_parens_expr
       assert_conforms("true && foo 1, 2")
-      assert_conforms("a and bar :x, :y")
+      assert_conforms("a and\nbar :x, :y")
 
       # or_op_eol no_parens_expr
       assert_conforms("false || foo 1, 2")
-      assert_conforms("a or bar :x, :y")
+      assert_conforms("a or\nbar :x, :y")
+
+      # in_op_eol no_parens_expr
+      assert_conforms("false in foo 1, 2")
+      assert_conforms("a in\nbar :x, :y")
+
+      assert_conforms("a not in bar :x, :y")
+      assert_conforms("a not in\nbar :x, :y")
+
+      # in_match_op_eol no_parens_expr
+      assert_conforms("1 <- foo 2, 3")
+      assert_conforms("a <-\nbar :x, :y")
+
+      # type_op_eol no_parens_expr
+      assert_conforms("1 :: foo 2, 3")
+      assert_conforms("a ::\nbar :x, :y")
+
+      # when_op_eol no_parens_expr
+      assert_conforms("false when foo 1, 2")
+      assert_conforms("a when\nbar :x, :y")
+
+      # pipe_op_eol no_parens_expr
+      assert_conforms("1 | foo 2, 3")
+      assert_conforms("a |\nbar :x, :y")
 
       # comp_op_eol no_parens_expr
       assert_conforms("1 == foo 2, 3")
-      assert_conforms("a != bar :x, :y")
+      assert_conforms("a !=\nbar :x, :y")
 
       # rel_op_eol no_parens_expr
       assert_conforms("1 < foo 2, 3")
-      assert_conforms("a >= bar :x, :y")
+      assert_conforms("a >=\nbar :x, :y")
 
       # arrow_op_eol no_parens_expr
       assert_conforms("a |> foo 1, 2")
+      assert_conforms("a <<<\nfoo 1, 2")
     end
 
     test "when_op_eol call_args_no_parens_kw" do
@@ -1607,18 +1660,23 @@ defmodule ToxicParser.ConformanceTest do
     test "unary_op_eol no_parens_expr" do
       # no_parens_expr -> unary_op_eol no_parens_expr : build_unary_op('$1', '$2').
       assert_conforms("!foo 1, 2")
+      assert_conforms("!\nfoo 1, 2")
       assert_conforms("not bar :a, :b")
       assert_conforms("-foo 1, 2")
+      assert_conforms("-\nfoo 1, 2")
+      # TODO ternary
     end
 
     test "at_op_eol no_parens_expr" do
       # no_parens_expr -> at_op_eol no_parens_expr : build_unary_op('$1', '$2').
       assert_conforms("@foo 1, 2")
+      assert_conforms("@\nfoo 1, 2")
     end
 
     test "capture_op_eol no_parens_expr" do
       # no_parens_expr -> capture_op_eol no_parens_expr : build_unary_op('$1', '$2').
       assert_conforms("&foo 1, 2")
+      assert_conforms("&\nfoo 1, 2")
     end
 
     test "ellipsis_op no_parens_expr" do
