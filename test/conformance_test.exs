@@ -748,8 +748,12 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "no_parens_zero_expr - dot identifier" do
+      # matched_expr dot_op identifier
       assert_conforms("foo.bar")
       assert_conforms("a.b.c")
+      assert_conforms("2.b")
+      assert_conforms("1.2.b")
+      assert_conforms(":asd.b")
     end
 
     test "range_op nullary (..)" do

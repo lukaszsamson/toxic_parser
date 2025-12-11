@@ -32,17 +32,21 @@ defmodule ToxicParser.Grammar.Dots do
 
   @doc """
   Parses the RHS of a dot: identifier/alias/call/bracket/paren call.
+  Returns `{:ok, {member_value, member_meta}, state, log}` for simple identifiers,
+  or `{:ok, call_ast, state, log}` for calls.
   """
   @spec parse_member(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_member(%State{} = state, ctx, %EventLog{} = log) do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         case Identifiers.classify(tok.kind) do
-          kind when kind in [:identifier, :op_identifier, :alias, :dot_identifier, :dot_op_identifier] ->
-            {:ok, tok.value, state, log}
+          kind when kind in [:identifier, :op_identifier, :dot_identifier, :dot_op_identifier] ->
+            # Return {member_atom, member_meta} tuple so caller can build proper AST
+            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
 
-          kind when kind in [:dot_identifier, :dot_op_identifier] ->
-            {:ok, Builder.Helpers.identifier(tok.value, Builder.Helpers.token_meta(tok.metadata)), state, log}
+          :alias ->
+            # Alias needs to be wrapped as __aliases__
+            {:ok, Builder.Helpers.from_token(tok), state, log}
 
           kind when kind in [:paren_identifier, :dot_call_identifier, :dot_paren_identifier] ->
             parse_paren_call(tok, state, ctx, log)

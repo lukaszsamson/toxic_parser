@@ -205,23 +205,33 @@ defmodule ToxicParser.Pratt do
       {:ok, next_token, _} ->
         case {next_token.kind, Precedence.binary(next_token.kind)} do
           {:dot_op, _} ->
-            {:ok, _dot, state} = TokenAdapter.next(state)
+            {:ok, dot_tok, state} = TokenAdapter.next(state)
+            dot_meta = build_meta(dot_tok.metadata)
 
             with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
               combined =
                 case rhs do
-                  {name, meta, args} when is_list(args) ->
-                    {{:., [], [left, name]}, meta, args}
+                  # Simple identifier: {member_atom, member_meta}
+                  # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
+                  {member, member_meta} when is_atom(member) ->
+                    {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
 
+                  # Call with args: {name, meta, args}
+                  {name, meta, args} when is_list(args) ->
+                    {{:., dot_meta, [left, name]}, meta, args}
+
+                  # Alias or other AST node
                   other ->
-                    Builder.Helpers.dot(left, other)
+                    {:., dot_meta, [left, other]}
                 end
+
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :"("}, _} ->
                   {:ok, _open, state} = TokenAdapter.next(state)
                   {:ok, args, state, log} = ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log)
                   {:ok, _close, state} = ToxicParser.Grammar.CallsPrivate.expect(state, :")")
-                  combined = Builder.Helpers.call(combined, Enum.reverse(args))
+                  # When followed by parens, convert to call form
+                  combined = dot_to_call(combined, args)
                   led(combined, state, log, min_bp, context)
 
                 _ ->
@@ -275,6 +285,22 @@ defmodule ToxicParser.Pratt do
       {:error, diag, state} ->
         {:error, diag, state, log}
     end
+  end
+
+  # Convert a dot expression to a call when followed by parens
+  # {{:., dot_meta, [left, member]}, id_meta, []} + args -> {{:., dot_meta, [left, member]}, call_meta, args}
+  defp dot_to_call({{:., dot_meta, dot_args}, id_meta, []}, args) do
+    # Remove no_parens: true and add closing meta for the call
+    call_meta = Keyword.delete(id_meta, :no_parens)
+    {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
+  end
+
+  defp dot_to_call({:., dot_meta, dot_args}, args) do
+    {{:., dot_meta, dot_args}, [], Enum.reverse(args)}
+  end
+
+  defp dot_to_call(other, args) do
+    Builder.Helpers.call(other, Enum.reverse(args))
   end
 
   # Helper to parse RHS of binary operator
