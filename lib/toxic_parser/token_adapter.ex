@@ -40,11 +40,19 @@ defmodule ToxicParser.TokenAdapter do
   """
   @spec next(State.t()) :: result()
   def next(%State{lookahead: [next | rest]} = state) do
-    {:ok, next, %{state | lookahead: rest, terminators: next.metadata.terminators}}
+    case consume_fuel(state) do
+      {:ok, state} ->
+        {:ok, next, %{state | lookahead: rest, terminators: next.metadata.terminators}}
+
+      {:error, reason, state} ->
+        {:error, reason, state}
+    end
   end
 
   def next(%State{} = state) do
-    fetch_next(state, cache?: false)
+    with {:ok, state} <- consume_fuel(state) do
+      fetch_next(state, cache?: false)
+    end
   end
 
   @doc """
@@ -155,6 +163,16 @@ defmodule ToxicParser.TokenAdapter do
           {:error, diagnostic,
            %{state | stream: stream, diagnostics: [diagnostic | state.diagnostics]}}
         end
+    end
+  end
+
+  defp consume_fuel(%State{fuel: :infinity} = state), do: {:ok, state}
+
+  defp consume_fuel(%State{fuel: fuel} = state) when is_integer(fuel) do
+    if fuel > 0 do
+      {:ok, %{state | fuel: fuel - 1}}
+    else
+      {:error, :out_of_fuel, state}
     end
   end
 

@@ -94,4 +94,11 @@ defmodule ToxicParser.TokenAdapterTest do
     assert state_after.stream.error == nil
     assert length(state_after.diagnostics) == 1
   end
+
+  test "fuel guard halts iteration when limit is reached" do
+    state = TokenAdapter.new("1;2", fuel_limit: 1)
+
+    assert {:ok, _tok, state} = TokenAdapter.next(state)
+    assert {:error, :out_of_fuel, _state} = TokenAdapter.next(state)
+  end
 end

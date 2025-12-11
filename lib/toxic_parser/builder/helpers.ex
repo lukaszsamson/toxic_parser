@@ -64,6 +64,12 @@ defmodule ToxicParser.Builder.Helpers do
     {:__aliases__, meta, [name]}
   end
 
+  @doc "Builds an error node payload."
+  @spec error(term(), keyword()) :: Macro.t()
+  def error(payload, meta \\ []) do
+    {:__error__, meta, payload}
+  end
+
   @doc "Builds AST from a token based on its kind."
   @spec from_token(map()) :: Macro.t()
   def from_token(%{kind: :identifier, value: name, metadata: meta}) do

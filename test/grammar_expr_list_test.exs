@@ -7,7 +7,8 @@ defmodule ToxicParser.GrammarExprListTest do
     state = TokenAdapter.new("\n\n")
     log = EventLog.new()
 
-    assert {:ok, :ok, _state, _log} = Grammar.Expressions.expr_list(state, :matched, log)
+    assert {:ok, {:__block__, _, []}, _state, _log} =
+             Grammar.Expressions.expr_list(state, :matched, log)
   end
 
   test "parses multiple expressions into a block" do
@@ -20,5 +21,13 @@ defmodule ToxicParser.GrammarExprListTest do
     assert Macro.to_string(one) == "1"
     assert Macro.to_string(two) == "2"
     assert Macro.to_string(three) == "3"
+  end
+
+  test "tolerant mode turns lexer errors into error nodes" do
+    state = TokenAdapter.new(")\n2", mode: :tolerant)
+    log = EventLog.new()
+
+    assert {:ok, {:__error__, _, _}, _state, _log} =
+             Grammar.Expressions.expr_list(state, :matched, log)
   end
 end

@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Expressions do
   Expression dispatcher for matched/unmatched/no-parens contexts.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Pratt, Recovery, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Calls, Containers}
 
   @type result ::
@@ -38,7 +38,7 @@ defmodule ToxicParser.Grammar.Expressions do
         {:ok, ast, state, log}
 
       {:error, reason, state, log} ->
-        {:error, reason, state, log}
+        recover_expr_error([], reason, state, ctx, log)
     end
   end
 
@@ -129,8 +129,8 @@ defmodule ToxicParser.Grammar.Expressions do
                 {next_expr, state} = maybe_annotate_eoe(next_expr, state)
                 collect_exprs([next_expr | acc], state, ctx, log)
 
-              {:error, _reason, state, log} ->
-                finalize_exprs(acc, state, log)
+              {:error, reason, state, log} ->
+                recover_expr_error(acc, reason, state, ctx, log)
             end
 
           {:error, diag, state} ->
@@ -228,6 +228,36 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp build_eoe_meta(_), do: []
+
+  defp recover_expr_error(acc, reason, %State{mode: :tolerant} = state, ctx, log) do
+    error_ast = build_error_node(reason, state)
+
+    with {:ok, state, log} <- Recovery.sync_expr(state, log) do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :eoe}, _} ->
+          # consume separator to make progress before continuing
+          {:ok, _eoe, state} = TokenAdapter.next(state)
+          collect_exprs([error_ast | acc], state, ctx, log)
+
+        _ ->
+          collect_exprs([error_ast | acc], state, ctx, log)
+      end
+    end
+  end
+
+  defp recover_expr_error(_acc, reason, state, _ctx, log) do
+    {:error, reason, state, log}
+  end
+
+  defp build_error_node(reason, state) do
+    meta =
+      case TokenAdapter.peek(state) do
+        {:ok, tok, _} -> Builder.Helpers.token_meta(tok.metadata)
+        _ -> []
+    end
+
+    Builder.Helpers.error(reason, meta)
+  end
 
   # Annotate an AST node with end_of_expression metadata.
   # Based on elixir_parser.yrl annotate_eoe/2:

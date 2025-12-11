@@ -54,21 +54,29 @@ defmodule ToxicParser.Pratt do
 
   # Handle unary operators in nud (null denotation)
   defp nud(token, state, context, log) do
-    case Precedence.unary(token.kind) do
-      {bp, _assoc} ->
-        # This is a unary operator - parse operand
-        parse_unary(token, state, context, log, bp)
+    case token.kind do
+      :error_token ->
+        meta = build_meta(token.metadata)
+        ast = Builder.Helpers.error(token.value, meta)
+        {:ok, ast, state, log}
 
-      nil ->
-        # Check for dual_op used as unary (e.g., -1, +1)
-        if token.kind == :dual_op do
-          # dual_op as unary has fixed precedence
-          parse_unary(token, state, context, log, 300)
-        else
-          # Not a unary operator - convert to literal AST
-          ast = literal_to_ast(token)
-          # Check if identifier followed by do/end block
-          maybe_do_block(ast, token, state, context, log)
+      _ ->
+        case Precedence.unary(token.kind) do
+          {bp, _assoc} ->
+            # This is a unary operator - parse operand
+            parse_unary(token, state, context, log, bp)
+
+          nil ->
+            # Check for dual_op used as unary (e.g., -1, +1)
+            if token.kind == :dual_op do
+              # dual_op as unary has fixed precedence
+              parse_unary(token, state, context, log, 300)
+            else
+              # Not a unary operator - convert to literal AST
+              ast = literal_to_ast(token)
+              # Check if identifier followed by do/end block
+              maybe_do_block(ast, token, state, context, log)
+            end
         end
     end
   end
