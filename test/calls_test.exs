@@ -62,4 +62,12 @@ defmodule ToxicParser.CallsTest do
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
     assert Macro.to_string(ast) =~ "bar(1, 2)"
   end
+
+  test "parses no-parens dot calls" do
+    state = TokenAdapter.new("foo.bar 1, 2")
+    log = EventLog.new()
+
+    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :matched, log)
+    assert Macro.to_string(ast) =~ "bar"
+  end
 end

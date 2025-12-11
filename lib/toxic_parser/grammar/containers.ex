@@ -111,4 +111,8 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, Enum.reverse(acc), state, log}
     end
   end
+
+  defp append_kw_tail_if_present({:error, reason, state, log}, _terminator, _ctx, _log0) do
+    {:error, reason, state, log}
+  end
 end

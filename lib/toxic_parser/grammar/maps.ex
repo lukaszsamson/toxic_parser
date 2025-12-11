@@ -81,7 +81,14 @@ defmodule ToxicParser.Grammar.Maps do
               end
 
             new_acc = Enum.reduce(entries, acc, fn e, acc -> [e | acc] end)
-            parse_tail(new_acc, state, ctx, log)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"}, _} ->
+                {:ok, new_acc, state, log}
+
+              _ ->
+                parse_tail(new_acc, state, ctx, log)
+            end
 
           _ ->
             with {:ok, entry, state, log} <- parse_assoc_expr(state_after_entry, ctx, log) do
@@ -93,7 +100,13 @@ defmodule ToxicParser.Grammar.Maps do
                 end
 
               new_acc = Enum.reduce(entries, acc, fn e, a -> [e | a] end)
-              parse_tail(new_acc, state, ctx, log)
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :"}"}, _} ->
+                  {:ok, new_acc, state, log}
+
+                _ ->
+                  parse_tail(new_acc, state, ctx, log)
+              end
             end
         end
 
