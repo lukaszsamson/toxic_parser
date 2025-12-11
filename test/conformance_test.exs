@@ -734,18 +734,17 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo.bar.baz +1")
     end
 
-    # Note: keyword args require keyword parsing
-    # test "identifier with keyword arg" do
-    #   # call_args_no_parens_one -> call_args_no_parens_kw
-    #   assert_conforms("foo x: 1")
-    #   assert_conforms("bar a: 1, b: 2")
-    # end
+    test "identifier with keyword arg" do
+      # call_args_no_parens_one -> call_args_no_parens_kw
+      assert_conforms("foo x: 1")
+      assert_conforms("bar a: 1, b: 2")
+    end
 
-    # test "dot_identifier with keyword arg" do
-    #   # call_args_no_parens_one -> call_args_no_parens_kw
-    #   assert_conforms("foo.bar x: 1")
-    #   assert_conforms("foo.bar.baz a: 1, b: 2")
-    # end
+    test "dot_identifier with keyword arg" do
+      # call_args_no_parens_one -> call_args_no_parens_kw
+      assert_conforms("foo.bar x: 1")
+      assert_conforms("foo.bar.baz a: 1, b: 2")
+    end
   end
 
   describe "matched_expr - sub_matched_expr" do
