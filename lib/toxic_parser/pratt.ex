@@ -31,6 +31,9 @@ defmodule ToxicParser.Pratt do
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       {:error, diag, state} -> {:error, diag, state, log}
+      # Handle keyword_key from Strings.parse - bubble up to caller
+      {:keyword_key, _, _, _} = keyword_key -> keyword_key
+      {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
     end
   end
 
@@ -85,6 +88,9 @@ defmodule ToxicParser.Pratt do
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       {:error, diag, state} -> {:error, diag, state, log}
+      # Handle keyword_key from Strings.parse - bubble up to caller
+      {:keyword_key, _, _, _} = keyword_key -> keyword_key
+      {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
     end
   end
 
@@ -193,6 +199,16 @@ defmodule ToxicParser.Pratt do
         # Strings.parse will call led after parsing the string
         # Pass min_bp to preserve operator precedence constraints
         Strings.parse(state, context, log, min_bp)
+
+      # fn tokens need to be handled by Blocks.parse
+      # This is needed when fn appears as operand of unary operators like &fn -> a end
+      :fn ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Blocks
+
+        with {:ok, ast, state, log} <- Blocks.parse(state, context, log) do
+          led(ast, state, log, min_bp, context)
+        end
 
       _ ->
         case Precedence.unary(token.kind) do
@@ -453,10 +469,27 @@ defmodule ToxicParser.Pratt do
             ast = Builder.Helpers.unary(op, operand, meta)
             {:ok, ast, state, log}
           else
-            # For ellipsis/range ops, parse operand at min_bp=0 to allow binary ops like *
-            # e.g., "... + 1 * 2" parses as "...(+1 * 2)", not "(... +1) * 2"
-            operand_min_bp =
-              if op_token.kind in [:ellipsis_op, :range_op], do: 0, else: min_bp
+            # In Elixir's grammar, unary operators take different operand types:
+            # - ellipsis_op always takes matched_expr (min_bp=100)
+            # - @/& take call expressions (identifier with optional args/do-block)
+            #   but NOT trailing binary operators
+            #
+            # For @/&, we use Calls.parse_without_led to get the call without led(),
+            # then led() is called at the END of parse_unary to handle trailing ops.
+            # This ensures "@foo.bar" parses as "(@foo).bar" not "@(foo.bar)"
+            #
+            # For ellipsis/range, the threshold is match_op (bp=100):
+            # - "... a ** b" parses as "...(a ** b)" (power_op bp=230 >= 100)
+            # - "... a | b" parses as "(... a) | b" (pipe_op bp=70 < 100)
+            # For ellipsis/range, operand is always matched_expr (min_bp=100):
+            # - "... a ** b" parses as "...(a ** b)" (power_op bp=230 >= 100)
+            # - "... a | b" parses as "(... a) | b" (pipe_op bp=70 < 100)
+            #
+            # For other unary ops, use their own binding power as min_bp.
+            # This prevents lower-precedence operators from being consumed:
+            # - @ (bp=320): "@foo.bar" parses as "(@foo).bar" (dot bp=310 < 320)
+            # - & (bp=90): "&foo.bar" parses as "&(foo.bar)" (dot bp=310 > 90)
+            operand_min_bp = if op_token.kind in [:ellipsis_op, :range_op], do: 100, else: min_bp
 
             with {:ok, operand, state, log} <-
                    parse_rhs(operand_token, state, context, log, operand_min_bp) do
@@ -609,6 +642,9 @@ defmodule ToxicParser.Pratt do
         state = TokenAdapter.pushback(state, token)
 
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+          # Preserve the original min_bp for proper associativity.
+          # This ensures left-associative operators like |> work correctly:
+          # `1 |> if x do :ok end |> bar` should be `(1 |> if..end) |> bar`
           led(right, state, log, min_bp, context)
         end
 
@@ -622,6 +658,7 @@ defmodule ToxicParser.Pratt do
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+              # Preserve the original min_bp for proper associativity
               led(right, state, log, min_bp, context)
             end
 
@@ -635,6 +672,7 @@ defmodule ToxicParser.Pratt do
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+              # Preserve the original min_bp for proper associativity
               led(right, state, log, min_bp, context)
             end
 
@@ -726,7 +764,9 @@ defmodule ToxicParser.Pratt do
       :dual_op,
       # Maps and structs
       :%,
-      :%{}
+      :%{},
+      # fn starts block expressions that can be no-parens args
+      :fn
     ]
   end
 
@@ -1235,7 +1275,10 @@ defmodule ToxicParser.Pratt do
       :unary_op,
       :at_op,
       :capture_op,
-      :dual_op
+      :dual_op,
+      # ... and .. can start no-parens args: a... (where ... is the arg)
+      :ellipsis_op,
+      :range_op
     ]
   end
 

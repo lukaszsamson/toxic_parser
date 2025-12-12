@@ -190,6 +190,15 @@ defmodule ToxicParser.Grammar.Maps do
     # Parse potential base expression, stopping at | (bp=70)
     # Use min_bp=71 to stop before |
     case Pratt.parse_with_min_bp(state, :matched, log, 71) do
+      # keyword_key means we saw "string": which is a keyword entry, not a map update base
+      {:keyword_key, _, _, _} ->
+        state = TokenAdapter.rewind(state, checkpoint_id)
+        {:not_update, state}
+
+      {:keyword_key_interpolated, _, _, _, _, _, _} ->
+        state = TokenAdapter.rewind(state, checkpoint_id)
+        {:not_update, state}
+
       {:ok, base_expr, state, log} ->
         # Check if base_expr is an assoc expression - if so, this is NOT a map update
         # because %{a => b | c} is a single entry with value (b | c), not an update
@@ -380,19 +389,39 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_assoc_expr(state, ctx, log) do
     # Parse the full expression - this will include => as a binary operator
     # Then extract the key/value from the rightmost => in the expression tree
-    with {:ok, expr, state, log} <- Pratt.parse(state, ctx, log) do
-      # Check if the result has => at top level or nested
-      case extract_assoc(expr) do
-        {:assoc, key, value, assoc_meta} ->
-          # Annotate the key with :assoc metadata (the position of =>)
-          # This is what Elixir's parser does with token_metadata: true
-          annotated_key = annotate_assoc(key, assoc_meta)
-          {:ok, {annotated_key, value}, state, log}
+    case Pratt.parse(state, ctx, log) do
+      {:ok, expr, state, log} ->
+        # Check if the result has => at top level or nested
+        case extract_assoc(expr) do
+          {:assoc, key, value, assoc_meta} ->
+            # Annotate the key with :assoc metadata (the position of =>)
+            # This is what Elixir's parser does with token_metadata: true
+            annotated_key = annotate_assoc(key, assoc_meta)
+            {:ok, {annotated_key, value}, state, log}
 
-        :not_assoc ->
-          # No => found - this is just an expression (for map update base)
-          {:ok, expr, state, log}
-      end
+          :not_assoc ->
+            # No => found - this is just an expression (for map update base)
+            {:ok, expr, state, log}
+        end
+
+      # keyword_key means "string": - convert to keyword pair
+      {:keyword_key, key_atom, state, log} ->
+        alias ToxicParser.Grammar.Expressions
+
+        with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
+          {:ok, {key_atom, value_ast}, state, log}
+        end
+
+      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+        alias ToxicParser.Grammar.Expressions
+
+        with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
+          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+          {:ok, {key_ast, value_ast}, state, log}
+        end
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 

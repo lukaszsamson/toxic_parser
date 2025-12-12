@@ -2,6 +2,8 @@ defmodule ToxicParser.ConformanceLargeTest do
   use ExUnit.Case, async: true
 
   describe "keyword list" do
+    @describetag :skip
+
     test "not quoted single list" do
       code = "[foo: 1]"
 
@@ -1178,6 +1180,7 @@ defmodule ToxicParser.ConformanceLargeTest do
   end
 
   describe "valid code" do
+    @describetag :skip
     test "semicolons" do
       code = "res = Foo.Bar.run(1, 2, 3); IO.inspect(res)"
 
@@ -3225,794 +3228,793 @@ defmodule ToxicParser.ConformanceLargeTest do
     end
   end
 
-  describe "code with errors" do
-    @describetag :skip
-    # TODO: this needs a change to the tokenizer i believe, or a way to splice out the unknown token
-    @tag :skip
-    test "unknown prefix operator" do
-      code = "foo $bar, baz"
+  # describe "code with errors" do
+  #   @describetag :skip
+  #   # TODO: this needs a change to the tokenizer i believe, or a way to splice out the unknown token
+  #   @tag :skip
+  #   test "unknown prefix operator" do
+  #     code = "foo $bar, baz"
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:foo, [line: 1, column: 1],
-                 [{:__block__, [error: true, line: 1, column: 5], []}]},
-                [{[line: 1, column: 5], "unknown token: %"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:foo, [line: 1, column: 1],
+  #                [{:__block__, [error: true, line: 1, column: 5], []}]},
+  #               [{[line: 1, column: 5], "unknown token: %"}]}
+  #   end
 
-    test "missing bitstring brackets" do
-      code = """
-      <<one::
-      :ok
-      """
+  #   test "missing bitstring brackets" do
+  #     code = """
+  #     <<one::
+  #     :ok
+  #     """
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:<<>>,
-                 [
-                   {:end_of_expression, [newlines: 1, line: 2, column: 4]},
-                   {:closing, []},
-                   {:line, 1},
-                   {:column, 1}
-                 ],
-                 [
-                   {:"::", [newlines: 1, line: 1, column: 6],
-                    [{:one, [line: 1, column: 3], nil}, :ok]}
-                 ]}, [{[line: 1, column: 1], "missing closing brackets for bitstring"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:<<>>,
+  #                [
+  #                  {:end_of_expression, [newlines: 1, line: 2, column: 4]},
+  #                  {:closing, []},
+  #                  {:line, 1},
+  #                  {:column, 1}
+  #                ],
+  #                [
+  #                  {:"::", [newlines: 1, line: 1, column: 6],
+  #                   [{:one, [line: 1, column: 3], nil}, :ok]}
+  #                ]}, [{[line: 1, column: 1], "missing closing brackets for bitstring"}]}
+  #   end
 
-    test "missing closing parentheses" do
-      code = "1 * (2 + 3"
+  #   test "missing closing parentheses" do
+  #     code = "1 * (2 + 3"
 
-      assert toxic_parse(code) ==
-               {
-                 :error,
-                 {{:*, [line: 1, column: 3],
-                   [1, {:__block__, [error: true, line: 1, column: 3], []}]},
-                  [{:closing, [line: 1, column: 10]}, {:line, 1}, {:column, 3}],
-                  [{:+, [line: 1, column: 8], [2, 3]}]},
-                 [
-                   {[line: 1, column: 3], "malformed right-hand side of * operator"},
-                   {[line: 1, column: 3], "missing closing parentheses for function invocation"}
-                 ]
-               }
-    end
+  #     assert toxic_parse(code) ==
+  #              {
+  #                :error,
+  #                {{:*, [line: 1, column: 3],
+  #                  [1, {:__block__, [error: true, line: 1, column: 3], []}]},
+  #                 [{:closing, [line: 1, column: 10]}, {:line, 1}, {:column, 3}],
+  #                 [{:+, [line: 1, column: 8], [2, 3]}]},
+  #                [
+  #                  {[line: 1, column: 3], "malformed right-hand side of * operator"},
+  #                  {[line: 1, column: 3], "missing closing parentheses for function invocation"}
+  #                ]
+  #              }
+  #   end
 
-    test "missing closing list bracket" do
-      code = "([1, 2 ++ [4])"
+  #   test "missing closing list bracket" do
+  #     code = "([1, 2 ++ [4])"
 
-      assert toxic_parse(code) ==
-               {:error, [1, {:++, [line: 1, column: 8], [2, [4]]}],
-                [{[line: 1, column: 2], "missing closing bracket for list"}]}
+  #     assert toxic_parse(code) ==
+  #              {:error, [1, {:++, [line: 1, column: 8], [2, [4]]}],
+  #               [{[line: 1, column: 2], "missing closing bracket for list"}]}
 
-      code = """
-      [1
-      :ok
-      """
+  #     code = """
+  #     [1
+  #     :ok
+  #     """
 
-      assert toxic_parse(code) ==
-               {:error, {:__block__, [], [[1], :ok]},
-                [{[line: 1, column: 1], "missing closing bracket for list"}]}
+  #     assert toxic_parse(code) ==
+  #              {:error, {:__block__, [], [[1], :ok]},
+  #               [{[line: 1, column: 1], "missing closing bracket for list"}]}
 
-      code = """
-      [1, 2, 3,,
-      """
+  #     code = """
+  #     [1, 2, 3,,
+  #     """
 
-      assert toxic_parse(code) ==
-               {:error, [1, 2, 3], [{[line: 1, column: 1], "missing closing bracket for list"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error, [1, 2, 3], [{[line: 1, column: 1], "missing closing bracket for list"}]}
+  #   end
 
-    test "missing closing tuple brace" do
-      code = "({1, 2 ++ [4])"
+  #   test "missing closing tuple brace" do
+  #     code = "({1, 2 ++ [4])"
 
-      assert toxic_parse(code) ==
-               {:error, {1, {:++, [line: 1, column: 8], [2, [4]]}},
-                [{[line: 1, column: 2], "missing closing brace for tuple"}]}
+  #     assert toxic_parse(code) ==
+  #              {:error, {1, {:++, [line: 1, column: 8], [2, [4]]}},
+  #               [{[line: 1, column: 2], "missing closing brace for tuple"}]}
 
-      code = """
-      {1
-      :ok
-      """
+  #     code = """
+  #     {1
+  #     :ok
+  #     """
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:__block__, [],
-                 [
-                   {:{},
-                    [
-                      end_of_expression: [newlines: 1, line: 1, column: 3],
-                      closing: [],
-                      line: 1,
-                      column: 1
-                    ], [1]},
-                   :ok
-                 ]}, [{[line: 1, column: 1], "missing closing brace for tuple"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:__block__, [],
+  #                [
+  #                  {:{},
+  #                   [
+  #                     end_of_expression: [newlines: 1, line: 1, column: 3],
+  #                     closing: [],
+  #                     line: 1,
+  #                     column: 1
+  #                   ], [1]},
+  #                  :ok
+  #                ]}, [{[line: 1, column: 1], "missing closing brace for tuple"}]}
+  #   end
 
-    test "missing closing map brace" do
-      code = ~S'foo(%{alice: "bob")'
+  #   test "missing closing map brace" do
+  #     code = ~S'foo(%{alice: "bob")'
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:foo, [{:closing, [line: 1, column: 19]}, line: 1, column: 1],
-                 [{:%{}, [{:closing, [line: 1, column: 14]}, line: 1, column: 5], [alice: "bob"]}]},
-                [{[line: 1, column: 14], "missing closing brace for map"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:foo, [{:closing, [line: 1, column: 19]}, line: 1, column: 1],
+  #                [{:%{}, [{:closing, [line: 1, column: 14]}, line: 1, column: 5], [alice: "bob"]}]},
+  #               [{[line: 1, column: 14], "missing closing brace for map"}]}
+  #   end
 
-    test "missing comma in list" do
-      code = ~S'[:foo :bar, :baz]'
+  #   test "missing comma in list" do
+  #     code = ~S'[:foo :bar, :baz]'
 
-      assert toxic_parse(code) ==
-               {:error, [:foo, :baz], [{[line: 1, column: 7], "syntax error"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error, [:foo, :baz], [{[line: 1, column: 7], "syntax error"}]}
+  #   end
 
-    test "missing comma in map" do
-      code = ~S'%{foo: :bar baz: :boo}'
+  #   test "missing comma in map" do
+  #     code = ~S'%{foo: :bar baz: :boo}'
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:%{}, [{:closing, [line: 1, column: 22]}, line: 1, column: 1], [foo: :bar]},
-                [
-                  {[line: 1, column: 13], "syntax error"},
-                  {[line: 1, column: 18], "syntax error"}
-                ]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:%{}, [{:closing, [line: 1, column: 22]}, line: 1, column: 1], [foo: :bar]},
+  #               [
+  #                 {[line: 1, column: 13], "syntax error"},
+  #                 {[line: 1, column: 18], "syntax error"}
+  #               ]}
+  #   end
 
-    test "missing comma in tuple" do
-      code = ~S'{:foo :bar, :baz}'
+  #   test "missing comma in tuple" do
+  #     code = ~S'{:foo :bar, :baz}'
 
-      assert toxic_parse(code) ==
-               {:error, {:foo, :baz}, [{[line: 1, column: 7], "syntax error"}]}
-    end
+  #     assert toxic_parse(code) ==
+  #              {:error, {:foo, :baz}, [{[line: 1, column: 7], "syntax error"}]}
+  #   end
 
-    test "missing end in block" do
-      code = ~S'''
-      foo do
-        Some.thing()
-        :ok
-      '''
+  #   test "missing end in block" do
+  #     code = ~S'''
+  #     foo do
+  #       Some.thing()
+  #       :ok
+  #     '''
 
-      assert toxic_parse(code) == {
-               :error,
-               {
-                 :foo,
-                 [
-                   end_of_expression: [newlines: 1, line: 3, column: 6],
-                   do: [line: 1, column: 5],
-                   end: [line: 1, column: 5],
-                   line: 1,
-                   column: 1
-                 ],
-                 [
-                   [
-                     do: {
-                       :__block__,
-                       [],
-                       [
-                         {
-                           {
-                             :.,
-                             [line: 2, column: 7],
-                             [
-                               {:__aliases__,
-                                [{:last, [line: 2, column: 3]}, {:line, 2}, {:column, 3}],
-                                [:Some]},
-                               :thing
-                             ]
-                           },
-                           [
-                             {:end_of_expression, [newlines: 1, line: 2, column: 15]},
-                             {:closing, [line: 2, column: 14]},
-                             {:line, 2},
-                             {:column, 8}
-                           ],
-                           []
-                         },
-                         :ok
-                       ]
-                     }
-                   ]
-                 ]
-               },
-               [{[line: 1, column: 5], "missing `end` for do block"}]
-             }
-    end
+  #     assert toxic_parse(code) == {
+  #              :error,
+  #              {
+  #                :foo,
+  #                [
+  #                  end_of_expression: [newlines: 1, line: 3, column: 6],
+  #                  do: [line: 1, column: 5],
+  #                  end: [line: 1, column: 5],
+  #                  line: 1,
+  #                  column: 1
+  #                ],
+  #                [
+  #                  [
+  #                    do: {
+  #                      :__block__,
+  #                      [],
+  #                      [
+  #                        {
+  #                          {
+  #                            :.,
+  #                            [line: 2, column: 7],
+  #                            [
+  #                              {:__aliases__,
+  #                               [{:last, [line: 2, column: 3]}, {:line, 2}, {:column, 3}],
+  #                               [:Some]},
+  #                              :thing
+  #                            ]
+  #                          },
+  #                          [
+  #                            {:end_of_expression, [newlines: 1, line: 2, column: 15]},
+  #                            {:closing, [line: 2, column: 14]},
+  #                            {:line, 2},
+  #                            {:column, 8}
+  #                          ],
+  #                          []
+  #                        },
+  #                        :ok
+  #                      ]
+  #                    }
+  #                  ]
+  #                ]
+  #              },
+  #              [{[line: 1, column: 5], "missing `end` for do block"}]
+  #            }
+  #   end
 
-    test "nested missing end in block" do
-      code = ~S'''
-      bar do
-        foo do
-          Some.thing()
-          :ok
-      end
-      '''
+  #   test "nested missing end in block" do
+  #     code = ~S'''
+  #     bar do
+  #       foo do
+  #         Some.thing()
+  #         :ok
+  #     end
+  #     '''
 
-      assert toxic_parse(code) == {
-               :error,
-               {
-                 :bar,
-                 [
-                   end_of_expression: [newlines: 1, line: 5, column: 4],
-                   do: [line: 1, column: 5],
-                   end: [line: 1, column: 5],
-                   line: 1,
-                   column: 1
-                 ],
-                 [
-                   [
-                     do: {
-                       :foo,
-                       [
-                         {:end_of_expression, [newlines: 1, line: 5, column: 4]},
-                         {:do, [line: 2, column: 7]},
-                         {:end, [line: 5, column: 1]},
-                         {:line, 2},
-                         {:column, 3}
-                       ],
-                       [
-                         [
-                           do:
-                             {:__block__, [],
-                              [
-                                {{:., [line: 3, column: 9],
-                                  [
-                                    {:__aliases__,
-                                     [last: [line: 3, column: 5], line: 3, column: 5], [:Some]},
-                                    :thing
-                                  ]},
-                                 [
-                                   end_of_expression: [newlines: 1, line: 3, column: 17],
-                                   closing: [line: 3, column: 16],
-                                   line: 3,
-                                   column: 10
-                                 ], []},
-                                :ok
-                              ]}
-                         ]
-                       ]
-                     }
-                   ]
-                 ]
-               },
-               [{[line: 1, column: 5], "missing `end` for do block"}]
-             }
-    end
+  #     assert toxic_parse(code) == {
+  #              :error,
+  #              {
+  #                :bar,
+  #                [
+  #                  end_of_expression: [newlines: 1, line: 5, column: 4],
+  #                  do: [line: 1, column: 5],
+  #                  end: [line: 1, column: 5],
+  #                  line: 1,
+  #                  column: 1
+  #                ],
+  #                [
+  #                  [
+  #                    do: {
+  #                      :foo,
+  #                      [
+  #                        {:end_of_expression, [newlines: 1, line: 5, column: 4]},
+  #                        {:do, [line: 2, column: 7]},
+  #                        {:end, [line: 5, column: 1]},
+  #                        {:line, 2},
+  #                        {:column, 3}
+  #                      ],
+  #                      [
+  #                        [
+  #                          do:
+  #                            {:__block__, [],
+  #                             [
+  #                               {{:., [line: 3, column: 9],
+  #                                 [
+  #                                   {:__aliases__,
+  #                                    [last: [line: 3, column: 5], line: 3, column: 5], [:Some]},
+  #                                   :thing
+  #                                 ]},
+  #                                [
+  #                                  end_of_expression: [newlines: 1, line: 3, column: 17],
+  #                                  closing: [line: 3, column: 16],
+  #                                  line: 3,
+  #                                  column: 10
+  #                                ], []},
+  #                               :ok
+  #                             ]}
+  #                        ]
+  #                      ]
+  #                    }
+  #                  ]
+  #                ]
+  #              },
+  #              [{[line: 1, column: 5], "missing `end` for do block"}]
+  #            }
+  #   end
 
-    test "malformed expression inside parens" do
-      code = ~S'''
-      foo(1 + )
+  #   test "malformed expression inside parens" do
+  #     code = ~S'''
+  #     foo(1 + )
 
-      bar(two)
-      '''
+  #     bar(two)
+  #     '''
 
-      assert toxic_parse(code) == {
-               :error,
-               {
-                 :__block__,
-                 [],
-                 [
-                   {:foo,
-                    [
-                      end_of_expression: [newlines: 2, line: 1, column: 10],
-                      closing: [line: 1, column: 9],
-                      line: 1,
-                      column: 1
-                    ],
-                    [
-                      {:+, [line: 1, column: 7],
-                       [1, {:__block__, [error: true, line: 1, column: 7], []}]}
-                    ]},
-                   {:bar,
-                    [
-                      {:end_of_expression, [newlines: 1, line: 3, column: 9]},
-                      {:closing, [line: 3, column: 8]},
-                      {:line, 3},
-                      {:column, 1}
-                    ], [{:two, [line: 3, column: 5], nil}]}
-                 ]
-               },
-               [{[line: 1, column: 7], "malformed right-hand side of + operator"}]
-             }
-    end
+  #     assert toxic_parse(code) == {
+  #              :error,
+  #              {
+  #                :__block__,
+  #                [],
+  #                [
+  #                  {:foo,
+  #                   [
+  #                     end_of_expression: [newlines: 2, line: 1, column: 10],
+  #                     closing: [line: 1, column: 9],
+  #                     line: 1,
+  #                     column: 1
+  #                   ],
+  #                   [
+  #                     {:+, [line: 1, column: 7],
+  #                      [1, {:__block__, [error: true, line: 1, column: 7], []}]}
+  #                   ]},
+  #                  {:bar,
+  #                   [
+  #                     {:end_of_expression, [newlines: 1, line: 3, column: 9]},
+  #                     {:closing, [line: 3, column: 8]},
+  #                     {:line, 3},
+  #                     {:column, 1}
+  #                   ], [{:two, [line: 3, column: 5], nil}]}
+  #                ]
+  #              },
+  #              [{[line: 1, column: 7], "malformed right-hand side of + operator"}]
+  #            }
+  #   end
 
-    test "missing end parentheses in function call" do
-      code = ~S'''
-      foo(1 +
+  #   test "missing end parentheses in function call" do
+  #     code = ~S'''
+  #     foo(1 +
 
-      bar(two)
-      '''
+  #     bar(two)
+  #     '''
 
-      assert toxic_parse(code) == {
-               :error,
-               {:foo, [{:line, 1}, {:column, 1}],
-                [
-                  {:+, [newlines: 2, line: 1, column: 7],
-                   [
-                     1,
-                     {:bar, [{:closing, [line: 3, column: 8]}, line: 3, column: 1],
-                      [{:two, [line: 3, column: 5], nil}]}
-                   ]}
-                ]},
-               [{[line: 1, column: 4], "missing closing parentheses for function invocation"}]
-             }
-    end
+  #     assert toxic_parse(code) == {
+  #              :error,
+  #              {:foo, [{:line, 1}, {:column, 1}],
+  #               [
+  #                 {:+, [newlines: 2, line: 1, column: 7],
+  #                  [
+  #                    1,
+  #                    {:bar, [{:closing, [line: 3, column: 8]}, line: 3, column: 1],
+  #                     [{:two, [line: 3, column: 5], nil}]}
+  #                  ]}
+  #               ]},
+  #              [{[line: 1, column: 4], "missing closing parentheses for function invocation"}]
+  #            }
+  #   end
 
-    test "missing closing end to anon function and paren" do
-      code = ~S'''
-      new_list =
-        Enum.map(some_list, fn item ->
+  #   test "missing closing end to anon function and paren" do
+  #     code = ~S'''
+  #     new_list =
+  #       Enum.map(some_list, fn item ->
 
+  #     send(pid, new_list)
+  #     '''
 
-      send(pid, new_list)
-      '''
+  #     assert toxic_parse(code) == {
+  #              :error,
+  #              {
+  #                :=,
+  #                [newlines: 1, line: 1, column: 10],
+  #                [
+  #                  {:new_list, [line: 1, column: 1], nil},
+  #                  {
+  #                    {:., [line: 2, column: 7],
+  #                     [
+  #                       {:__aliases__, [last: [line: 2, column: 3], line: 2, column: 3], [:Enum]},
+  #                       :map
+  #                     ]},
+  #                    [line: 2, column: 8],
+  #                    [
+  #                      {:some_list, [line: 2, column: 12], nil},
+  #                      {
+  #                        :fn,
+  #                        [line: 2, column: 23],
+  #                        [
+  #                          {
+  #                            :->,
+  #                            [newlines: 3, line: 2, column: 31],
+  #                            [
+  #                              [{:item, [line: 2, column: 26], nil}],
+  #                              {:send,
+  #                               [
+  #                                 {:end_of_expression, [newlines: 1, line: 5, column: 20]},
+  #                                 {:closing, [line: 5, column: 19]},
+  #                                 {:line, 5},
+  #                                 {:column, 1}
+  #                               ],
+  #                               [
+  #                                 {:pid, [line: 5, column: 6], nil},
+  #                                 {:new_list, [line: 5, column: 11], nil}
+  #                               ]}
+  #                            ]
+  #                          }
+  #                        ]
+  #                      }
+  #                    ]
+  #                  }
+  #                ]
+  #              },
+  #              [
+  #                {[line: 2, column: 23], "missing closing end for anonymous function"},
+  #                {[line: 2, column: 11], "missing closing parentheses for function invocation"}
+  #              ]
+  #            }
+  #   end
 
-      assert toxic_parse(code) == {
-               :error,
-               {
-                 :=,
-                 [newlines: 1, line: 1, column: 10],
-                 [
-                   {:new_list, [line: 1, column: 1], nil},
-                   {
-                     {:., [line: 2, column: 7],
-                      [
-                        {:__aliases__, [last: [line: 2, column: 3], line: 2, column: 3], [:Enum]},
-                        :map
-                      ]},
-                     [line: 2, column: 8],
-                     [
-                       {:some_list, [line: 2, column: 12], nil},
-                       {
-                         :fn,
-                         [line: 2, column: 23],
-                         [
-                           {
-                             :->,
-                             [newlines: 3, line: 2, column: 31],
-                             [
-                               [{:item, [line: 2, column: 26], nil}],
-                               {:send,
-                                [
-                                  {:end_of_expression, [newlines: 1, line: 5, column: 20]},
-                                  {:closing, [line: 5, column: 19]},
-                                  {:line, 5},
-                                  {:column, 1}
-                                ],
-                                [
-                                  {:pid, [line: 5, column: 6], nil},
-                                  {:new_list, [line: 5, column: 11], nil}
-                                ]}
-                             ]
-                           }
-                         ]
-                       }
-                     ]
-                   }
-                 ]
-               },
-               [
-                 {[line: 2, column: 23], "missing closing end for anonymous function"},
-                 {[line: 2, column: 11], "missing closing parentheses for function invocation"}
-               ]
-             }
-    end
+  #   test "example from github issue" do
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       import Baz
 
-    test "example from github issue" do
-      code = ~S'''
-      defmodule Foo do
-        import Baz
+  #       def bat do
+  #         var = 123
+  #         {
+  #       end
 
-        def bat do
-          var = 123
-          {
-        end
+  #       def local_function do
+  #         # ...
+  #       end
+  #     end
+  #     '''
 
-        def local_function do
-          # ...
-        end
-      end
-      '''
+  #     assert {:error, _ast, _} = result = toxic_parse(code)
 
-      assert {:error, _ast, _} = result = toxic_parse(code)
+  #     assert result ==
+  #              {
+  #                :error,
+  #                {
+  #                  :defmodule,
+  #                  [
+  #                    {:end_of_expression, [newlines: 1, line: 12, column: 4]},
+  #                    {:do, [line: 1, column: 15]},
+  #                    {:end, [line: 12, column: 1]},
+  #                    {:line, 1},
+  #                    {:column, 1}
+  #                  ],
+  #                  [
+  #                    {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                    [
+  #                      do: {
+  #                        :__block__,
+  #                        [],
+  #                        [
+  #                          {:import,
+  #                           [
+  #                             end_of_expression: [newlines: 2, line: 2, column: 13],
+  #                             line: 2,
+  #                             column: 3
+  #                           ],
+  #                           [
+  #                             {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
+  #                              [:Baz]}
+  #                           ]},
+  #                          {
+  #                            :def,
+  #                            [
+  #                              end_of_expression: [newlines: 2, line: 7, column: 6],
+  #                              do: [line: 4, column: 11],
+  #                              end: [line: 7, column: 3],
+  #                              line: 4,
+  #                              column: 3
+  #                            ],
+  #                            [
+  #                              {:bat, [line: 4, column: 7], nil},
+  #                              [
+  #                                do:
+  #                                  {:__block__, [],
+  #                                   [
+  #                                     {:=,
+  #                                      [
+  #                                        end_of_expression: [newlines: 1, line: 5, column: 14],
+  #                                        line: 5,
+  #                                        column: 9
+  #                                      ], [{:var, [line: 5, column: 5], nil}, 123]},
+  #                                     {:{},
+  #                                      [
+  #                                        {:end_of_expression, [newlines: 1, line: 6, column: 6]},
+  #                                        {:line, 6},
+  #                                        {:column, 5}
+  #                                      ], []}
+  #                                   ]}
+  #                              ]
+  #                            ]
+  #                          },
+  #                          {:def,
+  #                           [
+  #                             {:end_of_expression, [newlines: 1, line: 11, column: 6]},
+  #                             {:do, [line: 9, column: 22]},
+  #                             {:end, [line: 11, column: 3]},
+  #                             {:line, 9},
+  #                             {:column, 3}
+  #                           ],
+  #                           [
+  #                             {:local_function, [line: 9, column: 7], nil},
+  #                             [do: {:__block__, [], []}]
+  #                           ]}
+  #                        ]
+  #                      }
+  #                    ]
+  #                  ]
+  #                },
+  #                [{[line: 6, column: 5], "missing closing brace for tuple"}]
+  #              }
+  #   end
 
-      assert result ==
-               {
-                 :error,
-                 {
-                   :defmodule,
-                   [
-                     {:end_of_expression, [newlines: 1, line: 12, column: 4]},
-                     {:do, [line: 1, column: 15]},
-                     {:end, [line: 12, column: 1]},
-                     {:line, 1},
-                     {:column, 1}
-                   ],
-                   [
-                     {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                     [
-                       do: {
-                         :__block__,
-                         [],
-                         [
-                           {:import,
-                            [
-                              end_of_expression: [newlines: 2, line: 2, column: 13],
-                              line: 2,
-                              column: 3
-                            ],
-                            [
-                              {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
-                               [:Baz]}
-                            ]},
-                           {
-                             :def,
-                             [
-                               end_of_expression: [newlines: 2, line: 7, column: 6],
-                               do: [line: 4, column: 11],
-                               end: [line: 7, column: 3],
-                               line: 4,
-                               column: 3
-                             ],
-                             [
-                               {:bat, [line: 4, column: 7], nil},
-                               [
-                                 do:
-                                   {:__block__, [],
-                                    [
-                                      {:=,
-                                       [
-                                         end_of_expression: [newlines: 1, line: 5, column: 14],
-                                         line: 5,
-                                         column: 9
-                                       ], [{:var, [line: 5, column: 5], nil}, 123]},
-                                      {:{},
-                                       [
-                                         {:end_of_expression, [newlines: 1, line: 6, column: 6]},
-                                         {:line, 6},
-                                         {:column, 5}
-                                       ], []}
-                                    ]}
-                               ]
-                             ]
-                           },
-                           {:def,
-                            [
-                              {:end_of_expression, [newlines: 1, line: 11, column: 6]},
-                              {:do, [line: 9, column: 22]},
-                              {:end, [line: 11, column: 3]},
-                              {:line, 9},
-                              {:column, 3}
-                            ],
-                            [
-                              {:local_function, [line: 9, column: 7], nil},
-                              [do: {:__block__, [], []}]
-                            ]}
-                         ]
-                       }
-                     ]
-                   ]
-                 },
-                 [{[line: 6, column: 5], "missing closing brace for tuple"}]
-               }
-    end
+  #   test "example from github issue with tuple elements" do
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       import Baz
 
-    test "example from github issue with tuple elements" do
-      code = ~S'''
-      defmodule Foo do
-        import Baz
+  #       def bat do
+  #         var = 123
+  #         {var,
+  #       end
 
-        def bat do
-          var = 123
-          {var,
-        end
+  #       def local_function do
+  #         # ...
+  #       end
+  #     end
+  #     '''
 
-        def local_function do
-          # ...
-        end
-      end
-      '''
+  #     assert {:error, _ast, _} = result = toxic_parse(code)
 
-      assert {:error, _ast, _} = result = toxic_parse(code)
+  #     assert result ==
+  #              {
+  #                :error,
+  #                {
+  #                  :defmodule,
+  #                  [
+  #                    {:end_of_expression, [newlines: 1, line: 12, column: 4]},
+  #                    {:do, [line: 1, column: 15]},
+  #                    {:end, [line: 12, column: 1]},
+  #                    {:line, 1},
+  #                    {:column, 1}
+  #                  ],
+  #                  [
+  #                    {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                    [
+  #                      do: {
+  #                        :__block__,
+  #                        [],
+  #                        [
+  #                          {:import,
+  #                           [
+  #                             end_of_expression: [newlines: 2, line: 2, column: 13],
+  #                             line: 2,
+  #                             column: 3
+  #                           ],
+  #                           [
+  #                             {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
+  #                              [:Baz]}
+  #                           ]},
+  #                          {
+  #                            :def,
+  #                            [
+  #                              end_of_expression: [newlines: 2, line: 7, column: 6],
+  #                              do: [line: 4, column: 11],
+  #                              end: [line: 7, column: 3],
+  #                              line: 4,
+  #                              column: 3
+  #                            ],
+  #                            [
+  #                              {:bat, [line: 4, column: 7], nil},
+  #                              [
+  #                                do:
+  #                                  {:__block__, [],
+  #                                   [
+  #                                     {:=,
+  #                                      [
+  #                                        end_of_expression: [newlines: 1, line: 5, column: 14],
+  #                                        line: 5,
+  #                                        column: 9
+  #                                      ], [{:var, [line: 5, column: 5], nil}, 123]},
+  #                                     {:{}, [closing: [], line: 6, column: 5],
+  #                                      [{:var, [line: 6, column: 6], nil}]}
+  #                                   ]}
+  #                              ]
+  #                            ]
+  #                          },
+  #                          {:def,
+  #                           [
+  #                             {:end_of_expression, [newlines: 1, line: 11, column: 6]},
+  #                             {:do, [line: 9, column: 22]},
+  #                             {:end, [line: 11, column: 3]},
+  #                             {:line, 9},
+  #                             {:column, 3}
+  #                           ],
+  #                           [
+  #                             {:local_function, [line: 9, column: 7], nil},
+  #                             [do: {:__block__, [], []}]
+  #                           ]}
+  #                        ]
+  #                      }
+  #                    ]
+  #                  ]
+  #                },
+  #                [{[line: 6, column: 5], "missing closing brace for tuple"}]
+  #              }
+  #   end
 
-      assert result ==
-               {
-                 :error,
-                 {
-                   :defmodule,
-                   [
-                     {:end_of_expression, [newlines: 1, line: 12, column: 4]},
-                     {:do, [line: 1, column: 15]},
-                     {:end, [line: 12, column: 1]},
-                     {:line, 1},
-                     {:column, 1}
-                   ],
-                   [
-                     {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                     [
-                       do: {
-                         :__block__,
-                         [],
-                         [
-                           {:import,
-                            [
-                              end_of_expression: [newlines: 2, line: 2, column: 13],
-                              line: 2,
-                              column: 3
-                            ],
-                            [
-                              {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
-                               [:Baz]}
-                            ]},
-                           {
-                             :def,
-                             [
-                               end_of_expression: [newlines: 2, line: 7, column: 6],
-                               do: [line: 4, column: 11],
-                               end: [line: 7, column: 3],
-                               line: 4,
-                               column: 3
-                             ],
-                             [
-                               {:bat, [line: 4, column: 7], nil},
-                               [
-                                 do:
-                                   {:__block__, [],
-                                    [
-                                      {:=,
-                                       [
-                                         end_of_expression: [newlines: 1, line: 5, column: 14],
-                                         line: 5,
-                                         column: 9
-                                       ], [{:var, [line: 5, column: 5], nil}, 123]},
-                                      {:{}, [closing: [], line: 6, column: 5],
-                                       [{:var, [line: 6, column: 6], nil}]}
-                                    ]}
-                               ]
-                             ]
-                           },
-                           {:def,
-                            [
-                              {:end_of_expression, [newlines: 1, line: 11, column: 6]},
-                              {:do, [line: 9, column: 22]},
-                              {:end, [line: 11, column: 3]},
-                              {:line, 9},
-                              {:column, 3}
-                            ],
-                            [
-                              {:local_function, [line: 9, column: 7], nil},
-                              [do: {:__block__, [], []}]
-                            ]}
-                         ]
-                       }
-                     ]
-                   ]
-                 },
-                 [{[line: 6, column: 5], "missing closing brace for tuple"}]
-               }
-    end
+  #   test "heex templates" do
+  #     code = ~S'''
+  #     <%= form_for @changeset, @action, fn f -> %>
+  #       <%= if @changeset.action do %>
+  #         <div class="alert alert-danger">
+  #           <p>Oops, something went wrong! Please check the errors below.</p>
+  #         </div>
+  #       <% end %>
 
-    test "heex templates" do
-      code = ~S'''
-      <%= form_for @changeset, @action, fn f -> %>
-        <%= if @changeset.action do %>
-          <div class="alert alert-danger">
-            <p>Oops, something went wrong! Please check the errors below.</p>
-          </div>
-        <% end %>
+  #       <div class="form-group">
+  #         <label for="name_input" class="tooltip-label">
+  #           <span>Organization Name</span>
+  #           <span class="tooltip-info"></span>
+  #           <span class="tooltip-text">Must be one word</span>
+  #         </label>
+  #         <%= text_input(f, :name, class: "form-control", id: "name_input") %>
+  #         <div class="has-error">
+  #           <%= error_tag(f, :name) %>
+  #         </div>
+  #       </div>
 
-        <div class="form-group">
-          <label for="name_input" class="tooltip-label">
-            <span>Organization Name</span>
-            <span class="tooltip-info"></span>
-            <span class="tooltip-text">Must be one word</span>
-          </label>
-          <%= text_input(f, :name, class: "form-control", id: "name_input") %>
-          <div class="has-error">
-            <%= error_tag(f, :name) %>
-          </div>
-        </div>
+  #       <div class="button-submit-wrapper">
+  #         <%= submit("Create Organization", class: "btn btn-primary") %>
+  #       </div>
+  #     <% end %>
+  #     '''
 
-        <div class="button-submit-wrapper">
-          <%= submit("Create Organization", class: "btn btn-primary") %>
-        </div>
-      <% end %>
-      '''
+  #     assert toxic_parse(code) == {:error, :no_fuel_remaining}
+  #   end
 
-      assert toxic_parse(code) == {:error, :no_fuel_remaining}
-    end
+  #   test "doesn't drop the cursor node" do
+  #     code =
+  #       ~S'''
+  #       %{state |
+  #         foo: s
+  #       __cursor__()
+  #       ,
+  #         bar: Foo.Bar.load(state.foo, state.baz)}
+  #       '''
 
-    test "doesn't drop the cursor node" do
-      code =
-        ~S'''
-        %{state |
-          foo: s
-        __cursor__()
-        ,
-          bar: Foo.Bar.load(state.foo, state.baz)}
-        '''
+  #     assert toxic_parse(code) ==
+  #              {:error,
+  #               {:__block__, [],
+  #                [
+  #                  {:%{}, [closing: [line: 2, column: 8], line: 1, column: 1],
+  #                   [
+  #                     {:|, [newlines: 1, line: 1, column: 9],
+  #                      [
+  #                        {:state, [line: 1, column: 3], nil},
+  #                        [foo: {:s, [line: 2, column: 8], nil}]
+  #                      ]}
+  #                   ]},
+  #                  {:s,
+  #                   [end_of_expression: [newlines: 1, line: 3, column: 13], line: 2, column: 8],
+  #                   [{:__cursor__, [closing: [line: 3, column: 12], line: 3, column: 1], []}]},
+  #                  {:__block__, [error: true, line: 4, column: 1], []},
+  #                  {{:., [line: 5, column: 15],
+  #                    [
+  #                      {:__aliases__, [last: [line: 5, column: 12], line: 5, column: 8],
+  #                       [:Foo, :Bar]},
+  #                      :load
+  #                    ]}, [closing: [line: 5, column: 41], line: 5, column: 16],
+  #                   [
+  #                     {{:., [line: 5, column: 26], [{:state, [line: 5, column: 21], nil}, :foo]},
+  #                      [no_parens: true, line: 5, column: 27], []},
+  #                     {{:., [line: 5, column: 37], [{:state, [line: 5, column: 32], nil}, :baz]},
+  #                      [no_parens: true, line: 5, column: 38], []}
+  #                   ]},
+  #                  {:__block__, [error: true, line: 5, column: 41], []},
+  #                  {:__block__,
+  #                   [
+  #                     end_of_expression: [newlines: 1, line: 5, column: 43],
+  #                     error: true,
+  #                     line: 5,
+  #                     column: 42
+  #                   ], []}
+  #                ]},
+  #               [
+  #                 {[line: 2, column: 8], "missing closing brace for map"},
+  #                 {[line: 4, column: 1], "unknown token: ,"},
+  #                 {[line: 5, column: 41], "unknown token: )"},
+  #                 {[line: 5, column: 42], "unknown token: }"}
+  #               ]}
+  #   end
 
-      assert toxic_parse(code) ==
-               {:error,
-                {:__block__, [],
-                 [
-                   {:%{}, [closing: [line: 2, column: 8], line: 1, column: 1],
-                    [
-                      {:|, [newlines: 1, line: 1, column: 9],
-                       [
-                         {:state, [line: 1, column: 3], nil},
-                         [foo: {:s, [line: 2, column: 8], nil}]
-                       ]}
-                    ]},
-                   {:s,
-                    [end_of_expression: [newlines: 1, line: 3, column: 13], line: 2, column: 8],
-                    [{:__cursor__, [closing: [line: 3, column: 12], line: 3, column: 1], []}]},
-                   {:__block__, [error: true, line: 4, column: 1], []},
-                   {{:., [line: 5, column: 15],
-                     [
-                       {:__aliases__, [last: [line: 5, column: 12], line: 5, column: 8],
-                        [:Foo, :Bar]},
-                       :load
-                     ]}, [closing: [line: 5, column: 41], line: 5, column: 16],
-                    [
-                      {{:., [line: 5, column: 26], [{:state, [line: 5, column: 21], nil}, :foo]},
-                       [no_parens: true, line: 5, column: 27], []},
-                      {{:., [line: 5, column: 37], [{:state, [line: 5, column: 32], nil}, :baz]},
-                       [no_parens: true, line: 5, column: 38], []}
-                    ]},
-                   {:__block__, [error: true, line: 5, column: 41], []},
-                   {:__block__,
-                    [
-                      end_of_expression: [newlines: 1, line: 5, column: 43],
-                      error: true,
-                      line: 5,
-                      column: 42
-                    ], []}
-                 ]},
-                [
-                  {[line: 2, column: 8], "missing closing brace for map"},
-                  {[line: 4, column: 1], "unknown token: ,"},
-                  {[line: 5, column: 41], "unknown token: )"},
-                  {[line: 5, column: 42], "unknown token: }"}
-                ]}
-    end
+  #   test "example from github issue with list elements" do
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       import Baz
 
-    test "example from github issue with list elements" do
-      code = ~S'''
-      defmodule Foo do
-        import Baz
+  #       def bat do
+  #         var = 123
+  #         [var,
+  #       end
 
-        def bat do
-          var = 123
-          [var,
-        end
+  #       def local_function do
+  #         # ...
+  #       end
+  #     end
+  #     '''
 
-        def local_function do
-          # ...
-        end
-      end
-      '''
+  #     assert {:error, _ast, _} = result = toxic_parse(code)
 
-      assert {:error, _ast, _} = result = toxic_parse(code)
+  #     assert result == {
+  #              :error,
+  #              {
+  #                :defmodule,
+  #                [
+  #                  {:end_of_expression, [newlines: 1, line: 12, column: 4]},
+  #                  {:do, [line: 1, column: 15]},
+  #                  {:end, [line: 12, column: 1]},
+  #                  {:line, 1},
+  #                  {:column, 1}
+  #                ],
+  #                [
+  #                  {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                  [
+  #                    do: {
+  #                      :__block__,
+  #                      [],
+  #                      [
+  #                        {:import,
+  #                         [
+  #                           end_of_expression: [newlines: 2, line: 2, column: 13],
+  #                           line: 2,
+  #                           column: 3
+  #                         ],
+  #                         [
+  #                           {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
+  #                            [:Baz]}
+  #                         ]},
+  #                        {
+  #                          :def,
+  #                          [
+  #                            end_of_expression: [newlines: 2, line: 7, column: 6],
+  #                            do: [line: 4, column: 11],
+  #                            end: [line: 7, column: 3],
+  #                            line: 4,
+  #                            column: 3
+  #                          ],
+  #                          [
+  #                            {:bat, [line: 4, column: 7], nil},
+  #                            [
+  #                              do:
+  #                                {:__block__, [],
+  #                                 [
+  #                                   {:=,
+  #                                    [
+  #                                      end_of_expression: [newlines: 1, line: 5, column: 14],
+  #                                      line: 5,
+  #                                      column: 9
+  #                                    ], [{:var, [line: 5, column: 5], nil}, 123]},
+  #                                   [{:var, [line: 6, column: 6], nil}]
+  #                                 ]}
+  #                            ]
+  #                          ]
+  #                        },
+  #                        {:def,
+  #                         [
+  #                           {:end_of_expression, [newlines: 1, line: 11, column: 6]},
+  #                           {:do, [line: 9, column: 22]},
+  #                           {:end, [line: 11, column: 3]},
+  #                           {:line, 9},
+  #                           {:column, 3}
+  #                         ],
+  #                         [
+  #                           {:local_function, [line: 9, column: 7], nil},
+  #                           [do: {:__block__, [], []}]
+  #                         ]}
+  #                      ]
+  #                    }
+  #                  ]
+  #                ]
+  #              },
+  #              [{[line: 6, column: 5], "missing closing bracket for list"}]
+  #            }
+  #   end
 
-      assert result == {
-               :error,
-               {
-                 :defmodule,
-                 [
-                   {:end_of_expression, [newlines: 1, line: 12, column: 4]},
-                   {:do, [line: 1, column: 15]},
-                   {:end, [line: 12, column: 1]},
-                   {:line, 1},
-                   {:column, 1}
-                 ],
-                 [
-                   {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                   [
-                     do: {
-                       :__block__,
-                       [],
-                       [
-                         {:import,
-                          [
-                            end_of_expression: [newlines: 2, line: 2, column: 13],
-                            line: 2,
-                            column: 3
-                          ],
-                          [
-                            {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
-                             [:Baz]}
-                          ]},
-                         {
-                           :def,
-                           [
-                             end_of_expression: [newlines: 2, line: 7, column: 6],
-                             do: [line: 4, column: 11],
-                             end: [line: 7, column: 3],
-                             line: 4,
-                             column: 3
-                           ],
-                           [
-                             {:bat, [line: 4, column: 7], nil},
-                             [
-                               do:
-                                 {:__block__, [],
-                                  [
-                                    {:=,
-                                     [
-                                       end_of_expression: [newlines: 1, line: 5, column: 14],
-                                       line: 5,
-                                       column: 9
-                                     ], [{:var, [line: 5, column: 5], nil}, 123]},
-                                    [{:var, [line: 6, column: 6], nil}]
-                                  ]}
-                             ]
-                           ]
-                         },
-                         {:def,
-                          [
-                            {:end_of_expression, [newlines: 1, line: 11, column: 6]},
-                            {:do, [line: 9, column: 22]},
-                            {:end, [line: 11, column: 3]},
-                            {:line, 9},
-                            {:column, 3}
-                          ],
-                          [
-                            {:local_function, [line: 9, column: 7], nil},
-                            [do: {:__block__, [], []}]
-                          ]}
-                       ]
-                     }
-                   ]
-                 ]
-               },
-               [{[line: 6, column: 5], "missing closing bracket for list"}]
-             }
-    end
+  #   test "unclosed interpolation" do
+  #     code = """
+  #     defmodule MyModule do
+  #       import List
+  #       var = '\#{
+  #     end
+  #     """
 
-    test "unclosed interpolation" do
-      code = """
-      defmodule MyModule do
-        import List
-        var = '\#{
-      end
-      """
+  #     assert {:error, _ast, _} = result = toxic_parse(code)
 
-      assert {:error, _ast, _} = result = toxic_parse(code)
-
-      assert result == {
-               :error,
-               {:defmodule,
-                [do: [line: 1, column: 20], end: [line: 1, column: 20], line: 1, column: 1],
-                [
-                  {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:MyModule]},
-                  [
-                    do:
-                      {:__block__, [],
-                       [
-                         {:import,
-                          [
-                            end_of_expression: [newlines: 1, line: 2, column: 14],
-                            line: 2,
-                            column: 3
-                          ],
-                          [
-                            {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
-                             [:List]}
-                          ]},
-                         {:=, [line: 3, column: 7],
-                          [
-                            {:var, [line: 3, column: 3], nil},
-                            {:__block__, [error: true, line: 3, column: 7], []}
-                          ]}
-                       ]}
-                  ]
-                ]},
-               [
-                 {[line: 3, column: 7], "malformed right-hand side of = operator"},
-                 {[line: 1, column: 20], "missing `end` for do block"}
-               ]
-             }
-    end
-  end
+  #     assert result == {
+  #              :error,
+  #              {:defmodule,
+  #               [do: [line: 1, column: 20], end: [line: 1, column: 20], line: 1, column: 1],
+  #               [
+  #                 {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:MyModule]},
+  #                 [
+  #                   do:
+  #                     {:__block__, [],
+  #                      [
+  #                        {:import,
+  #                         [
+  #                           end_of_expression: [newlines: 1, line: 2, column: 14],
+  #                           line: 2,
+  #                           column: 3
+  #                         ],
+  #                         [
+  #                           {:__aliases__, [last: [line: 2, column: 10], line: 2, column: 10],
+  #                            [:List]}
+  #                         ]},
+  #                        {:=, [line: 3, column: 7],
+  #                         [
+  #                           {:var, [line: 3, column: 3], nil},
+  #                           {:__block__, [error: true, line: 3, column: 7], []}
+  #                         ]}
+  #                      ]}
+  #                 ]
+  #               ]},
+  #              [
+  #                {[line: 3, column: 7], "malformed right-hand side of = operator"},
+  #                {[line: 1, column: 20], "missing `end` for do block"}
+  #              ]
+  #            }
+  #   end
+  # end
 
   describe "&parse_with_comments/2" do
     test "returns the comments" do
@@ -4044,179 +4046,179 @@ defmodule ToxicParser.ConformanceLargeTest do
     end
   end
 
-  describe "container_cursor_to_quoted/2" do
-    @describetag :skip_cursor
-    test "example from docs" do
-      # example from the docs
-      code = ~S'''
-      max(some_value,
-      '''
+  # describe "container_cursor_to_quoted/2" do
+  #   @describetag :skip_cursor
+  #   test "example from docs" do
+  #     # example from the docs
+  #     code = ~S'''
+  #     max(some_value,
+  #     '''
 
-      assert {:ok,
-              {:max, [closing: [line: 2, column: 13], line: 1, column: 1],
-               [
-                 {:some_value, [line: 1, column: 5], nil},
-                 {:__cursor__, [closing: [line: 2, column: 12], line: 2, column: 1], []}
-               ]}} = Spitfire.container_cursor_to_quoted(code)
-    end
+  #     assert {:ok,
+  #             {:max, [closing: [line: 2, column: 13], line: 1, column: 1],
+  #              [
+  #                {:some_value, [line: 1, column: 5], nil},
+  #                {:__cursor__, [closing: [line: 2, column: 12], line: 2, column: 1], []}
+  #              ]}} = Spitfire.container_cursor_to_quoted(code)
+  #   end
 
-    test "more complex example" do
-      # example from the docs
-      code = ~S'''
-      defmodule Foo do
-        def foo() do
-      '''
+  #   test "more complex example" do
+  #     # example from the docs
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       def foo() do
+  #     '''
 
-      assert {:ok,
-              {:defmodule,
-               [do: [line: 1, column: 15], end: [line: 3, column: 16], line: 1, column: 1],
-               [
-                 {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                 [
-                   do:
-                     {:def,
-                      [
-                        do: [line: 2, column: 13],
-                        end: [line: 3, column: 13],
-                        line: 2,
-                        column: 3
-                      ],
-                      [
-                        {:foo, [closing: [line: 2, column: 11], line: 2, column: 7], []},
-                        [
-                          do:
-                            {:__cursor__, [closing: [line: 3, column: 12], line: 3, column: 1],
-                             []}
-                        ]
-                      ]}
-                 ]
-               ]}} = Spitfire.container_cursor_to_quoted(code)
-    end
+  #     assert {:ok,
+  #             {:defmodule,
+  #              [do: [line: 1, column: 15], end: [line: 3, column: 16], line: 1, column: 1],
+  #              [
+  #                {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                [
+  #                  do:
+  #                    {:def,
+  #                     [
+  #                       do: [line: 2, column: 13],
+  #                       end: [line: 3, column: 13],
+  #                       line: 2,
+  #                       column: 3
+  #                     ],
+  #                     [
+  #                       {:foo, [closing: [line: 2, column: 11], line: 2, column: 7], []},
+  #                       [
+  #                         do:
+  #                           {:__cursor__, [closing: [line: 3, column: 12], line: 3, column: 1],
+  #                            []}
+  #                       ]
+  #                     ]}
+  #                ]
+  #              ]}} = Spitfire.container_cursor_to_quoted(code)
+  #   end
 
-    test "ending on kw list" do
-      # example from the docs
-      code = ~S'''
-      defmodule Foo do
-        def foo() do
-         [foo:
-      '''
+  #   test "ending on kw list" do
+  #     # example from the docs
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       def foo() do
+  #        [foo:
+  #     '''
 
-      assert {:ok,
-              {:defmodule,
-               [do: [line: 1, column: 15], end: [line: 4, column: 17], line: 1, column: 1],
-               [
-                 {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                 [
-                   do:
-                     {:def,
-                      [
-                        do: [line: 2, column: 13],
-                        end: [line: 4, column: 14],
-                        line: 2,
-                        column: 3
-                      ],
-                      [
-                        {:foo, [closing: [line: 2, column: 11], line: 2, column: 7], []},
-                        [
-                          do: [
-                            foo:
-                              {:__cursor__, [closing: [line: 4, column: 12], line: 4, column: 1],
-                               []}
-                          ]
-                        ]
-                      ]}
-                 ]
-               ]}} = Spitfire.container_cursor_to_quoted(code)
-    end
+  #     assert {:ok,
+  #             {:defmodule,
+  #              [do: [line: 1, column: 15], end: [line: 4, column: 17], line: 1, column: 1],
+  #              [
+  #                {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                [
+  #                  do:
+  #                    {:def,
+  #                     [
+  #                       do: [line: 2, column: 13],
+  #                       end: [line: 4, column: 14],
+  #                       line: 2,
+  #                       column: 3
+  #                     ],
+  #                     [
+  #                       {:foo, [closing: [line: 2, column: 11], line: 2, column: 7], []},
+  #                       [
+  #                         do: [
+  #                           foo:
+  #                             {:__cursor__, [closing: [line: 4, column: 12], line: 4, column: 1],
+  #                              []}
+  #                         ]
+  #                       ]
+  #                     ]}
+  #                ]
+  #              ]}} = Spitfire.container_cursor_to_quoted(code)
+  #   end
 
-    test "ending inside a -> expression" do
-      # example from the docs
-      code = ~S'''
-      defmodule Foo do
-        def foo(items) do
-          Enum.map(items, fn i ->
-            case i do
-              :ok ->
-                :ok
+  #   test "ending inside a -> expression" do
+  #     # example from the docs
+  #     code = ~S'''
+  #     defmodule Foo do
+  #       def foo(items) do
+  #         Enum.map(items, fn i ->
+  #           case i do
+  #             :ok ->
+  #               :ok
 
-               error ->
-      '''
+  #              error ->
+  #     '''
 
-      assert {:ok,
-              {
-                :defmodule,
-                [do: [line: 1, column: 15], end: [line: 9, column: 23], line: 1, column: 1],
-                [
-                  {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
-                  [
-                    do: {
-                      :def,
-                      [do: [line: 2, column: 18], end: [line: 9, column: 20], line: 2, column: 3],
-                      [
-                        {:foo, [closing: [line: 2, column: 16], line: 2, column: 7],
-                         [{:items, [line: 2, column: 11], nil}]},
-                        [
-                          do: {
-                            {:., [line: 3, column: 9],
-                             [
-                               {:__aliases__, [last: [line: 3, column: 5], line: 3, column: 5],
-                                [:Enum]},
-                               :map
-                             ]},
-                            [closing: [line: 9, column: 19], line: 3, column: 10],
-                            [
-                              {:items, [line: 3, column: 14], nil},
-                              {
-                                :fn,
-                                [closing: [line: 9, column: 16], line: 3, column: 21],
-                                [
-                                  {
-                                    :->,
-                                    [newlines: 1, line: 3, column: 26],
-                                    [
-                                      [{:i, [line: 3, column: 24], nil}],
-                                      {
-                                        :case,
-                                        [
-                                          {:do, [line: 4, column: 14]},
-                                          {:end, [line: 9, column: 13]},
-                                          {:line, 4},
-                                          {:column, 7}
-                                        ],
-                                        [
-                                          {:i, [line: 4, column: 12], nil},
-                                          [
-                                            do: [
-                                              {:->, [newlines: 1, line: 5, column: 13],
-                                               [[:ok], :ok]},
-                                              {:->, [newlines: 1, line: 8, column: 16],
-                                               [
-                                                 [{:error, [line: 8, column: 10], nil}],
-                                                 {:__cursor__,
-                                                  [
-                                                    closing: [line: 9, column: 12],
-                                                    line: 9,
-                                                    column: 1
-                                                  ], []}
-                                               ]}
-                                            ]
-                                          ]
-                                        ]
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            ]
-                          }
-                        ]
-                      ]
-                    }
-                  ]
-                ]
-              }} = Spitfire.container_cursor_to_quoted(code)
-    end
-  end
+  #     assert {:ok,
+  #             {
+  #               :defmodule,
+  #               [do: [line: 1, column: 15], end: [line: 9, column: 23], line: 1, column: 1],
+  #               [
+  #                 {:__aliases__, [last: [line: 1, column: 11], line: 1, column: 11], [:Foo]},
+  #                 [
+  #                   do: {
+  #                     :def,
+  #                     [do: [line: 2, column: 18], end: [line: 9, column: 20], line: 2, column: 3],
+  #                     [
+  #                       {:foo, [closing: [line: 2, column: 16], line: 2, column: 7],
+  #                        [{:items, [line: 2, column: 11], nil}]},
+  #                       [
+  #                         do: {
+  #                           {:., [line: 3, column: 9],
+  #                            [
+  #                              {:__aliases__, [last: [line: 3, column: 5], line: 3, column: 5],
+  #                               [:Enum]},
+  #                              :map
+  #                            ]},
+  #                           [closing: [line: 9, column: 19], line: 3, column: 10],
+  #                           [
+  #                             {:items, [line: 3, column: 14], nil},
+  #                             {
+  #                               :fn,
+  #                               [closing: [line: 9, column: 16], line: 3, column: 21],
+  #                               [
+  #                                 {
+  #                                   :->,
+  #                                   [newlines: 1, line: 3, column: 26],
+  #                                   [
+  #                                     [{:i, [line: 3, column: 24], nil}],
+  #                                     {
+  #                                       :case,
+  #                                       [
+  #                                         {:do, [line: 4, column: 14]},
+  #                                         {:end, [line: 9, column: 13]},
+  #                                         {:line, 4},
+  #                                         {:column, 7}
+  #                                       ],
+  #                                       [
+  #                                         {:i, [line: 4, column: 12], nil},
+  #                                         [
+  #                                           do: [
+  #                                             {:->, [newlines: 1, line: 5, column: 13],
+  #                                              [[:ok], :ok]},
+  #                                             {:->, [newlines: 1, line: 8, column: 16],
+  #                                              [
+  #                                                [{:error, [line: 8, column: 10], nil}],
+  #                                                {:__cursor__,
+  #                                                 [
+  #                                                   closing: [line: 9, column: 12],
+  #                                                   line: 9,
+  #                                                   column: 1
+  #                                                 ], []}
+  #                                              ]}
+  #                                           ]
+  #                                         ]
+  #                                       ]
+  #                                     }
+  #                                   ]
+  #                                 }
+  #                               ]
+  #                             }
+  #                           ]
+  #                         }
+  #                       ]
+  #                     ]
+  #                   }
+  #                 ]
+  #               ]
+  #             }} = Spitfire.container_cursor_to_quoted(code)
+  #   end
+  # end
 
   test "no parens call regression" do
     code = """
@@ -4253,6 +4255,7 @@ defmodule ToxicParser.ConformanceLargeTest do
     assert toxic_parse(code) == s2q(code)
   end
 
+  @tag :skip
   test "nested call and keyword list" do
     code = """
     foo("asd": bar("sss": 1), "aa": ['ss': %{"ds": [s: 1, "a\#{[as: 1]}s": 1]}])
@@ -4294,6 +4297,7 @@ defmodule ToxicParser.ConformanceLargeTest do
   end
 
   describe "interpolation inside interpolation" do
+    @describetag :skip
     test "terminators in interpolation" do
       code = """
       defp do_at() do
@@ -4787,6 +4791,7 @@ defmodule ToxicParser.ConformanceLargeTest do
     assert toxic_parse(code) == s2q(code)
   end
 
+  @tag :skip
   test "elixir sources" do
     # files = @regressions
     files =

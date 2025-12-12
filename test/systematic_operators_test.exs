@@ -139,12 +139,36 @@ defmodule ToxicParser.SystematicOperatorsTest do
   # Left-associative binary operators
   @left_assoc_ops ~w(** * / + - ^^^ in |> <<< >>> <<~ ~>> <~ ~> <~> < > <= >= == != =~ === !== && &&& and || ||| or <- \\)a
 
+  # 3 expression kinds: matched_expr, unmatched_expr and no_parens_expr
+  @expressions [
+    :matched,
+    :unmatched,
+    :no_parens,
+  ]
+
+  defp gen_expr(:matched, name) do
+    "#{String.capitalize(name)}Matched.#{name}_matched(#{name}_matched_arg)"
+  end
+
+  defp gen_expr(:unmatched, name) do
+    "#{String.capitalize(name)}Unmatched.#{name}_unmatched do #{name}_unmatched_some end"
+  end
+
+  defp gen_expr(:no_parens, name) do
+    "#{String.capitalize(name)}NoParens.#{name}_no_parens #{name}_no_parens_arg1, #{name}_no_parens_arg2"
+  end
+
   # Helper to convert atom to string representation
   defp op_to_string(:"not in"), do: "not in"
   defp op_to_string(op), do: Atom.to_string(op)
 
   defp s2q(code) do
     Code.string_to_quoted(code, columns: true, token_metadata: true)
+  rescue
+    e ->
+      File.write!("ref_parser.txt", "Reference parser crashed on:\n" <> code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__) <> "\n", [:append])
+      # IO.warn("Reference parser crashed on:\n" <> code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__))
+      {:error, :reference_parser_crash}
   end
 
   # We will generate tests dynamically
@@ -164,11 +188,11 @@ defmodule ToxicParser.SystematicOperatorsTest do
       # but 40*40 = 1600 is fast enough for Elixir.
 
       failures =
-        for op1 <- @binary_ops, op2 <- @binary_ops do
+        for op1 <- @binary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens], expr_b <- @expressions -- [:no_parens], expr_c <- @expressions do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
-          code = "a #{s_op1} b #{s_op2} c"
+          code = "#{gen_expr(expr_a, "a")} #{s_op1} #{gen_expr(expr_b, "b")} #{s_op2} #{gen_expr(expr_c, "c")}"
 
           check(code)
         end
@@ -180,11 +204,11 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "unary - binary combinations (op1 a op2 b)" do
       failures =
-        for op1 <- @unary_ops, op2 <- @binary_ops do
+        for op1 <- @unary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens, :unmatched], expr_b <- @expressions -- [:no_parens, :unmatched] do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
-          code = "#{s_op1} a #{s_op2} b"
+          code = "#{s_op1} #{gen_expr(expr_a, "a")} #{s_op2} #{gen_expr(expr_b, "b")}"
 
           check(code)
         end

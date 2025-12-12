@@ -228,7 +228,9 @@ defmodule ToxicParser.Grammar.Calls do
       :dual_op,
       # Maps and structs
       :%,
-      :%{}
+      :%{},
+      # fn starts block expressions that can be no-parens args
+      :fn
     ]
   end
 

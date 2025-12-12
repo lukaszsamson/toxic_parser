@@ -80,7 +80,8 @@ defmodule ToxicParser.Grammar.Expressions do
   defp parse_with_layers(state, ctx, log) do
     case Blocks.parse(state, ctx, log) do
       {:ok, ast, state, log} ->
-        {:ok, ast, state, log}
+        # Continue with led() to handle trailing binary operators like `fn -> a end ** b`
+        Pratt.led(ast, state, log, 0, ctx)
 
       {:error, reason, state, log} ->
         {:error, reason, state, log}
@@ -286,10 +287,11 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp annotate_eoe(ast, _eoe_meta), do: ast
 
+  @doc false
   # Build an interpolated keyword key AST
   # Elixir produces: {{:., meta, [:erlang, :binary_to_atom]}, call_meta, [binary, :utf8]}
   # where binary is {:<<>>, meta, [parts...]}
-  defp build_interpolated_keyword_key(parts, kind, start_meta, delimiter) do
+  def build_interpolated_keyword_key(parts, kind, start_meta, delimiter) do
     # Convert parts to binary parts for {:<<>>, ...}
     binary_parts = parts_to_binary(parts, kind, start_meta)
     binary_ast = {:<<>>, start_meta, binary_parts}
