@@ -243,10 +243,26 @@ defmodule ToxicParser.Grammar.Maps do
                     end
                   else
                     # Assoc entries: %{base | a => b, c => d}
+                    # BUT we need to verify this is actually a map update, not a single entry
+                    # where | is part of the key. For example, %{a | b :: c => d} should be
+                    # a single entry with key (a | b) :: c, not a map update.
+                    #
+                    # The rule: if the first entry's KEY contains operators with precedence
+                    # lower than | (70), then | should have been part of the key.
                     with {:ok, entries, close_meta, state, log} <-
                            parse_map_close(state, ctx, log) do
-                      update_ast = {:|, pipe_meta, [base_expr, entries]}
-                      {:ok, update_ast, close_meta, state, log}
+                      # Check if first entry's key has low-precedence operators
+                      first_key = get_first_entry_key(entries)
+
+                      if first_key != nil and key_has_lower_precedence_op?(first_key) do
+                        # The | should be part of the key, not map update separator
+                        # Rewind and parse as regular entries
+                        state = TokenAdapter.rewind(state, checkpoint_id)
+                        {:not_update, state}
+                      else
+                        update_ast = {:|, pipe_meta, [base_expr, entries]}
+                        {:ok, update_ast, close_meta, state, log}
+                      end
                     end
                   end
 
@@ -274,6 +290,42 @@ defmodule ToxicParser.Grammar.Maps do
   # Check if an expression is an assoc expression (has => at top level)
   defp is_assoc_expr?({:"=>", _, _}), do: true
   defp is_assoc_expr?(_), do: false
+
+  # Get the key of the first entry in a list of map entries
+  # Entries can be {key, value} tuples or keyword pairs
+  defp get_first_entry_key([{key, _value} | _]), do: key
+  defp get_first_entry_key(_), do: nil
+
+  # Check if the KEY of an assoc entry contains operators with precedence lower than pipe_op (70).
+  # If so, the | we saw should have been part of the key, not the map update separator.
+  # This handles cases like %{a | b :: c => d} where :: (bp=60) < | (bp=70), meaning
+  # the | is part of the key expression (a | b) :: c, not a map update separator.
+  #
+  # Operators with precedence < 70:
+  # - type_op (::): 60
+  # - when_op: 50
+  # - in_match_op (<-): 40
+  # - comma_op: 20
+  # - stab_op (->): 10
+  # - do_op: 5
+  defp key_has_lower_precedence_op?({op, _, args}) when is_atom(op) and is_list(args) do
+    # Check if this node's operator has precedence < 70
+    op_has_low_precedence?(op) or
+      Enum.any?(args, &key_has_lower_precedence_op?/1)
+  end
+
+  defp key_has_lower_precedence_op?(_), do: false
+
+  # Check if operator has precedence lower than pipe_op (70)
+  # Operators with precedence < 70:
+  # - type_op (::): 60
+  # - when_op: 50
+  # - in_match_op (<-, \\): 40
+  # - comma_op: 20
+  # - stab_op (->): 10
+  # - do_op: 5
+  defp op_has_low_precedence?(op) when op in [:"::", :when, :<-, :\\, :",", :->, :do], do: true
+  defp op_has_low_precedence?(_), do: false
 
   # Parse map_close: kw_data close_curly | assoc close_curly | assoc_base ',' kw_data close_curly
   defp parse_map_close(state, ctx, log) do

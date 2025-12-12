@@ -372,13 +372,16 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "map update with unary operators" do
       failures =
-        for op <- @simple_unary_ops do
+        for op <- @simple_unary_ops,
+        expr_a <- @expressions -- [:no_parens],
+        expr_b <- @expressions -- [:no_parens, :unmatched],
+        expr_c <- @expressions -- [:no_parens, :unmatched] do
           s_op = op_to_string(op)
 
           [
-            check("#{s_op} %{m | k => v}"),
-            check("%{m | #{s_op} k => v}"),
-            check("%{m | k => #{s_op} v}")
+            check("%{#{s_op} #{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"),
+            check("%{#{gen_expr(expr_a, "a")} | #{s_op} #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"),
+            check("%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{s_op} #{gen_expr(expr_a, "c")}}")
           ]
         end
         |> List.flatten()
