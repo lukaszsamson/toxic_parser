@@ -17,7 +17,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
-  def parse_paren_args(acc, state, ctx, log) do
+  def parse_paren_args(acc, state, _ctx, log) do
     # Skip EOE before checking for close paren or next arg
     state = skip_eoe(state)
 
@@ -28,19 +28,24 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       {:ok, tok, _state} ->
         cond do
           Keywords.starts_kw?(tok) ->
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+            # Inside parens, use :unmatched so do_identifiers can consume do-blocks
+            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, :unmatched, log) do
               {:ok, [kw_list | acc], state, log}
             end
 
           true ->
-            with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+            # Inside parens, use :unmatched so do_identifiers (case, if, etc.)
+            # can consume their do-blocks. This is correct because when inside parens,
+            # the do-block clearly belongs to the inner expression, not an outer call.
+            # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
+            with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
               # Skip EOE after arg before checking for comma
               state = skip_eoe(state)
 
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
-                  parse_paren_args([arg | acc], state, ctx, log)
+                  parse_paren_args([arg | acc], state, :unmatched, log)
 
                 _ ->
                   {:ok, [arg | acc], state, log}

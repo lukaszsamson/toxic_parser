@@ -22,3 +22,5 @@ Phase 6 gaps are mostly closed: lists/tuples enforce commas, allow trailing comm
    (size/type/unit/signedness/endianness, capture_int) are not parsed—segments are plain expressions only—and there’s no dedicated sync/recovery on container terminators beyond normal error returns. If you
    need full bitstring modifier support and robust recovery, those items are still outstanding.
 
+Yes. for comprehensions are still not parsed anywhere. Environment tracking remains minimal: only enter/exit scope events on fn/do-blocks, no bind events for patterns, and no alias/import/use/require
+   handling (Env is a stub with scopes only).

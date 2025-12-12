@@ -250,20 +250,25 @@ defmodule ToxicParser.Grammar.Dots do
     end
   end
 
-  defp parse_paren_args(acc, state, ctx, log) do
+  defp parse_paren_args(acc, state, _ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, state} ->
         {:ok, acc, state, log}
 
       {:ok, _tok, _} ->
-        with {:ok, arg, state, log} <- Expressions.expr(state, ctx, log) do
+        # Inside parentheses, use :unmatched context so do_identifiers (case, if, etc.)
+        # can consume their do-blocks. This is correct because when inside parens,
+        # the do-block clearly belongs to the inner expression, not an outer call.
+        # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
+        with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, state} ->
+            {:ok, %{kind: :","}, _} ->
               {:ok, _comma, state} = TokenAdapter.next(state)
-              parse_paren_args([arg | acc], state, ctx, log)
+              parse_paren_args([arg | acc], state, :unmatched, log)
 
             _ ->
-              parse_paren_args([arg | acc], state, ctx, log)
+              # No comma - we're done with args
+              {:ok, [arg | acc], state, log}
           end
         end
 

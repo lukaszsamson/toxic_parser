@@ -6,6 +6,11 @@ defmodule ToxicParser.Grammar.Containers do
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{Bitstrings, Expressions, Keywords, Maps}
 
+  # Stab pattern parsing uses min_bp=11 to stop before `->` (bp=10) but allow all other
+  # operators including `when` (bp=50) and `<-`/`\\` (bp=40). The `when` at the TOP LEVEL
+  # of patterns is handled specially after parsing (to extract guards).
+  @stab_pattern_min_bp 11
+
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
@@ -542,11 +547,24 @@ defmodule ToxicParser.Grammar.Containers do
           if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
         with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
-          # Parens placement rules:
-          # - 0 patterns (empty ()): parens go on stab arrow
-          # - 1 pattern: parens go on the single pattern
-          # - 2+ patterns: parens go on stab arrow
-          {final_patterns, final_stab_meta} = apply_parens_meta(patterns, parens_meta, stab_meta)
+          # Check if the last pattern is a top-level `when` that should be extracted as guard
+          # This handles cases like `fn x, y when y > 0 -> x end` where:
+          # - patterns = [x, {:when, _, [y, guard]}]
+          # - should become [{:when, _, [x, y, guard]}]
+          {final_patterns, final_stab_meta} =
+            case extract_trailing_when_guard(patterns) do
+              {:guard, new_patterns, guard, when_meta} ->
+                # Apply parens meta before wrapping with guard
+                {pats, stab_m} = apply_parens_meta(new_patterns, parens_meta, stab_meta)
+                # Wrap with guard
+                guard_patterns = [{:when, when_meta, pats ++ [guard]}]
+                {guard_patterns, stab_m}
+
+              :no_guard ->
+                # No guard extraction needed
+                apply_parens_meta(patterns, parens_meta, stab_meta)
+            end
+
           clause = {:->, final_stab_meta, [final_patterns, body]}
           {:ok, clause, state, log}
         end
@@ -636,6 +654,33 @@ defmodule ToxicParser.Grammar.Containers do
   # Unwrap when: combine patterns with guard
   defp unwrap_when(patterns, guard, when_meta) do
     [{:when, when_meta, patterns ++ [guard]}]
+  end
+
+  # Extract guard from trailing when in pattern list
+  # Handles cases like `fn x, y when guard -> body` where patterns = [x, {:when, _, [y, guard]}]
+  # Returns {:guard, [x, y], guard, when_meta} in that case
+  # Also handles single pattern case: `fn a when b -> c` where patterns = [{:when, _, [a, b]}]
+  # Returns {:guard, [a], b, when_meta}
+  # Returns :no_guard if no extraction needed (e.g., `fn a when a <- b -> a`)
+  defp extract_trailing_when_guard([]) do
+    :no_guard
+  end
+
+  defp extract_trailing_when_guard(patterns) do
+    {init, [last]} = Enum.split(patterns, -1)
+
+    case last do
+      {:when, when_meta, when_args} when is_list(when_args) and length(when_args) >= 2 ->
+        # Last pattern is a `when` expression - extract it
+        # when_args = [pattern1, pattern2, ..., guard]
+        {when_patterns, [guard]} = Enum.split(when_args, -1)
+        new_patterns = init ++ when_patterns
+        {:guard, new_patterns, guard, when_meta}
+
+      _ ->
+        # Last pattern is not a bare `when` - no extraction
+        :no_guard
+    end
   end
 
   # Parse stab patterns: either single expression or comma-separated matched expressions
@@ -766,10 +811,8 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_stab_pattern_exprs(acc, state, _ctx, log) do
-    # Parse expression as matched_expr
+    # Parse expression as matched_expr, stopping before -> but allowing when and <-
     # This implements call_args_no_parens_expr -> matched_expr
-    # First check for container tokens ({, [, <<) and delegate to container parser
-    # Then use Pratt for other expressions, stopping before -> and when
     with {:ok, expr, state, log} <- parse_stab_pattern_expr(state, log) do
       state_after_eoe = skip_eoe(state)
 
@@ -798,37 +841,32 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, %{kind: :stab_op}, _} ->
           {:ok, Enum.reverse([expr | acc]), state, log}
 
-        {:ok, %{kind: :when_op}, _} ->
-          {:ok, Enum.reverse([expr | acc]), state, log}
-
         _ ->
           {:ok, Enum.reverse([expr | acc]), state, log}
       end
     end
   end
 
-  # Parse a single stab pattern expression
-  # Handles containers ({}, [], <<>>) specially, then delegates to Pratt
-  # Stops before -> and when operators
+  # Parse a single stab pattern expression.
+  # Handles containers ({}, [], <<>>) specially, then delegates to Pratt.
+  # Uses @stab_pattern_min_bp (11) to stop before -> only, allowing when and <-/\\.
   defp parse_stab_pattern_expr(state, log) do
     case TokenAdapter.peek(state) do
-      # Container tokens - parse container base then continue with led at min_bp=51
+      # Container tokens - parse container base then continue with led at min_bp
       # Use parse_container_base which doesn't call Pratt.led internally
       {:ok, %{kind: kind}, _} when kind in [:"{", :"[", :"<<"] ->
         with {:ok, ast, state, log} <- parse_container_base(state, :matched, log) do
-          # Continue with led to handle trailing operators, but stop at -> and when
-          # min_bp > when_op (50) to stop before when, and -> has bp of 10
-          Pratt.led(ast, state, log, 51, :matched)
+          # Continue with led to handle trailing operators
+          Pratt.led(ast, state, log, @stab_pattern_min_bp, :matched)
         end
 
       # Map literal %{} or struct %Name{}
-      # Pass min_bp=51 to stop before -> (10) and when (50) operators
       {:ok, %{kind: kind}, _} when kind in [:%{}, :%] ->
-        Maps.parse_map(state, :matched, log, 51)
+        Maps.parse_map(state, :matched, log, @stab_pattern_min_bp)
 
-      # Other tokens - use Pratt parser with min_bp to stop before -> and when
+      # Other tokens - use Pratt parser with min_bp to stop before ->
       _ ->
-        Pratt.parse_with_min_bp(state, :matched, log, 51)
+        Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp)
     end
   end
 
