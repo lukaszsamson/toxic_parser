@@ -104,6 +104,13 @@ defmodule ToxicParser.Grammar.Expressions do
                   {:ok, [{key_atom, value_ast}], state, log}
                 end
 
+              # Interpolated keyword key like "fo#{1}o": - build binary_to_atom call
+              {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+                with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
+                  key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+                  {:ok, [{key_ast, value_ast}], state, log}
+                end
+
               {:no_string, state} ->
                 case Calls.parse(state, ctx, log) do
                   {:ok, ast, state, log} -> {:ok, ast, state, log}
@@ -278,4 +285,33 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp annotate_eoe(ast, _eoe_meta), do: ast
+
+  # Build an interpolated keyword key AST
+  # Elixir produces: {{:., meta, [:erlang, :binary_to_atom]}, call_meta, [binary, :utf8]}
+  # where binary is {:<<>>, meta, [parts...]}
+  defp build_interpolated_keyword_key(parts, kind, start_meta, delimiter) do
+    # Convert parts to binary parts for {:<<>>, ...}
+    binary_parts = parts_to_binary(parts, kind, start_meta)
+    binary_ast = {:<<>>, start_meta, binary_parts}
+
+    # Build the :erlang.binary_to_atom call
+    dot_ast = {:., start_meta, [:erlang, :binary_to_atom]}
+    call_meta = [delimiter: delimiter, format: :keyword] ++ start_meta
+
+    {dot_ast, call_meta, [binary_ast, :utf8]}
+  end
+
+  # Convert string parts to binary AST parts
+  # Each part is either {:fragment, content} or {:interpolation, ast}
+  # The interpolation ast already has the full structure with to_string and ::binary
+  defp parts_to_binary(parts, _kind, _start_meta) do
+    Enum.flat_map(parts, fn
+      {:fragment, content} ->
+        if content == "", do: [], else: [content]
+
+      {:interpolation, ast} ->
+        # The interpolation ast already contains the full ::binary structure
+        [ast]
+    end)
+  end
 end

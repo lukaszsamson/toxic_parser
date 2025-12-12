@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Maps do
   """
 
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Expressions, Keywords}
+  alias ToxicParser.Grammar.Keywords
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -369,37 +369,74 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   # Parse assoc_expr: key => value - returns {key, value} tuple
-  # We parse key and value separately to allow value to contain | operator
   # Grammar: assoc_expr -> matched_expr '=>' expr
+  # Note: In maps, => acts as a delimiter, not as a regular binary operator
+  # So %{a :: b => c} has key=(a :: b) and value=c, even though :: has lower
+  # precedence than => normally.
+  #
+  # Strategy: Parse using min_bp just above => to get the key, then manually
+  # consume => and parse the value. This ensures => is not consumed as part
+  # of the key expression.
   defp parse_assoc_expr(state, ctx, log) do
-    # Use higher min_bp to stop at => (bp=80)
-    # This parses only the key, not the full assoc expression
-    with {:ok, key, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 81) do
-      state = skip_eoe(state)
+    # Parse the full expression - this will include => as a binary operator
+    # Then extract the key/value from the rightmost => in the expression tree
+    with {:ok, expr, state, log} <- Pratt.parse(state, ctx, log) do
+      # Check if the result has => at top level or nested
+      case extract_assoc(expr) do
+        {:assoc, key, value, assoc_meta} ->
+          # Annotate the key with :assoc metadata (the position of =>)
+          # This is what Elixir's parser does with token_metadata: true
+          annotated_key = annotate_assoc(key, assoc_meta)
+          {:ok, {annotated_key, value}, state, log}
 
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :assoc_op} = assoc_tok, _} ->
-          {:ok, _assoc, state} = TokenAdapter.next(state)
-          state = skip_eoe(state)
-          # Parse value with min_bp that stops at comma
-          # Using min_bp > comma_op (20) but < pipe_op (70) allows | in value
-          with {:ok, value, state, log} <- Expressions.expr(state, ctx, log) do
-            # Add :assoc metadata to key
-            assoc_meta = token_meta(assoc_tok.metadata)
-            annotated_key = annotate_assoc(key, assoc_meta)
-            {:ok, {annotated_key, value}, state, log}
-          end
-
-        _ ->
-          # No => operator - this is just an expression (for map update base)
-          {:ok, key, state, log}
+        :not_assoc ->
+          # No => found - this is just an expression (for map update base)
+          {:ok, expr, state, log}
       end
     end
   end
 
+  # Extract the rightmost => from the expression tree
+  # In a :: (b => c), we want key=(a :: b), value=c
+  # This transforms the AST to extract the correct key/value split
+  defp extract_assoc({:"=>", meta, [key, value]}) do
+    # Found => at top level - this is an assoc expression
+    {:assoc, key, value, meta}
+  end
+
+  defp extract_assoc({op, meta, [left, right]} = _expr) when is_atom(op) do
+    # Check if right side contains =>
+    case extract_assoc(right) do
+      {:assoc, right_key, value, assoc_meta} ->
+        # Reconstruct: {op, meta, [left, right_key]} => value
+        new_key = {op, meta, [left, right_key]}
+        {:assoc, new_key, value, assoc_meta}
+
+      :not_assoc ->
+        # Check left side (for operators with left-to-right parsing)
+        case extract_assoc(left) do
+          {:assoc, left_key, left_value, assoc_meta} ->
+            # This shouldn't happen for well-formed expressions, but handle it
+            {:assoc, left_key, {op, meta, [left_value, right]}, assoc_meta}
+
+          :not_assoc ->
+            :not_assoc
+        end
+    end
+  end
+
+  defp extract_assoc(_), do: :not_assoc
+
   # Annotate expression with :assoc metadata (for LHS of => operator)
-  defp annotate_assoc({name, meta, args}, assoc_meta) when is_list(meta) do
-    {name, [assoc: assoc_meta] ++ meta, args}
+  # The assoc_meta comes from the => node's metadata, which may include :newlines
+  # but the :assoc annotation should only have :line and :column
+  defp annotate_assoc({name, meta, args}, assoc_meta)
+       when is_list(meta) and is_list(assoc_meta) do
+    # Filter to only include :line and :column in the assoc annotation
+    clean_assoc_meta =
+      Keyword.take(assoc_meta, [:line, :column])
+
+    {name, [assoc: clean_assoc_meta] ++ meta, args}
   end
 
   defp annotate_assoc(other, _assoc_meta), do: other

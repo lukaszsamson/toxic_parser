@@ -124,6 +124,17 @@ defmodule ToxicParser.Pratt do
       :capture_int ->
         parse_capture_int(token, state, log)
 
+      # Quoted atoms need to be handled by Strings.parse
+      kind when kind in [:atom_unsafe_start, :atom_safe_start] ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Strings
+        # Use very high min_bp to prevent led from consuming any operators
+        # since nud_base is for base expressions without trailing operators
+        case Strings.parse(state, context, log, 10000) do
+          {:ok, ast, state, log} -> {:ok, ast, state, log}
+          other -> other
+        end
+
       _ ->
         case Precedence.unary(token.kind) do
           {bp, _assoc} ->
@@ -712,7 +723,10 @@ defmodule ToxicParser.Pratt do
       :unary_op,
       :at_op,
       :capture_op,
-      :dual_op
+      :dual_op,
+      # Maps and structs
+      :%,
+      :%{}
     ]
   end
 
@@ -1396,13 +1410,11 @@ defmodule ToxicParser.Pratt do
     {op, in_meta, [{:in, in_meta, [operand, right]}]}
   end
 
-  # Assoc operator (=>) annotates LHS with :assoc metadata
+  # Assoc operator (=>) - just build as normal binary op
+  # Note: Elixir doesn't add any special metadata for => operator
   defp build_binary_op(%{kind: :assoc_op, metadata: meta}, left, right, newlines) do
     op_meta = build_meta_with_newlines(meta, newlines)
-    assoc_meta = Keyword.take(op_meta, [:line, :column])
-    # Annotate LHS with :assoc metadata
-    annotated_left = annotate_assoc(left, assoc_meta)
-    Builder.Helpers.binary(:"=>", annotated_left, right, op_meta)
+    Builder.Helpers.binary(:"=>", left, right, op_meta)
   end
 
   defp build_binary_op(op_token, left, right, newlines) do
@@ -1410,13 +1422,6 @@ defmodule ToxicParser.Pratt do
     meta = build_meta_with_newlines(op_token.metadata, newlines)
     Builder.Helpers.binary(op, left, right, meta)
   end
-
-  # Annotate expression with :assoc metadata (for LHS of => operator)
-  defp annotate_assoc({name, meta, args}, assoc_meta) when is_list(meta) do
-    {name, [assoc: assoc_meta] ++ meta, args}
-  end
-
-  defp annotate_assoc(other, _assoc_meta), do: other
 
   # Build metadata from a raw Toxic location tuple
   defp build_meta_from_location({{line, column}, _, _}) do

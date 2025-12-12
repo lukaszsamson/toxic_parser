@@ -998,20 +998,42 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_expr_in_paren_with_meta(open_meta, state, ctx, log, min_bp) do
-    parse_expr_in_paren_impl(open_meta, state, ctx, log, min_bp)
+    parse_expr_in_paren_impl(open_meta, [], state, ctx, log, min_bp)
   end
 
-  defp parse_expr_in_paren_impl(open_meta, state, ctx, log, min_bp) do
+  # Parse expressions in parens, handling semicolons as separators
+  # Grammar: paren_expr -> expr (';' expr)* ')'
+  # Multiple expressions become a __block__
+  defp parse_expr_in_paren_impl(open_meta, acc, state, ctx, log, min_bp) do
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-      state = skip_eoe(state)
+      # Check for EOE (semicolon) or close paren
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :eoe}, _} ->
+          # Consume EOE
+          {:ok, _eoe, state} = TokenAdapter.next(state)
+          state = skip_eoe(state)
+          # Check if there's more content or close paren
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :")"} = close_tok, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              close_meta = token_meta(close_tok.metadata)
+              finish_paren_exprs([expr | acc], open_meta, close_meta, state, log, min_bp, ctx)
 
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :")"} = close_tok, state} ->
+            {:ok, _, _} ->
+              # More expressions after semicolon
+              parse_expr_in_paren_impl(open_meta, [expr | acc], state, ctx, log, min_bp)
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+
+        {:ok, %{kind: :")"} = close_tok, _} ->
+          {:ok, _close, state} = TokenAdapter.next(state)
           close_meta = token_meta(close_tok.metadata)
-          # Add parens metadata to 3-tuple AST nodes
-          expr = add_parens_meta(expr, open_meta, close_meta)
-          # Continue with Pratt.led to handle trailing operators like *, /, etc.
-          Pratt.led(expr, state, log, min_bp, ctx)
+          finish_paren_exprs([expr | acc], open_meta, close_meta, state, log, min_bp, ctx)
 
         {:ok, token, state} ->
           {:error, {:expected, :")", got: token.kind}, state, log}
@@ -1023,6 +1045,20 @@ defmodule ToxicParser.Grammar.Containers do
           {:error, diag, state, log}
       end
     end
+  end
+
+  # Finish parsing paren expressions - build appropriate AST
+  defp finish_paren_exprs([single], open_meta, close_meta, state, log, min_bp, ctx) do
+    # Single expression - add parens metadata to 3-tuple AST nodes
+    expr = add_parens_meta(single, open_meta, close_meta)
+    # Continue with Pratt.led to handle trailing operators like *, /, etc.
+    Pratt.led(expr, state, log, min_bp, ctx)
+  end
+
+  defp finish_paren_exprs(exprs, open_meta, close_meta, state, log, min_bp, ctx) do
+    # Multiple expressions - wrap in __block__
+    ast = {:__block__, [closing: close_meta] ++ open_meta, Enum.reverse(exprs)}
+    Pratt.led(ast, state, log, min_bp, ctx)
   end
 
   # Add parens: metadata to 3-tuple AST nodes
@@ -1138,6 +1174,8 @@ defmodule ToxicParser.Grammar.Containers do
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
       {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
+      # Check if expr is a keyword list (from quoted keyword parsing like "": 1)
+      # If so, we should merge it rather than wrap it as a single element
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
@@ -1146,15 +1184,15 @@ defmodule ToxicParser.Grammar.Containers do
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
               {:ok, _close, state} = TokenAdapter.next(state)
-              {:ok, Enum.reverse([expr | acc]), state, log}
+              {:ok, merge_keyword_expr(acc, expr), state, log}
 
             _ ->
-              parse_list_elements_base([expr | acc], state, ctx, log)
+              parse_list_elements_base(prepend_expr(acc, expr), state, ctx, log)
           end
 
         {:ok, %{kind: :"]"}, _} ->
           {:ok, _close, state} = TokenAdapter.next(state)
-          {:ok, Enum.reverse([expr | acc]), state, log}
+          {:ok, merge_keyword_expr(acc, expr), state, log}
 
         {:ok, tok, state} ->
           {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
@@ -1167,6 +1205,38 @@ defmodule ToxicParser.Grammar.Containers do
       end
     end
   end
+
+  # Check if expr is a keyword list (list of {atom, value} tuples)
+  # If so, merge it into the result; otherwise prepend as single element
+  defp merge_keyword_expr(acc, expr) when is_list(expr) do
+    if is_keyword_list?(expr) do
+      Enum.reverse(acc) ++ expr
+    else
+      Enum.reverse([expr | acc])
+    end
+  end
+
+  defp merge_keyword_expr(acc, expr) do
+    Enum.reverse([expr | acc])
+  end
+
+  # Prepend expr to acc, handling keyword lists specially
+  defp prepend_expr(acc, expr) when is_list(expr) do
+    if is_keyword_list?(expr) do
+      # Reverse keyword list and prepend each element to acc
+      Enum.reduce(Enum.reverse(expr), acc, fn elem, acc -> [elem | acc] end)
+    else
+      [expr | acc]
+    end
+  end
+
+  defp prepend_expr(acc, expr), do: [expr | acc]
+
+  # Check if a list is a keyword-like list (list of {key, value} tuples)
+  # The key can be an atom (standard keyword) or an AST (interpolated keyword)
+  defp is_keyword_list?([{_key, _value} | rest]), do: is_keyword_list?(rest)
+  defp is_keyword_list?([]), do: true
+  defp is_keyword_list?(_), do: false
 
   defp parse_tuple(state, ctx, log, min_bp) do
     with {:ok, ast, state, log} <- parse_tuple_base(state, ctx, log) do

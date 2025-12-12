@@ -225,7 +225,10 @@ defmodule ToxicParser.Grammar.Calls do
       :unary_op,
       :at_op,
       :capture_op,
-      :dual_op
+      :dual_op,
+      # Maps and structs
+      :%,
+      :%{}
     ]
   end
 

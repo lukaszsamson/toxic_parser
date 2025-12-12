@@ -17,6 +17,8 @@ defmodule ToxicParser.Grammar.Strings do
           | {:error, term(), State.t(), EventLog.t()}
           | {:no_string, State.t()}
           | {:keyword_key, atom(), State.t(), EventLog.t()}
+          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
+             EventLog.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
   def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
@@ -59,9 +61,15 @@ defmodule ToxicParser.Grammar.Strings do
          {:ok, _close, state} <- TokenAdapter.next(state) do
       # If string ended with kw_identifier_unsafe_end, it's a keyword key (atom)
       if actual_end in [:kw_identifier_unsafe_end, :kw_identifier_safe_end] do
-        content = merge_fragments(parts)
-        atom = String.to_atom(content)
-        {:keyword_key, atom, state, log}
+        # Check if there's any interpolation in the parts
+        if has_interpolations?(parts) do
+          # Build binary_to_atom call for interpolated keyword
+          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log}
+        else
+          content = merge_fragments(parts)
+          atom = String.to_atom(content)
+          {:keyword_key, atom, state, log}
+        end
       else
         build_string_ast(parts, kind, start_meta, delimiter, end_tok, state, ctx, log, min_bp)
       end
@@ -157,7 +165,9 @@ defmodule ToxicParser.Grammar.Strings do
       if has_interpolations?(parts) do
         # Build interpolated atom AST with delimiter metadata
         args = build_interpolated_parts(parts, :atom)
-        meta_with_delimiter = [{:delimiter, "\""} | start_meta]
+        # Use delimiter from token value (39 = ', 34 = ")
+        delimiter = if start_tok.value == 39, do: "'", else: "\""
+        meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
 
         ast =
           {{:., start_meta, [:erlang, :binary_to_atom]}, meta_with_delimiter,
