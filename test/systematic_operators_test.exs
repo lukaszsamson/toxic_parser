@@ -143,7 +143,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
   @expressions [
     :matched,
     :unmatched,
-    :no_parens,
+    :no_parens
   ]
 
   defp gen_expr(:matched, name) do
@@ -166,7 +166,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
     Code.string_to_quoted(code, columns: true, token_metadata: true)
   rescue
     e ->
-      File.write!("ref_parser.txt", "Reference parser crashed on:\n" <> code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__) <> "\n", [:append])
+      File.write!(
+        "ref_parser.txt",
+        "Reference parser crashed on:\n" <>
+          code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__) <> "\n",
+        [:append]
+      )
+
       # IO.warn("Reference parser crashed on:\n" <> code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__))
       {:error, :reference_parser_crash}
   end
@@ -188,11 +194,16 @@ defmodule ToxicParser.SystematicOperatorsTest do
       # but 40*40 = 1600 is fast enough for Elixir.
 
       failures =
-        for op1 <- @binary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens], expr_b <- @expressions -- [:no_parens], expr_c <- @expressions do
+        for op1 <- @binary_ops,
+            op2 <- @binary_ops,
+            expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens],
+            expr_c <- @expressions do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
-          code = "#{gen_expr(expr_a, "a")} #{s_op1} #{gen_expr(expr_b, "b")} #{s_op2} #{gen_expr(expr_c, "c")}"
+          code =
+            "#{gen_expr(expr_a, "a")} #{s_op1} #{gen_expr(expr_b, "b")} #{s_op2} #{gen_expr(expr_c, "c")}"
 
           check(code)
         end
@@ -204,7 +215,10 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "unary - binary combinations (op1 a op2 b)" do
       failures =
-        for op1 <- @unary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens], expr_b <- @expressions -- [:no_parens, :unmatched] do
+        for op1 <- @unary_ops,
+            op2 <- @binary_ops,
+            expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens, :unmatched] do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
