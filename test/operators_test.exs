@@ -1163,6 +1163,31 @@ defmodule ToxicParser.OperatorsTest do
       assert toxic_parse(code) == s2q(code)
     end
 
+    test "simple guard - bracket" do
+      code = "def foo[a] when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+    end
+
+    test "simple guard - string" do
+      code = "def \"asd\" when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "def 'asd' when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "def \"\"\"\nasd\n\"\"\" when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "def '''\nasd\n\''' when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "def ~c'asd' when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "def :\"asd\" when is_integer(a), do: a"
+      assert toxic_parse(code) == s2q(code)
+    end
+
     test "multiple guards with and" do
       code = "def foo(a) when is_integer(a) and a > 0, do: a"
       assert toxic_parse(code) == s2q(code)
@@ -1824,6 +1849,31 @@ defmodule ToxicParser.OperatorsTest do
       code = "@spec foo(a | b :: c)"
       assert toxic_parse(code) == s2q(code)
     end
+
+    test ":: after | in type spec context - bracket" do
+      code = "@spec foo[a | b :: c]"
+      assert toxic_parse(code) == s2q(code)
+    end
+
+    test ":: after | in type spec context - string" do
+      code = "@spec \"sdc\", (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "@spec 'sdc', (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "@spec :\"sdc\", (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "@spec \"\"\"\nsdc\n\"\"\", (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "@spec '''\nsdc\n''', (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+
+      code = "@spec ~c'sdc', (a | b :: c)"
+      assert toxic_parse(code) == s2q(code)
+    end
   end
 
   describe "precedence boundaries: :: vs when" do
@@ -2390,27 +2440,6 @@ defmodule ToxicParser.OperatorsTest do
          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
-    end
-  end
-
-  defp toxic_parse_with_comments(code, options \\ []) do
-    case ToxicParser.parse_string(
-           code,
-           [mode: :strict, token_metadata: true, preserve_comments: true]
-           |> Keyword.merge(options)
-         ) do
-      {:ok, result} -> {:ok, result.ast}
-      {:error, result} -> {:error, format_error(result)}
-    end
-  end
-
-  defp toxic_parse!(code, options \\ []) do
-    case ToxicParser.parse_string(
-           code,
-           [mode: :strict, token_metadata: true] |> Keyword.merge(options)
-         ) do
-      {:ok, result} -> result.ast
-      {:error, result} -> raise format_error(result)
     end
   end
 

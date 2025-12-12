@@ -329,9 +329,14 @@ defmodule ToxicParser.TokenAdapter do
   defp delimiter_role({token, _meta, _, _}) when token in [:")", :"]", :"}", :">>"], do: :close
   defp delimiter_role(_), do: :none
 
+  # Extract newline count from various token formats
+  # For EOE tokens: {:eol, {pos, pos, count}}
+  # For operators with 3-element tuple: {:arrow_op, {pos, pos, count}, value}
   defp newline_count({:eol, {_, _, count}}) when is_integer(count), do: count
   defp newline_count({:";", {_, _, count}}) when is_integer(count), do: count
   defp newline_count({:",", {_, _, count}}) when is_integer(count), do: count
+  # 3-tuple tokens like operators: {kind, {start, end, newlines}, value}
+  defp newline_count({_kind, {_, _, count}, _value}) when is_integer(count), do: count
   defp newline_count(_), do: 0
 
   defp synthetic_error_token(stream, state, terminators, diagnostic, opts) do

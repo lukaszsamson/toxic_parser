@@ -35,6 +35,10 @@ defmodule ToxicParser.Grammar.Dots do
   Parses the RHS of a dot: identifier/alias/call/bracket/paren call.
   Returns `{:ok, {member_value, member_meta}, state, log}` for simple identifiers,
   or `{:ok, call_ast, state, log}` for calls.
+
+  For simple identifiers, also returns `:no_parens_call` flag when the identifier
+  was classified as :op_identifier or :dot_op_identifier, indicating that a
+  no-parens call is expected.
   """
   @spec parse_member(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_member(%State{} = state, ctx, %EventLog{} = log) do
@@ -45,14 +49,18 @@ defmodule ToxicParser.Grammar.Dots do
           when kind in [
                  :identifier,
                  :do_identifier,
-                 :op_identifier,
                  :dot_identifier,
                  :dot_do_identifier,
-                 :dot_op_identifier,
                  :bracket_identifier
                ] ->
             # Return {member_atom, member_meta} tuple so caller can build proper AST
             {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+
+          # op_identifier or dot_op_identifier indicates no-parens call is expected
+          kind when kind in [:op_identifier, :dot_op_identifier] ->
+            # Return with :no_parens_call tag to indicate caller should expect no-parens args
+            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :no_parens_call}, state,
+             log}
 
           :alias ->
             # Alias needs to be wrapped as __aliases__

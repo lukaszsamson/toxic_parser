@@ -10,8 +10,8 @@ defmodule ToxicParser.Grammar.Bitstrings do
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
 
-  @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log) do
+  @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
@@ -24,13 +24,15 @@ defmodule ToxicParser.Grammar.Bitstrings do
         close_meta = token_meta(close_tok.metadata)
         newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
         meta = newlines_meta ++ [closing: close_meta] ++ open_meta
-        {:ok, {:<<>>, meta, []}, state, log}
+        ast = {:<<>>, meta, []}
+        Pratt.led(ast, state, log, min_bp, ctx)
 
       _ ->
         with {:ok, parts, close_meta, state, log} <- parse_segments([], state, ctx, log) do
           newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
           meta = newlines_meta ++ [closing: close_meta] ++ open_meta
-          {:ok, {:<<>>, meta, parts}, state, log}
+          ast = {:<<>>, meta, parts}
+          Pratt.led(ast, state, log, min_bp, ctx)
         end
     end
   end

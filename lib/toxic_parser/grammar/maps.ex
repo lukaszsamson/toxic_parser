@@ -10,8 +10,16 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
 
-  @spec parse_map(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_map(%State{} = state, ctx, %EventLog{} = log) do
+  @spec parse_map(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse_map(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+    with {:ok, ast, state, log} <- parse_map_base(state, ctx, log) do
+      # Continue with Pratt.led to handle trailing operators
+      Pratt.led(ast, state, log, min_bp, ctx)
+    end
+  end
+
+  # Parse map without calling Pratt.led - internal implementation
+  defp parse_map_base(state, ctx, log) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: :%{}, metadata: meta}, state} ->
         # map -> map_op map_args where map_op is '%{}'
@@ -147,7 +155,7 @@ defmodule ToxicParser.Grammar.Maps do
             map_meta = newlines_meta ++ [closing: close_meta] ++ brace_meta
             {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, log}
 
-          :not_update ->
+          {:not_update, state} ->
             # Parse map_close: kw_data | assoc | assoc_base ',' kw_data
             with {:ok, entries, close_meta, state, log} <- parse_map_close(state, ctx, log) do
               newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
@@ -172,118 +180,91 @@ defmodule ToxicParser.Grammar.Maps do
   #
   # The grammar rule is: assoc_update -> matched_expr pipe_op_eol assoc_expr
   #
-  # Strategy: Parse the full expression. If the result is {:|, meta, [base, first_entry]},
-  # it's a map update. We then need to collect any remaining entries after a comma.
+  # Strategy: Parse potential base expression with min_bp > pipe_op (70),
+  # then check if | follows. This prevents consuming | as part of assoc value.
+  # Important: If the base_expr contains =>, it's an assoc expr not an update base.
   defp try_parse_map_update(state, ctx, log) do
     # Checkpoint before attempting to parse as map update
     {checkpoint_id, state} = TokenAdapter.checkpoint(state)
 
-    # Parse the full expression - this may consume |
-    case Expressions.expr(state, ctx, log) do
-      {:ok, {:|, pipe_meta, [base_expr, first_rhs]}, state, log} ->
-        # This is a map update! Handle different RHS forms:
-        # 1. {:"=>", meta, [k, v]} - assoc expression, convert to {k, v}
-        # 2. atom - keyword style like "a: 1" where "a:" parsed as :a, need to get value
-        # 3. keyword list - already parsed keyword data
-        case first_rhs do
-          # Case: keyword style "map | a: 1" - first_rhs is :a, value follows
-          key when is_atom(key) ->
-            # Parse the value that follows the keyword key
-            with {:ok, value, state, log} <- Expressions.expr(state, :matched, log) do
-              first_entry = {key, value}
-              finish_map_update(base_expr, first_entry, pipe_meta, state, ctx, log)
-            end
+    # Parse potential base expression, stopping at | (bp=70)
+    # Use min_bp=71 to stop before |
+    case Pratt.parse_with_min_bp(state, :matched, log, 71) do
+      {:ok, base_expr, state, log} ->
+        # Check if base_expr is an assoc expression - if so, this is NOT a map update
+        # because %{a => b | c} is a single entry with value (b | c), not an update
+        if is_assoc_expr?(base_expr) do
+          state = TokenAdapter.rewind(state, checkpoint_id)
+          {:not_update, state}
+        else
+          state = skip_eoe(state)
 
-          # Case: already a keyword list (parsed by kw handling in Pratt)
-          [{key, _value} | _rest] = kw_list when is_atom(key) ->
-            # Already have keyword list as entries
-            state = skip_eoe(state)
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
+              # This is a map update!
+              {:ok, _pipe, state} = TokenAdapter.next(state)
+              # Skip EOE after | and count newlines for metadata
+              {state, newlines_after_pipe} = skip_eoe_count_newlines(state, 0)
+              # Build pipe metadata with newlines if present
+              pipe_meta = token_meta_with_newlines(pipe_tok.metadata, newlines_after_pipe)
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"} = close_tok, _} ->
-                {:ok, _close, state} = TokenAdapter.next(state)
-                close_meta = token_meta(close_tok.metadata)
-                update_ast = {:|, pipe_meta, [base_expr, kw_list]}
-                {:ok, update_ast, close_meta, state, log}
+              # Parse entries after |
+              case TokenAdapter.peek(state) do
+                {:ok, tok, _} ->
+                  if Keywords.starts_kw?(tok) do
+                    # Keyword entries: %{base | a: 1, b: 2}
+                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                      state = skip_eoe(state)
 
-              {:ok, tok, state} ->
-                {:error, {:expected, :"}", got: tok.kind}, state, log}
+                      case TokenAdapter.next(state) do
+                        {:ok, %{kind: :"}"} = close_tok, state} ->
+                          close_meta = token_meta(close_tok.metadata)
+                          update_ast = {:|, pipe_meta, [base_expr, kw_list]}
+                          {:ok, update_ast, close_meta, state, log}
 
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
+                        {:ok, tok, state} ->
+                          {:error, {:expected, :"}", got: tok.kind}, state, log}
 
-              {:error, diag, state} ->
-                {:error, diag, state, log}
-            end
+                        {:eof, state} ->
+                          {:error, :unexpected_eof, state, log}
 
-          # Case: assoc expression {:"=>", meta, [k, v]} or other expression
-          other ->
-            first_entry = normalize_assoc_entry(other)
-            finish_map_update(base_expr, first_entry, pipe_meta, state, ctx, log)
+                        {:error, diag, state} ->
+                          {:error, diag, state, log}
+                      end
+                    end
+                  else
+                    # Assoc entries: %{base | a => b, c => d}
+                    with {:ok, entries, close_meta, state, log} <-
+                           parse_map_close(state, ctx, log) do
+                      update_ast = {:|, pipe_meta, [base_expr, entries]}
+                      {:ok, update_ast, close_meta, state, log}
+                    end
+                  end
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+
+            _ ->
+              # No | operator - not a map update
+              state = TokenAdapter.rewind(state, checkpoint_id)
+              {:not_update, state}
+          end
         end
-
-      {:ok, _other_expr, state, _log} ->
-        # Not a pipe expression at top level - not a map update
-        _state = TokenAdapter.rewind(state, checkpoint_id)
-        :not_update
 
       {:error, _, state, _} ->
         # Parse failed, restore checkpoint
-        _state = TokenAdapter.rewind(state, checkpoint_id)
-        :not_update
+        state = TokenAdapter.rewind(state, checkpoint_id)
+        {:not_update, state}
     end
   end
 
-  # Convert {:"=>", meta, [key, value]} to {key, value}, leaving other forms unchanged
-  defp normalize_assoc_entry({:"=>", _meta, [key, value]}), do: {key, value}
-  defp normalize_assoc_entry(other), do: other
-
-  # Finish parsing map update after we have the first entry
-  defp finish_map_update(base_expr, first_entry, pipe_meta, state, ctx, log) do
-    state = skip_eoe(state)
-
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, _} ->
-        {:ok, _comma, state} = TokenAdapter.next(state)
-        state = skip_eoe(state)
-        # Check for trailing comma (just close brace)
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :"}"} = close_tok, _} ->
-            # Trailing comma - just the first entry
-            {:ok, _close, state} = TokenAdapter.next(state)
-            close_meta = token_meta(close_tok.metadata)
-            update_ast = {:|, pipe_meta, [base_expr, [first_entry]]}
-            {:ok, update_ast, close_meta, state, log}
-
-          _ ->
-            # Parse remaining entries (could be kw_data or more assocs)
-            case parse_map_close(state, ctx, log) do
-              {:ok, more_entries, close_meta, state, log} ->
-                all_entries = [first_entry | more_entries]
-                update_ast = {:|, pipe_meta, [base_expr, all_entries]}
-                {:ok, update_ast, close_meta, state, log}
-
-              {:error, _, _, _} = err ->
-                err
-            end
-        end
-
-      {:ok, %{kind: :"}"} = close_tok, _} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        close_meta = token_meta(close_tok.metadata)
-        update_ast = {:|, pipe_meta, [base_expr, [first_entry]]}
-        {:ok, update_ast, close_meta, state, log}
-
-      {:ok, tok, state} ->
-        {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
+  # Check if an expression is an assoc expression (has => at top level)
+  defp is_assoc_expr?({:"=>", _, _}), do: true
+  defp is_assoc_expr?(_), do: false
 
   # Parse map_close: kw_data close_curly | assoc close_curly | assoc_base ',' kw_data close_curly
   defp parse_map_close(state, ctx, log) do
@@ -388,21 +369,40 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   # Parse assoc_expr: key => value - returns {key, value} tuple
-  # Expressions.expr will parse "key => value" as {:"=>", meta, [key, value]}
-  # We need to convert this to {key, value} tuple format
+  # We parse key and value separately to allow value to contain | operator
+  # Grammar: assoc_expr -> matched_expr '=>' expr
   defp parse_assoc_expr(state, ctx, log) do
-    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-      case expr do
-        {:"=>", _meta, [key, value]} ->
-          # Convert assoc operator AST to tuple
-          {:ok, {key, value}, state, log}
+    # Use higher min_bp to stop at => (bp=80)
+    # This parses only the key, not the full assoc expression
+    with {:ok, key, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 81) do
+      state = skip_eoe(state)
 
-        other ->
-          # Not an assoc expression - just return the expression
-          {:ok, other, state, log}
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :assoc_op} = assoc_tok, _} ->
+          {:ok, _assoc, state} = TokenAdapter.next(state)
+          state = skip_eoe(state)
+          # Parse value with min_bp that stops at comma
+          # Using min_bp > comma_op (20) but < pipe_op (70) allows | in value
+          with {:ok, value, state, log} <- Expressions.expr(state, ctx, log) do
+            # Add :assoc metadata to key
+            assoc_meta = token_meta(assoc_tok.metadata)
+            annotated_key = annotate_assoc(key, assoc_meta)
+            {:ok, {annotated_key, value}, state, log}
+          end
+
+        _ ->
+          # No => operator - this is just an expression (for map update base)
+          {:ok, key, state, log}
       end
     end
   end
+
+  # Annotate expression with :assoc metadata (for LHS of => operator)
+  defp annotate_assoc({name, meta, args}, assoc_meta) when is_list(meta) do
+    {name, [assoc: assoc_meta] ++ meta, args}
+  end
+
+  defp annotate_assoc(other, _assoc_meta), do: other
 
   defp skip_eoe(state) do
     case TokenAdapter.peek(state) do
@@ -425,6 +425,15 @@ defmodule ToxicParser.Grammar.Maps do
         {state, count}
     end
   end
+
+  defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
+
+  defp token_meta_with_newlines(%{range: %{start: %{line: line, column: column}}}, newlines)
+       when newlines > 0 do
+    [newlines: newlines, line: line, column: column]
+  end
+
+  defp token_meta_with_newlines(_, _), do: []
 
   defp token_meta(%{range: %{start: %{line: line, column: column}}}),
     do: [line: line, column: column]
