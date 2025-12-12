@@ -19,6 +19,8 @@ defmodule ToxicParser.Pratt do
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
+          | {:keyword_key, term(), term(), term()}
+          | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
 
   @doc """
   Parses an expression in the given context.

@@ -218,7 +218,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
         for op1 <- @unary_ops,
             op2 <- @binary_ops,
             expr_a <- @expressions -- [:no_parens],
-            expr_b <- @expressions -- [:no_parens, :unmatched] do
+            expr_b <- @expressions do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
@@ -234,11 +234,12 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "binary - unary combinations (a op1 op2 b)" do
       failures =
-        for op1 <- @binary_ops, op2 <- @unary_ops do
+        for op1 <- @binary_ops, op2 <- @unary_ops, expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
-          code = "a #{s_op1} #{s_op2} b"
+          code = "#{gen_expr(expr_a, "a")} #{s_op1} #{s_op2} #{gen_expr(expr_b, "b")}"
 
           check(code)
         end
@@ -250,18 +251,25 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "ternary range (a..b//c) combinations" do
       # a op b..c//d
+      # a..b op c//d
       # a..b//c op d
 
       failures =
-        for op <- @binary_ops do
+        for op <- @binary_ops,
+        expr_a <- @expressions -- [:no_parens],
+        expr_b <- @expressions -- [:no_parens],
+        expr_c <- @expressions -- [:no_parens],
+        expr_d <- @expressions -- [] do
           s_op = op_to_string(op)
 
-          code1 = "a #{s_op} b..c//d"
-          code2 = "a..b//c #{s_op} d"
+          code1 = "#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")}..#{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+          code2 = "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+          code3 = "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}"
 
           [
             check(code1),
-            check(code2)
+            check(code2),
+            check(code3)
           ]
         end
         |> List.flatten()
@@ -277,13 +285,16 @@ defmodule ToxicParser.SystematicOperatorsTest do
       # a..b//op c
 
       failures =
-        for op <- @unary_ops do
+        for op <- @unary_ops,
+        expr_a <- @expressions -- [:no_parens],
+        expr_b <- @expressions -- [:no_parens],
+        expr_c <- @expressions -- [] do
           s_op = op_to_string(op)
 
           [
-            check("#{s_op} a..b//c"),
-            check("a..#{s_op} b//c"),
-            check("a..b//#{s_op} c")
+            check("#{s_op} #{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"),
+            check("#{gen_expr(expr_a, "a")}..#{s_op} #{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"),
+            check("#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{s_op} #{gen_expr(expr_a, "c")}")
           ]
         end
         |> List.flatten()
@@ -300,43 +311,32 @@ defmodule ToxicParser.SystematicOperatorsTest do
       # e.g. %{a | b => c + d}
       # e.g. %{a | b + c => d}
       # e.g. %{a + b | c => d}
-      # e.g. %{a | b => c} + d
-
-      # Base cases
-      base_failures =
-        [
-          check("%{a | b => c}"),
-          check("%{a | b :: c => d}"),
-          check("%{a | b => c :: d}"),
-          check("%{a | b => c} + d"),
-          check("d + %{a | b => c}")
-        ]
-        |> Enum.reject(&is_nil/1)
 
       failures =
-        for op <- @binary_ops do
+        for op <- @binary_ops,
+        expr_a <- @expressions -- [:no_parens, :unmatched],
+        expr_b <- @expressions -- [:no_parens, :unmatched],
+        expr_c <- @expressions -- [:no_parens, :unmatched],
+        expr_d <- @expressions -- [:no_parens, :unmatched] do
           s_op = op_to_string(op)
 
           # Inside values
-          code1 = "%{a | b => c #{s_op} d}"
+          code1 = "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}}"
           # Inside keys
-          code2 = "%{a | b #{s_op} c => d}"
+          code2 = "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
           # Inside struct
-          code3 = "%{a #{s_op} b | c => d}"
-          # Outside
-          code4 = "%{a | b => c} #{s_op} d"
+          code3 = "%{#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")} | #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
 
           [
             check(code1),
             check(code2),
-            check(code3),
-            check(code4)
+            check(code3)
           ]
         end
         |> List.flatten()
         |> Enum.reject(&is_nil/1)
 
-      all_failures = base_failures ++ failures
+      all_failures = failures
 
       assert all_failures == [],
              "Failed combinations: #{inspect(all_failures, pretty: true, limit: :infinity)}"
