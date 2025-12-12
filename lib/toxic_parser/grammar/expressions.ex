@@ -233,8 +233,6 @@ defmodule ToxicParser.Grammar.Expressions do
     end
   end
 
-  defp build_eoe_meta(_), do: []
-
   defp recover_expr_error(acc, reason, %State{mode: :tolerant} = state, ctx, log) do
     error_ast = build_error_node(reason, state)
 

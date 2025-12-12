@@ -822,8 +822,6 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp build_eoe_meta(_), do: []
-
   # Annotate an AST node with end_of_expression metadata
   defp annotate_body_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
     {left, [{:end_of_expression, eoe_meta} | meta], right}
@@ -949,11 +947,6 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp add_parens_meta(literal, _open_meta, _close_meta), do: literal
-
-  defp build_parens_meta(nil, close_meta) do
-    # No open_meta available - just use closing
-    [closing: close_meta]
-  end
 
   defp build_parens_meta(open_meta, close_meta) do
     open_meta ++ [closing: close_meta]

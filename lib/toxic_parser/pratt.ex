@@ -322,9 +322,6 @@ defmodule ToxicParser.Pratt do
               {name, meta, args} when is_list(args) ->
                 # Prepend do/end metadata to the call's existing metadata
                 {name, block_meta ++ meta, args ++ [sections]}
-
-              other ->
-                Builder.Helpers.call(other, [sections], block_meta)
             end
 
           {:ok, ast, state, log}

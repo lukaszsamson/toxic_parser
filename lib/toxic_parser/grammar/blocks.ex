@@ -259,8 +259,6 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp build_eoe_meta(_), do: []
-
   # Annotate an AST node with end_of_expression metadata
   defp annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
     {left, [{:end_of_expression, eoe_meta} | meta], right}

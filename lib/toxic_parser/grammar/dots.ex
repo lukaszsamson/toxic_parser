@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Dots do
   Dot expression parsing helpers (`foo.bar`, `Foo.Bar`, `foo.(...)`, `foo.()`).
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.Expressions
 
   @type result ::

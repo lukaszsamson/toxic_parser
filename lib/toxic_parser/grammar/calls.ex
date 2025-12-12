@@ -309,8 +309,6 @@ defmodule ToxicParser.Grammar.Calls do
     Keyword.take(meta, [:line, :column])
   end
 
-  defp extract_meta(_), do: []
-
   defp skip_eoe_count_newlines(state, count) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->

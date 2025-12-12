@@ -25,9 +25,6 @@ defmodule ToxicParser.Recovery do
           end
         end
 
-      {:ok, _tok, _} ->
-        {:ok, state, log}
-
       {:eof, state} ->
         {:ok, state, log}
 
