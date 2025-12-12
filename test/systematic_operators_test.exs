@@ -234,7 +234,9 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "binary - unary combinations (a op1 op2 b)" do
       failures =
-        for op1 <- @binary_ops, op2 <- @unary_ops, expr_a <- @expressions -- [:no_parens],
+        for op1 <- @binary_ops,
+            op2 <- @unary_ops,
+            expr_a <- @expressions -- [:no_parens],
             expr_b <- @expressions do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
@@ -256,15 +258,20 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
       failures =
         for op <- @binary_ops,
-        expr_a <- @expressions -- [:no_parens],
-        expr_b <- @expressions -- [:no_parens],
-        expr_c <- @expressions -- [:no_parens],
-        expr_d <- @expressions -- [] do
+            expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens],
+            expr_c <- @expressions -- [:no_parens],
+            expr_d <- @expressions -- [] do
           s_op = op_to_string(op)
 
-          code1 = "#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")}..#{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
-          code2 = "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
-          code3 = "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}"
+          code1 =
+            "#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")}..#{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+
+          code2 =
+            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+
+          code3 =
+            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}"
 
           [
             check(code1),
@@ -286,15 +293,21 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
       failures =
         for op <- @unary_ops,
-        expr_a <- @expressions -- [:no_parens],
-        expr_b <- @expressions -- [:no_parens],
-        expr_c <- @expressions -- [] do
+            expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens],
+            expr_c <- @expressions -- [] do
           s_op = op_to_string(op)
 
           [
-            check("#{s_op} #{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"),
-            check("#{gen_expr(expr_a, "a")}..#{s_op} #{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"),
-            check("#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{s_op} #{gen_expr(expr_a, "c")}")
+            check(
+              "#{s_op} #{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"
+            ),
+            check(
+              "#{gen_expr(expr_a, "a")}..#{s_op} #{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"
+            ),
+            check(
+              "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{s_op} #{gen_expr(expr_a, "c")}"
+            )
           ]
         end
         |> List.flatten()
@@ -314,18 +327,23 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
       failures =
         for op <- @binary_ops,
-        expr_a <- @expressions -- [:no_parens, :unmatched],
-        expr_b <- @expressions -- [:no_parens, :unmatched],
-        expr_c <- @expressions -- [:no_parens, :unmatched],
-        expr_d <- @expressions -- [:no_parens, :unmatched] do
+            expr_a <- @expressions -- [:no_parens, :unmatched],
+            expr_b <- @expressions -- [:no_parens, :unmatched],
+            expr_c <- @expressions -- [:no_parens, :unmatched],
+            expr_d <- @expressions -- [:no_parens, :unmatched] do
           s_op = op_to_string(op)
 
           # Inside values
-          code1 = "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}}"
+          code1 =
+            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}}"
+
           # Inside keys
-          code2 = "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
+          code2 =
+            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
+
           # Inside struct
-          code3 = "%{#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")} | #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
+          code3 =
+            "%{#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")} | #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
 
           [
             check(code1),
@@ -373,15 +391,21 @@ defmodule ToxicParser.SystematicOperatorsTest do
     test "map update with unary operators" do
       failures =
         for op <- @simple_unary_ops,
-        expr_a <- @expressions -- [:no_parens],
-        expr_b <- @expressions -- [:no_parens, :unmatched],
-        expr_c <- @expressions -- [:no_parens, :unmatched] do
+            expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens],
+            expr_c <- @expressions -- [:no_parens] do
           s_op = op_to_string(op)
 
           [
-            check("%{#{s_op} #{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"),
-            check("%{#{gen_expr(expr_a, "a")} | #{s_op} #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"),
-            check("%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{s_op} #{gen_expr(expr_a, "c")}}")
+            check(
+              "%{#{s_op} #{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"
+            ),
+            check(
+              "%{#{gen_expr(expr_a, "a")} | #{s_op} #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"
+            ),
+            check(
+              "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{s_op} #{gen_expr(expr_a, "c")}}"
+            )
           ]
         end
         |> List.flatten()
