@@ -82,7 +82,8 @@ defmodule ToxicParser.Grammar.Blocks do
   Handles labeled sections (`else/catch/rescue/after`).
   """
   @spec parse_do_block(State.t(), Pratt.context(), EventLog.t()) ::
-          {:ok, {keyword(), keyword(Macro.t())}, State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
+          {:ok, {keyword(), keyword(Macro.t())}, State.t(), EventLog.t()}
+          | {:error, term(), State.t(), EventLog.t()}
   def parse_do_block(state, ctx, log) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: :do, metadata: do_meta}, state} ->
@@ -113,6 +114,7 @@ defmodule ToxicParser.Grammar.Blocks do
   defp token_meta(%{range: %{start: %{line: line, column: column}}}) do
     [line: line, column: column]
   end
+
   defp token_meta(_), do: []
 
   defp expect_kind_with_meta(state, kind) do
@@ -214,7 +216,6 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-
   defp build_section_value([]), do: build_block([])
 
   defp build_section_value(items) do
@@ -245,6 +246,7 @@ defmodule ToxicParser.Grammar.Blocks do
     case meta do
       %{range: %{start: %{line: line, column: column}}} ->
         [newlines: newlines, line: line, column: column]
+
       _ ->
         []
     end
@@ -254,6 +256,7 @@ defmodule ToxicParser.Grammar.Blocks do
     case meta do
       %{range: %{start: %{line: line, column: column}}} ->
         [line: line, column: column]
+
       _ ->
         []
     end
@@ -281,7 +284,9 @@ defmodule ToxicParser.Grammar.Blocks do
     kind in stop_kinds or block_label?(tok)
   end
 
-  defp block_label?(%{kind: :block_identifier, value: value}), do: value in [:else, :catch, :rescue, :after]
+  defp block_label?(%{kind: :block_identifier, value: value}),
+    do: value in [:else, :catch, :rescue, :after]
+
   defp block_label?(%{kind: kind}) when kind in [:else, :catch, :rescue, :after], do: true
   defp block_label?(_), do: false
 

@@ -15,7 +15,15 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("fn x, y when y > 0 -> x end")
     log = EventLog.new()
 
-    assert {:ok, {:fn, _, [{:->, _, [[{:when, _, [{:x, _, nil}, {:y, _, nil}, {:>, _, [{:y, _, nil}, 0]}]}], {:x, _, nil}]}]}, _state, _log} =
+    assert {:ok,
+            {:fn, _,
+             [
+               {:->, _,
+                [
+                  [{:when, _, [{:x, _, nil}, {:y, _, nil}, {:>, _, [{:y, _, nil}, 0]}]}],
+                  {:x, _, nil}
+                ]}
+             ]}, _state, _log} =
              Grammar.Expressions.expr(state, :unmatched, log)
   end
 
@@ -41,7 +49,8 @@ defmodule ToxicParser.BlocksTest do
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :unmatched, log)
 
-    assert {:try, _, [[do: :ok, rescue: [{:->, _, [[{:e, _, nil}], {:e, _, nil}]}], after: :after]]} = ast
+    assert {:try, _,
+            [[do: :ok, rescue: [{:->, _, [[{:e, _, nil}], {:e, _, nil}]}], after: :after]]} = ast
   end
 
   test "parses with generator clauses and else" do
@@ -50,7 +59,11 @@ defmodule ToxicParser.BlocksTest do
 
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, :unmatched, log)
 
-    assert {:with, _, [{:<-, _, [{:x, _, nil}, {:y, _, nil}]}, [do: :ok, else: [{:->, _, [[{:x, _, nil}], :err]}]]]} =
+    assert {:with, _,
+            [
+              {:<-, _, [{:x, _, nil}, {:y, _, nil}]},
+              [do: :ok, else: [{:->, _, [[{:x, _, nil}], :err]}]]
+            ]} =
              ast
   end
 
@@ -66,7 +79,14 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("receive do msg -> msg after 10 -> :timeout end")
     log = EventLog.new()
 
-    assert {:ok, {:receive, _, [[do: [{:->, _, [[{:msg, _, nil}], {:msg, _, nil}]}], after: [{:->, _, [[10], :timeout]}]]]}, _state, _log} =
+    assert {:ok,
+            {:receive, _,
+             [
+               [
+                 do: [{:->, _, [[{:msg, _, nil}], {:msg, _, nil}]}],
+                 after: [{:->, _, [[10], :timeout]}]
+               ]
+             ]}, _state, _log} =
              Grammar.Expressions.expr(state, :unmatched, log)
   end
 
@@ -74,7 +94,10 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("for x <- [1,2], x > 1 do x end")
     log = EventLog.new()
 
-    assert {:ok, {:for, _, quals}, _state, _log} = Grammar.Expressions.expr(state, :unmatched, log)
-    assert [{:<-, _, [{:x, _, nil}, [1, 2]]}, {:>, _, [{:x, _, nil}, 1]}, [do: {:x, _, nil}]] = quals
+    assert {:ok, {:for, _, quals}, _state, _log} =
+             Grammar.Expressions.expr(state, :unmatched, log)
+
+    assert [{:<-, _, [{:x, _, nil}, [1, 2]]}, {:>, _, [{:x, _, nil}, 1]}, [do: {:x, _, nil}]] =
+             quals
   end
 end

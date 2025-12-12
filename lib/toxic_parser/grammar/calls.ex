@@ -99,6 +99,7 @@ defmodule ToxicParser.Grammar.Calls do
         {:ok, %{kind: :","}, _} ->
           # Multiple args - continue parsing
           {:ok, _comma, state} = TokenAdapter.next(state)
+
           with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log) do
             callee = callee_tok.value
             # No ambiguous_op metadata when multiple args
@@ -329,7 +330,8 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_paren_args(acc, state, ctx, log), do: ToxicParser.Grammar.CallsPrivate.parse_paren_args(acc, state, ctx, log)
+  defp parse_paren_args(acc, state, ctx, log),
+    do: ToxicParser.Grammar.CallsPrivate.parse_paren_args(acc, state, ctx, log)
 
   @doc """
   Parse no-parens call arguments (exported for use by Pratt parser for dot calls).
@@ -475,7 +477,9 @@ defmodule ToxicParser.Grammar.Calls do
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
          {:ok, close_tok, state} <- expect_token(state, :")") do
-      total_newlines = if args == [], do: leading_newlines + trailing_newlines, else: leading_newlines
+      total_newlines =
+        if args == [], do: leading_newlines + trailing_newlines, else: leading_newlines
+
       callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
       close_meta = Builder.Helpers.token_meta(close_tok.metadata)
       newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
@@ -512,6 +516,7 @@ defmodule ToxicParser.Grammar.Calls do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
+
           with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log) do
             callee = callee_tok.value
             meta = Builder.Helpers.token_meta(callee_tok.metadata)

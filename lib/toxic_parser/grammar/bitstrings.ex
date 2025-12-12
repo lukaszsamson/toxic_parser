@@ -24,18 +24,20 @@ defmodule ToxicParser.Grammar.Bitstrings do
         close_meta = token_meta(close_tok.metadata)
         newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
         meta = newlines_meta ++ [closing: close_meta] ++ open_meta
-        {:ok, {:"<<>>", meta, []}, state, log}
+        {:ok, {:<<>>, meta, []}, state, log}
 
       _ ->
         with {:ok, parts, close_meta, state, log} <- parse_segments([], state, ctx, log) do
           newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
           meta = newlines_meta ++ [closing: close_meta] ++ open_meta
-          {:ok, {:"<<>>", meta, parts}, state, log}
+          {:ok, {:<<>>, meta, parts}, state, log}
         end
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}), do: [line: line, column: column]
+  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
+    do: [line: line, column: column]
+
   defp token_meta(_), do: []
 
   defp skip_eoe_count_newlines(state, count) do
@@ -62,6 +64,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
             # Skip EOE before close
             {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
             case TokenAdapter.next(state) do
               {:ok, %{kind: :">>"} = close_tok, state} ->
                 close_meta = token_meta(close_tok.metadata)

@@ -64,6 +64,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = skip_eoe(state)
+
         with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
@@ -75,6 +76,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = skip_eoe(state)
+
         with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           # Calculate inner/outer metadata with column adjustment
@@ -196,6 +198,7 @@ defmodule ToxicParser.Grammar.Maps do
           [{key, _value} | _rest] = kw_list when is_atom(key) ->
             # Already have keyword list as entries
             state = skip_eoe(state)
+
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :"}"} = close_tok, _} ->
                 {:ok, _close, state} = TokenAdapter.next(state)
@@ -238,6 +241,7 @@ defmodule ToxicParser.Grammar.Maps do
   # Finish parsing map update after we have the first entry
   defp finish_map_update(base_expr, first_entry, pipe_meta, state, ctx, log) do
     state = skip_eoe(state)
+
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :","}, _} ->
         {:ok, _comma, state} = TokenAdapter.next(state)
@@ -289,6 +293,7 @@ defmodule ToxicParser.Grammar.Maps do
           # kw_data close_curly
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
             state = skip_eoe(state)
+
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"}"} = close_tok, state} ->
                 close_meta = token_meta(close_tok.metadata)
@@ -321,6 +326,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_assoc_entries(acc, state, ctx, log) do
     with {:ok, entry, state, log} <- parse_assoc_expr(state, ctx, log) do
       state = skip_eoe(state)
+
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :"}"} = close_tok, _} ->
           {:ok, _close, state} = TokenAdapter.next(state)
@@ -342,6 +348,7 @@ defmodule ToxicParser.Grammar.Maps do
                 # assoc_base ',' kw_data
                 with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
                   state = skip_eoe(state)
+
                   case TokenAdapter.next(state) do
                     {:ok, %{kind: :"}"} = close_tok, state} ->
                       close_meta = token_meta(close_tok.metadata)
@@ -419,7 +426,9 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}), do: [line: line, column: column]
+  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
+    do: [line: line, column: column]
+
   defp token_meta(_), do: []
 
   # Build map AST: %{} or %Struct{}

@@ -153,6 +153,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_paren_stab(_open_meta, state, ctx, log) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
       state = skip_eoe(state)
+
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"}, state} ->
           {:ok, clauses, state, log}
@@ -189,11 +190,25 @@ defmodule ToxicParser.Grammar.Containers do
         case TokenAdapter.peek(inner_state) do
           {:ok, %{kind: :stab_op}, _} ->
             # (() -> expr)
-            parse_empty_paren_stab(open_meta, inner_open_meta, inner_close_meta, inner_state, ctx, log)
+            parse_empty_paren_stab(
+              open_meta,
+              inner_open_meta,
+              inner_close_meta,
+              inner_state,
+              ctx,
+              log
+            )
 
           {:ok, %{kind: :when_op}, _} ->
             # (() when guard -> expr)
-            parse_empty_paren_when_stab(open_meta, inner_open_meta, inner_close_meta, inner_state, ctx, log)
+            parse_empty_paren_when_stab(
+              open_meta,
+              inner_open_meta,
+              inner_close_meta,
+              inner_state,
+              ctx,
+              log
+            )
 
           _ ->
             # Not a stab - rewind and parse as expression
@@ -203,7 +218,15 @@ defmodule ToxicParser.Grammar.Containers do
 
       # Inner parens has content - could be stab_parens_many
       {:ok, _, _} ->
-        try_parse_stab_parens_many_content(open_meta, inner_open_meta, ref, checkpoint_state, inner_state, ctx, log)
+        try_parse_stab_parens_many_content(
+          open_meta,
+          inner_open_meta,
+          ref,
+          checkpoint_state,
+          inner_state,
+          ctx,
+          log
+        )
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}
@@ -273,21 +296,46 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # Try parse ((args) -> expr) where args are call_args_no_parens_kw or call_args_no_parens_many
-  defp try_parse_stab_parens_many_content(open_meta, inner_open_meta, ref, checkpoint_state, inner_state, ctx, log) do
+  defp try_parse_stab_parens_many_content(
+         open_meta,
+         inner_open_meta,
+         ref,
+         checkpoint_state,
+         inner_state,
+         ctx,
+         log
+       ) do
     # Try to parse the content as stab pattern arguments
     case parse_stab_parens_args(inner_state, ctx, log) do
       {:ok, args, inner_state, log} ->
         inner_state = skip_eoe(inner_state)
+
         case TokenAdapter.next(inner_state) do
           {:ok, %{kind: :")"} = inner_close_tok, inner_state} ->
             inner_close_meta = token_meta(inner_close_tok.metadata)
             # Check for -> or when
             case TokenAdapter.peek(inner_state) do
               {:ok, %{kind: :stab_op}, _} ->
-                parse_stab_parens_many_stab(open_meta, inner_open_meta, inner_close_meta, args, inner_state, ctx, log)
+                parse_stab_parens_many_stab(
+                  open_meta,
+                  inner_open_meta,
+                  inner_close_meta,
+                  args,
+                  inner_state,
+                  ctx,
+                  log
+                )
 
               {:ok, %{kind: :when_op}, _} ->
-                parse_stab_parens_many_when(open_meta, inner_open_meta, inner_close_meta, args, inner_state, ctx, log)
+                parse_stab_parens_many_when(
+                  open_meta,
+                  inner_open_meta,
+                  inner_close_meta,
+                  args,
+                  inner_state,
+                  ctx,
+                  log
+                )
 
               _ ->
                 # Not a stab - rewind and parse as expression
@@ -309,7 +357,15 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # ((args) -> expr)
-  defp parse_stab_parens_many_stab(_open_meta, inner_open_meta, inner_close_meta, args, state, ctx, log) do
+  defp parse_stab_parens_many_stab(
+         _open_meta,
+         inner_open_meta,
+         inner_close_meta,
+         args,
+         state,
+         ctx,
+         log
+       ) do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
     # Skip EOE after stab and count newlines
@@ -324,7 +380,15 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # ((args) when guard -> expr)
-  defp parse_stab_parens_many_when(_open_meta, inner_open_meta, inner_close_meta, args, state, ctx, log) do
+  defp parse_stab_parens_many_when(
+         _open_meta,
+         inner_open_meta,
+         inner_close_meta,
+         args,
+         state,
+         ctx,
+         log
+       ) do
     {:ok, when_tok, state} = TokenAdapter.next(state)
     when_meta = token_meta(when_tok.metadata)
     state = skip_eoe(state)
@@ -383,6 +447,7 @@ defmodule ToxicParser.Grammar.Containers do
     # Parse expression with min_bp > when_op (50) to stop before -> and when
     with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 51) do
       state_after_eoe = skip_eoe(state)
+
       case TokenAdapter.peek(state_after_eoe) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
@@ -468,7 +533,9 @@ defmodule ToxicParser.Grammar.Containers do
         stab_base_meta = token_meta(stab_tok.metadata)
         # Skip EOE after stab and count newlines
         {state, newlines} = skip_eoe_count_newlines(state, 0)
-        stab_meta = if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
+
+        stab_meta =
+          if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
         with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
           # Parens placement rules:
@@ -493,11 +560,15 @@ defmodule ToxicParser.Grammar.Containers do
               stab_base_meta = token_meta(stab_tok.metadata)
               # Skip EOE after stab and count newlines
               {state, newlines} = skip_eoe_count_newlines(state, 0)
-              stab_meta = if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
+
+              stab_meta =
+                if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
               with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
                 # Apply parens meta before wrapping with guard
-                {final_patterns, final_stab_meta} = apply_parens_meta(patterns, parens_meta, stab_meta)
+                {final_patterns, final_stab_meta} =
+                  apply_parens_meta(patterns, parens_meta, stab_meta)
+
                 # Wrap patterns with guard in a when clause
                 patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
                 clause = {:->, final_stab_meta, [patterns_with_guard, body]}
@@ -579,7 +650,8 @@ defmodule ToxicParser.Grammar.Containers do
           # call_args_no_parens_kw: (x: 1 -> body)
           # Use min_bp > stab_op (10) to stop keyword values before ->
           # The kw_list is already [x: 1], and we need to wrap it in a list to get [[x: 1]]
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_call_with_min_bp(state, ctx, log, 11) do
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_call_with_min_bp(state, ctx, log, 11) do
             {:ok, [kw_list], state, log}
           end
         else
@@ -613,6 +685,7 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, _, _} ->
         with {:ok, args, state, log} <- parse_call_args_parens(state, ctx, log) do
           state = skip_eoe(state)
+
           case TokenAdapter.next(state) do
             {:ok, %{kind: :")"} = close_tok, state} ->
               close_meta = token_meta(close_tok.metadata)
@@ -659,6 +732,7 @@ defmodule ToxicParser.Grammar.Containers do
     # Parse matched expression
     with {:ok, expr, state, log} <- Expressions.expr(state, :matched, log) do
       state = skip_eoe(state)
+
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
@@ -692,6 +766,7 @@ defmodule ToxicParser.Grammar.Containers do
     # Then use Pratt for other expressions, stopping before -> and when
     with {:ok, expr, state, log} <- parse_stab_pattern_expr(state, log) do
       state_after_eoe = skip_eoe(state)
+
       case TokenAdapter.peek(state_after_eoe) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
@@ -702,7 +777,8 @@ defmodule ToxicParser.Grammar.Containers do
               if Keywords.starts_kw?(tok) do
                 # call_args_no_parens_many: exprs followed by kw
                 # Use min_bp > stab_op (10) to stop keyword values before ->
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_call_with_min_bp(state, :matched, log, 11) do
+                with {:ok, kw_list, state, log} <-
+                       Keywords.parse_kw_call_with_min_bp(state, :matched, log, 11) do
                   {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
                 end
               else
@@ -808,6 +884,7 @@ defmodule ToxicParser.Grammar.Containers do
     case meta do
       %{range: %{start: %{line: line, column: column}}} ->
         [newlines: newlines, line: line, column: column]
+
       _ ->
         []
     end
@@ -817,6 +894,7 @@ defmodule ToxicParser.Grammar.Containers do
     case meta do
       %{range: %{start: %{line: line, column: column}}} ->
         [line: line, column: column]
+
       _ ->
         []
     end
@@ -832,6 +910,7 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse remaining stab clauses after the first one
   defp parse_remaining_stab_clauses(acc, state, ctx, log) do
     state = skip_eoe(state)
+
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
@@ -876,6 +955,7 @@ defmodule ToxicParser.Grammar.Containers do
     case try_parse_stab_clause(state, ctx, log, terminator) do
       {:ok, clause, state, log} ->
         state = skip_eoe(state)
+
         case TokenAdapter.peek(state) do
           {:ok, %{kind: ^terminator}, _} ->
             {:ok, Enum.reverse([clause | acc]), state, log}
@@ -921,6 +1001,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_expr_in_paren_impl(open_meta, state, ctx, log) do
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
       state = skip_eoe(state)
+
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"} = close_tok, state} ->
           close_meta = token_meta(close_tok.metadata)
@@ -979,7 +1060,9 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}), do: [line: line, column: column]
+  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
+    do: [line: line, column: column]
+
   defp token_meta(_), do: []
 
   defp parse_list(state, ctx, log) do
@@ -1020,6 +1103,7 @@ defmodule ToxicParser.Grammar.Containers do
         if Keywords.starts_kw?(tok) do
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
             {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"]"}, state} ->
                 {:ok, Enum.reverse(acc) ++ kw_list, state, log}
@@ -1054,6 +1138,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
           {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
               {:ok, _close, state} = TokenAdapter.next(state)
@@ -1152,6 +1237,7 @@ defmodule ToxicParser.Grammar.Containers do
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
             # Skip EOE before close
             {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"}"} = close_tok, state} ->
                 close_meta = token_meta(close_tok.metadata)
@@ -1216,5 +1302,4 @@ defmodule ToxicParser.Grammar.Containers do
       end
     end
   end
-
 end

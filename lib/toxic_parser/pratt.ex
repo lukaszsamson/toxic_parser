@@ -233,7 +233,8 @@ defmodule ToxicParser.Pratt do
             if context == :matched do
               {:ok, ast, state, log}
             else
-              with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+              with {:ok, {block_meta, sections}, state, log} <-
+                     Blocks.parse_do_block(state, context, log) do
                 token_meta = Builder.Helpers.token_meta(token.metadata)
                 call_ast = {token.value, block_meta ++ token_meta, [sections]}
                 {:ok, call_ast, state, log}
@@ -274,7 +275,8 @@ defmodule ToxicParser.Pratt do
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :do}, _} ->
             # identifier followed by do - parse as call with do-block
-            with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+            with {:ok, {block_meta, sections}, state, log} <-
+                   Blocks.parse_do_block(state, context, log) do
               token_meta = Builder.Helpers.token_meta(token.metadata)
               call_ast = {token.value, block_meta ++ token_meta, [sections]}
               {:ok, call_ast, state, log}
@@ -283,7 +285,8 @@ defmodule ToxicParser.Pratt do
           {:ok, next_tok, _} ->
             # For plain identifiers, only parse no-parens call if next token is NOT dual_op
             # (dual_op after identifier with spaces is binary operator, not unary argument)
-            if next_tok.kind != :dual_op and (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
+            if next_tok.kind != :dual_op and
+                 (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
               {:ok, ast, state, log}
@@ -303,7 +306,8 @@ defmodule ToxicParser.Pratt do
   # This is similar to Calls.parse_no_parens_call but doesn't call led at the end
   # This version uses min_bp to stop argument parsing before certain operators
   defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp) do
-    with {:ok, args, state, log} <- parse_no_parens_args_with_min_bp([], state, context, log, min_bp) do
+    with {:ok, args, state, log} <-
+           parse_no_parens_args_with_min_bp([], state, context, log, min_bp) do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}
@@ -316,7 +320,8 @@ defmodule ToxicParser.Pratt do
   defp maybe_do_block_no_led(ast, state, context, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :do}, _} ->
-        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+        with {:ok, {block_meta, sections}, state, log} <-
+               Blocks.parse_do_block(state, context, log) do
           ast =
             case ast do
               {name, meta, args} when is_list(args) ->
@@ -505,14 +510,22 @@ defmodule ToxicParser.Pratt do
       token.kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Expressions
+
         with {:ok, right, state, log} <- Expressions.expr(state, context, log) do
           led(right, state, log, min_bp, context)
         end
 
       # String tokens need Expressions.expr to handle them properly
-      token.kind in [:bin_string_start, :list_string_start, :bin_heredoc_start, :list_heredoc_start, :sigil_start] ->
+      token.kind in [
+        :bin_string_start,
+        :list_string_start,
+        :bin_heredoc_start,
+        :list_heredoc_start,
+        :sigil_start
+      ] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Expressions
+
         with {:ok, right, state, log} <- Expressions.expr(state, context, log) do
           led(right, state, log, min_bp, context)
         end
@@ -537,6 +550,7 @@ defmodule ToxicParser.Pratt do
       {:ok, %{kind: :do}, _} ->
         # Do-block - delegate to Calls.parse_without_led to preserve min_bp
         state = TokenAdapter.pushback(state, token)
+
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
           led(right, state, log, min_bp, context)
         end
@@ -546,8 +560,10 @@ defmodule ToxicParser.Pratt do
           # op_identifier means tokenizer determined this is a no-parens call
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
-          token.kind == :op_identifier and (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
+          token.kind == :op_identifier and
+              (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
+
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
               led(right, state, log, min_bp, context)
             end
@@ -560,6 +576,7 @@ defmodule ToxicParser.Pratt do
           # Could be no-parens call argument - delegate to Calls
           is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
+
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
               led(right, state, log, min_bp, context)
             end
@@ -585,7 +602,8 @@ defmodule ToxicParser.Pratt do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+    with {:ok, args, state, log} <-
+           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
          # Skip trailing EOE before close paren
          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
          {:ok, close_tok, state} <- expect_close_paren(state) do
@@ -622,10 +640,24 @@ defmodule ToxicParser.Pratt do
   # Check if a token can be the start of a no-parens call argument
   defp is_no_parens_arg?(%{kind: kind}) do
     kind in [
-      :int, :flt, :char, :atom, :string, :identifier, :do_identifier, :alias,
-      true, false, nil,
-      :"{", :"[", :"<<",
-      :unary_op, :at_op, :capture_op, :dual_op
+      :int,
+      :flt,
+      :char,
+      :atom,
+      :string,
+      :identifier,
+      :do_identifier,
+      :alias,
+      true,
+      false,
+      nil,
+      :"{",
+      :"[",
+      :"<<",
+      :unary_op,
+      :at_op,
+      :capture_op,
+      :dual_op
     ]
   end
 
@@ -646,7 +678,8 @@ defmodule ToxicParser.Pratt do
             # Skip leading EOE and count newlines
             {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-            with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+            with {:ok, args, state, log} <-
+                   ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
               # Skip trailing EOE before close paren
               {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -670,12 +703,15 @@ defmodule ToxicParser.Pratt do
 
                   # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
                   # Otherwise it's a nested call: {left, call_meta, args}
-                  combined = case left do
-                    {name, _meta, nil} when is_atom(name) ->
-                      {name, call_meta, Enum.reverse(args)}
-                    _ ->
-                      {left, call_meta, Enum.reverse(args)}
-                  end
+                  combined =
+                    case left do
+                      {name, _meta, nil} when is_atom(name) ->
+                        {name, call_meta, Enum.reverse(args)}
+
+                      _ ->
+                        {left, call_meta, Enum.reverse(args)}
+                    end
+
                   # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
                   maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
 
@@ -697,12 +733,14 @@ defmodule ToxicParser.Pratt do
 
             # The dot_call_op is followed by (args)
             # Build: {{:., dot_meta, [left]}, call_meta, args}
-            {:ok, _open_tok, state} = TokenAdapter.next(state)  # consume (
+            # consume (
+            {:ok, _open_tok, state} = TokenAdapter.next(state)
 
             # Skip leading EOE and count newlines
             {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-            with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+            with {:ok, args, state, log} <-
+                   ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
               # Skip trailing EOE before close paren
               {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -738,11 +776,16 @@ defmodule ToxicParser.Pratt do
               {:ok, %{kind: :"{"}, _} ->
                 {:ok, _open, state} = TokenAdapter.next(state)
 
-                with {:ok, args, newlines, close_meta, state, log} <- parse_dot_container_args(state, context, log) do
+                with {:ok, args, newlines, close_meta, state, log} <-
+                       parse_dot_container_args(state, context, log) do
                   # Build: {{:., dot_meta, [left, :{}]}, [newlines: n, closing: close_meta] ++ dot_meta, args}
                   # Only add newlines to metadata if > 0
                   newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-                  combined = {{:., dot_meta, [left, :{}]}, newlines_meta ++ [closing: close_meta] ++ dot_meta, args}
+
+                  combined =
+                    {{:., dot_meta, [left, :{}]},
+                     newlines_meta ++ [closing: close_meta] ++ dot_meta, args}
+
                   led(combined, state, log, min_bp, context)
                 end
 
@@ -775,7 +818,13 @@ defmodule ToxicParser.Pratt do
                       # Skip leading EOE and count newlines
                       {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-                      with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+                      with {:ok, args, state, log} <-
+                             ToxicParser.Grammar.CallsPrivate.parse_paren_args(
+                               [],
+                               state,
+                               context,
+                               log
+                             ) do
                         # Skip trailing EOE before close paren
                         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -785,7 +834,9 @@ defmodule ToxicParser.Pratt do
                             close_meta = build_meta(close_tok.metadata)
 
                             # When followed by parens, convert to call form with proper metadata
-                            combined = dot_to_call_with_meta(combined, args, total_newlines, close_meta)
+                            combined =
+                              dot_to_call_with_meta(combined, args, total_newlines, close_meta)
+
                             # Check for nested calls and do-blocks (foo.bar() do...end)
                             maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
 
@@ -812,7 +863,8 @@ defmodule ToxicParser.Pratt do
                     {:ok, next_tok, _} ->
                       # Check for no-parens call argument after dot expression
                       if can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
-                        with {:ok, args, state, log} <- Calls.parse_no_parens_args([], state, context, log) do
+                        with {:ok, args, state, log} <-
+                               Calls.parse_no_parens_args([], state, context, log) do
                           combined = dot_to_no_parens_call(combined, args)
                           # Check for do-blocks after no-parens call: foo.bar arg do...end
                           maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
@@ -842,9 +894,17 @@ defmodule ToxicParser.Pratt do
                   # Build metadata with from_brackets, newlines, closing, line, column
                   open_meta = build_meta(open_tok.metadata)
                   close_meta = build_meta(close_tok.metadata)
-                  newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-                  bracket_meta = [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
-                  combined = {{:., bracket_meta, [Access, :get]}, bracket_meta, [left | Enum.reverse(indices)]}
+
+                  newlines_meta =
+                    if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+
+                  bracket_meta =
+                    [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+
+                  combined =
+                    {{:., bracket_meta, [Access, :get]}, bracket_meta,
+                     [left | Enum.reverse(indices)]}
+
                   led(combined, state, log, min_bp, context)
 
                 {:ok, other, state} ->
@@ -885,11 +945,29 @@ defmodule ToxicParser.Pratt do
                     led(combined, state, log, min_bp, context)
                   end
                 else
-                  parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log)
+                  parse_binary_rhs(
+                    state,
+                    left,
+                    op_token,
+                    rhs_min_bp,
+                    min_bp,
+                    newlines,
+                    context,
+                    log
+                  )
                 end
 
               _ ->
-                parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log)
+                parse_binary_rhs(
+                  state,
+                  left,
+                  op_token,
+                  rhs_min_bp,
+                  min_bp,
+                  newlines,
+                  context,
+                  log
+                )
             end
 
           _ ->
@@ -918,7 +996,8 @@ defmodule ToxicParser.Pratt do
         # Skip leading EOE and count newlines
         {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-        with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+        with {:ok, args, state, log} <-
+               ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
           # Skip trailing EOE before close paren
           {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -955,7 +1034,8 @@ defmodule ToxicParser.Pratt do
 
       {:ok, %{kind: :do}, _} ->
         # Do-block - parse and attach to call
-        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, context, log) do
+        with {:ok, {block_meta, sections}, state, log} <-
+               Blocks.parse_do_block(state, context, log) do
           combined =
             case ast do
               {name, meta, args} when is_list(args) ->
@@ -984,7 +1064,12 @@ defmodule ToxicParser.Pratt do
 
   # Convert a dot expression to a call when followed by parens, with closing metadata
   # If id_meta already has :closing, this is a nested call - wrap the whole thing
-  defp dot_to_call_with_meta({{:., dot_meta, dot_args}, id_meta, _inner_args} = callee, args, newlines, close_meta) do
+  defp dot_to_call_with_meta(
+         {{:., dot_meta, dot_args}, id_meta, _inner_args} = callee,
+         args,
+         newlines,
+         close_meta
+       ) do
     if Keyword.has_key?(id_meta, :closing) do
       # Already a call - wrap it as nested call
       callee_meta = Keyword.take(id_meta, [:line, :column])
@@ -1012,7 +1097,6 @@ defmodule ToxicParser.Pratt do
     {other, meta, Enum.reverse(args)}
   end
 
-
   # Convert a dot expression to a no-parens call
   # {{:., dot_meta, [left, member]}, [no_parens: true | id_meta], []} + args
   # -> {{:., dot_meta, [left, member]}, id_meta, args}
@@ -1033,10 +1117,24 @@ defmodule ToxicParser.Pratt do
   # Check if a token can be the start of a no-parens call argument
   defp can_be_no_parens_arg?(%{kind: kind}) do
     kind in [
-      :int, :flt, :char, :atom, :string, :identifier, :do_identifier, :alias,
-      true, false, nil,
-      :"{", :"[", :"<<",
-      :unary_op, :at_op, :capture_op, :dual_op
+      :int,
+      :flt,
+      :char,
+      :atom,
+      :string,
+      :identifier,
+      :do_identifier,
+      :alias,
+      true,
+      false,
+      nil,
+      :"{",
+      :"[",
+      :"<<",
+      :unary_op,
+      :at_op,
+      :capture_op,
+      :dual_op
     ]
   end
 
@@ -1109,6 +1207,7 @@ defmodule ToxicParser.Pratt do
           {:ok, _comma, state} = TokenAdapter.next(state)
           # After comma, check if we hit EOE or closing brace (trailing comma case)
           {state, _newlines} = skip_eoe_count_newlines(state, 0)
+
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"}"}, _} ->
               # Trailing comma - stop here
@@ -1164,7 +1263,12 @@ defmodule ToxicParser.Pratt do
 
   # Build binary operation AST, with special handling for "not in" rewrite
   # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
-  defp build_binary_op(%{kind: :in_op, value: {:"not in", in_location}, metadata: meta}, left, right, newlines) do
+  defp build_binary_op(
+         %{kind: :in_op, value: {:"not in", in_location}, metadata: meta},
+         left,
+         right,
+         newlines
+       ) do
     not_meta = build_meta_with_newlines(meta, newlines)
     in_meta = build_meta_from_location(in_location)
     {:not, not_meta, [{:in, in_meta, [left, right]}]}
@@ -1172,7 +1276,12 @@ defmodule ToxicParser.Pratt do
 
   # Deprecated "not expr1 in expr2" rewrite - when in_op follows {:not, _, [operand]} or {:!, _, [operand]}
   # Rewrites to {:not, InMeta, [{:in, InMeta, [operand, right]}]} or {:!, InMeta, [{:in, InMeta, [operand, right]}]}
-  defp build_binary_op(%{kind: :in_op, value: :in, metadata: meta}, {op, _op_meta, [operand]}, right, _newlines)
+  defp build_binary_op(
+         %{kind: :in_op, value: :in, metadata: meta},
+         {op, _op_meta, [operand]},
+         right,
+         _newlines
+       )
        when op in [:not, :!] do
     in_meta = build_meta(meta)
     {op, in_meta, [{:in, in_meta, [operand, right]}]}

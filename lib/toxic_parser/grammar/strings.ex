@@ -410,8 +410,10 @@ defmodule ToxicParser.Grammar.Strings do
   # Trim indentation from a fragment
   defp trim_fragment(content, indent, at_line_start, spaces_left) do
     chars = :binary.bin_to_list(content)
+
     {rev_chars, final_at_line_start, final_spaces_left} =
       trim_chars(chars, indent, at_line_start, spaces_left, [])
+
     trimmed = rev_chars |> Enum.reverse() |> :erlang.list_to_binary()
     {trimmed, final_at_line_start, final_spaces_left}
   end

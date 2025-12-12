@@ -258,7 +258,7 @@ defmodule ToxicParser.Grammar.Expressions do
       case TokenAdapter.peek(state) do
         {:ok, tok, _} -> Builder.Helpers.token_meta(tok.metadata)
         _ -> []
-    end
+      end
 
     Builder.Helpers.error(reason, meta)
   end

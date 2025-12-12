@@ -231,10 +231,10 @@ defmodule ToxicParser.TokenAdapter do
     {token, [diagnostic]}
   end
 
-  defp normalize_token({:".", meta} = raw, state, terminators) do
+  defp normalize_token({:., meta} = raw, state, terminators) do
     token = %{
       kind: :dot_op,
-      value: :".",
+      value: :.,
       metadata: metadata(meta, raw, terminators, state),
       raw: raw
     }
@@ -245,7 +245,7 @@ defmodule ToxicParser.TokenAdapter do
   defp normalize_token({:dot_call_op, meta} = raw, state, terminators) do
     token = %{
       kind: :dot_op,
-      value: :".",
+      value: :.,
       metadata: metadata(meta, raw, terminators, state),
       raw: raw
     }

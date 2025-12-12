@@ -27,7 +27,8 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   @doc "Parses a keyword list with a minimum binding power constraint."
-  @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
+          result()
   def parse_kw_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
     parse_kw_list([], state, ctx, log, min_bp)
   end
@@ -46,7 +47,7 @@ defmodule ToxicParser.Grammar.Keywords do
             {:ok, _comma, state} = TokenAdapter.next(state)
             # Check for trailing comma - if next is a terminator, stop
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :">>",:do] ->
+              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :">>", :do] ->
                 {:ok, Enum.reverse([pair | acc]), state, log}
 
               _ ->
@@ -70,11 +71,12 @@ defmodule ToxicParser.Grammar.Keywords do
         # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
         # Always use :matched context so keyword values don't consume do-blocks
         # (the do-block belongs to the outer call, not to the keyword value)
-        result = if min_bp > 0 do
-          Pratt.parse_with_min_bp(state, :matched, log, min_bp)
-        else
-          Expressions.expr(state, :matched, log)
-        end
+        result =
+          if min_bp > 0 do
+            Pratt.parse_with_min_bp(state, :matched, log, min_bp)
+          else
+            Expressions.expr(state, :matched, log)
+          end
 
         with {:ok, value_ast, state, log} <- result do
           key_ast = Builder.Helpers.literal(key)

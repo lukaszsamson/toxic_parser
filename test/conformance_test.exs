@@ -954,7 +954,6 @@ defmodule ToxicParser.ConformanceTest do
       # stab -> stab_expr
       # stab -> stab eoe stab_expr
 
-
       assert_conforms("fn 1 -> 2 end")
       assert_conforms("fn 1 -> 2\n end")
       assert_conforms("fn 1 -> 2; end")
@@ -1706,7 +1705,6 @@ defmodule ToxicParser.ConformanceTest do
 
     test "do_block stab_eoe" do
       # do_block -> do_eoe stab_eoe 'end'
-
     end
 
     test "do_block block_list" do
@@ -2477,6 +2475,7 @@ defmodule ToxicParser.ConformanceTest do
     # Strip :newlines from call_meta to normalize the bug
     normalized_call_meta = Keyword.delete(call_meta, :newlines)
     normalized_args = Enum.map(args, &normalize_container_newlines/1)
+
     {{:., normalize_container_newlines(dot_meta), [normalize_container_newlines(base), :{}]},
      normalized_call_meta, normalized_args}
   end

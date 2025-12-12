@@ -20,6 +20,7 @@ defmodule ToxicParser.Grammar.Dots do
 
     with {:ok, rhs, state, log} <- parse_member(state, ctx, log) do
       combined = Builder.Helpers.dot(left, rhs)
+
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :dot_op}, _} ->
           parse_chain(combined, state, ctx, log)
@@ -40,7 +41,16 @@ defmodule ToxicParser.Grammar.Dots do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         case Identifiers.classify(tok.kind) do
-          kind when kind in [:identifier, :do_identifier, :op_identifier, :dot_identifier, :dot_do_identifier, :dot_op_identifier, :bracket_identifier] ->
+          kind
+          when kind in [
+                 :identifier,
+                 :do_identifier,
+                 :op_identifier,
+                 :dot_identifier,
+                 :dot_do_identifier,
+                 :dot_op_identifier,
+                 :bracket_identifier
+               ] ->
             # Return {member_atom, member_meta} tuple so caller can build proper AST
             {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
 
@@ -109,7 +119,8 @@ defmodule ToxicParser.Grammar.Dots do
     start_meta = Builder.Helpers.token_meta(start_tok.metadata)
     delimiter = delimiter_from_value(start_tok.value)
 
-    with {:ok, fragments, end_kind, state, log} <- collect_fragments([], state, :quoted_identifier_end, log),
+    with {:ok, fragments, end_kind, state, log} <-
+           collect_fragments([], state, :quoted_identifier_end, log),
          {:ok, _close, state} <- TokenAdapter.next(state) do
       content = fragments |> Enum.reverse() |> Enum.join("") |> Macro.unescape_string()
       atom = String.to_atom(content)
@@ -121,7 +132,8 @@ defmodule ToxicParser.Grammar.Dots do
         # quoted_op_identifier_end means there's a space before next token -> no-parens call
         end_kind == :quoted_op_identifier_end ->
           # D."foo" arg - parse no-parens call arguments
-          with {:ok, args, state, log} <- ToxicParser.Grammar.Calls.parse_no_parens_args([], state, ctx, log) do
+          with {:ok, args, state, log} <-
+                 ToxicParser.Grammar.Calls.parse_no_parens_args([], state, ctx, log) do
             # Return as call AST: {atom, meta, args}
             {:ok, {atom, meta_with_delimiter, args}, state, log}
           end
@@ -136,7 +148,8 @@ defmodule ToxicParser.Grammar.Dots do
           {:ok, {atom, meta_with_delimiter, []}, state, log}
 
         # quoted_paren_identifier_end or ( immediately follows: D."foo"()
-        end_kind == :quoted_paren_identifier_end or match?({:ok, %{kind: :"("}, _}, TokenAdapter.peek(state)) ->
+        end_kind == :quoted_paren_identifier_end or
+            match?({:ok, %{kind: :"("}, _}, TokenAdapter.peek(state)) ->
           {:ok, _open, state} = TokenAdapter.next(state)
 
           # Skip leading EOE and count newlines
@@ -181,15 +194,21 @@ defmodule ToxicParser.Grammar.Dots do
   # - quoted_paren_identifier_end: D."foo"() (immediately followed by parens)
   # - quoted_bracket_identifier_end: D."foo"[1] (immediately followed by bracket)
   # - quoted_do_identifier_end: D."foo" do...end (space before do-block)
-  @quoted_id_ends [:quoted_identifier_end, :quoted_op_identifier_end, :quoted_paren_identifier_end,
-                   :quoted_bracket_identifier_end, :quoted_do_identifier_end]
+  @quoted_id_ends [
+    :quoted_identifier_end,
+    :quoted_op_identifier_end,
+    :quoted_paren_identifier_end,
+    :quoted_bracket_identifier_end,
+    :quoted_do_identifier_end
+  ]
 
   defp collect_fragments(acc, state, target_end, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: ^target_end}, _} ->
         {:ok, acc, target_end, state, log}
 
-      {:ok, %{kind: kind}, _} when kind in @quoted_id_ends and target_end == :quoted_identifier_end ->
+      {:ok, %{kind: kind}, _}
+      when kind in @quoted_id_ends and target_end == :quoted_identifier_end ->
         # Accept any quoted identifier end token
         {:ok, acc, kind, state, log}
 
