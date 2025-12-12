@@ -477,22 +477,21 @@ defmodule ToxicParser.Pratt do
             # For @/&, we use Calls.parse_without_led to get the call without led(),
             # then led() is called at the END of parse_unary to handle trailing ops.
             # This ensures "@foo.bar" parses as "(@foo).bar" not "@(foo.bar)"
+            # Elixir's yecc grammar uses operator precedence for unary operands:
+            # - unary_op_eol (300): "+ a ** b" -> "(+ a) ** b" since 300 > 230
+            # - capture_op_eol (90): "& a ** b" -> "& (a ** b)" since 90 < 230
+            # - ellipsis_op (90): "... a ** b" -> "... (a ** b)" since 90 < 230
             #
-            # For ellipsis/range, the threshold is match_op (bp=100):
-            # - "... a ** b" parses as "...(a ** b)" (power_op bp=230 >= 100)
-            # - "... a | b" parses as "(... a) | b" (pipe_op bp=70 < 100)
             # For ellipsis/range, operand is always matched_expr (min_bp=100):
             # - "... a ** b" parses as "...(a ** b)" (power_op bp=230 >= 100)
             # - "... a | b" parses as "(... a) | b" (pipe_op bp=70 < 100)
             #
-            # For other unary ops, use their own binding power as min_bp.
-            # This prevents lower-precedence operators from being consumed:
-            # - @ (bp=320): "@foo.bar" parses as "(@foo).bar" (dot bp=310 < 320)
-            # - & (bp=90): "&foo.bar" parses as "&(foo.bar)" (dot bp=310 > 90)
+            # For other unary ops, use the unary op's precedence as min_bp.
+            # This implements the standard Pratt parser precedence model.
             operand_min_bp = if op_token.kind in [:ellipsis_op, :range_op], do: 100, else: min_bp
 
             with {:ok, operand, state, log} <-
-                   parse_rhs(operand_token, state, context, log, operand_min_bp) do
+                   parse_rhs(operand_token, state, context, log, operand_min_bp, unary_operand: true) do
               op = op_token.value
               meta = build_meta(op_token.metadata)
               ast = Builder.Helpers.unary(op, operand, meta)
@@ -574,7 +573,7 @@ defmodule ToxicParser.Pratt do
     # Parse the operand with unary precedence
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
-        with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, 300) do
+        with {:ok, operand, state, log} <- parse_rhs(operand_token, state, context, log, 300, unary_operand: true) do
           # Build: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           {:ok, ast, state, log}
@@ -591,12 +590,13 @@ defmodule ToxicParser.Pratt do
   # Parse RHS of binary operator, handling chained operators with proper precedence
   # For identifiers that could be calls with do-blocks (like `if true do...end`),
   # we need special handling but must preserve min_bp for associativity
-  defp parse_rhs(token, state, context, log, min_bp) do
+  # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
+  defp parse_rhs(token, state, context, log, min_bp, opts \\ []) do
     # Check if this is an identifier that could be a call with arguments
     cond do
       Identifiers.classify(token.kind) != :other ->
         # Handle identifier specially to preserve min_bp
-        parse_rhs_identifier(token, state, context, log, min_bp)
+        parse_rhs_identifier(token, state, context, log, min_bp, opts)
 
       # Container tokens need special handling to preserve min_bp
       token.kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
@@ -628,24 +628,28 @@ defmodule ToxicParser.Pratt do
   end
 
   # Parse identifier on RHS, handling calls while preserving min_bp for associativity
-  defp parse_rhs_identifier(token, state, context, log, min_bp) do
+  # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
+  defp parse_rhs_identifier(token, state, context, log, min_bp, opts \\ []) do
+    unary_operand = Keyword.get(opts, :unary_operand, false)
+
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
         # Paren call - parse directly to preserve min_bp
         # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp
+        # Pass opts through so do-blocks after paren call know the context
         with {:ok, ast, state, log} <- parse_paren_call_base(token, state, context, log) do
-          led(ast, state, log, min_bp, context)
+          maybe_nested_call_or_do_block(ast, state, log, min_bp, context, opts)
         end
 
       {:ok, %{kind: :do}, _} ->
-        # Do-block - delegate to Calls.parse_without_led to preserve min_bp
+        # Do-block - delegate to Calls.parse_without_led
         state = TokenAdapter.pushback(state, token)
 
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
-          # Preserve the original min_bp for proper associativity.
-          # This ensures left-associative operators like |> work correctly:
-          # `1 |> if x do :ok end |> bar` should be `(1 |> if..end) |> bar`
-          led(right, state, log, min_bp, context)
+          # For unary operands: ALL binary ops should attach (min_bp=0)
+          # For binary RHS: preserve min_bp for associativity
+          led_min_bp = if unary_operand, do: 0, else: min_bp
+          led(right, state, log, led_min_bp, context, opts)
         end
 
       {:ok, next_tok, _} ->
@@ -659,33 +663,38 @@ defmodule ToxicParser.Pratt do
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
               # Preserve the original min_bp for proper associativity
-              led(right, state, log, min_bp, context)
+              led(right, state, log, min_bp, context, opts)
             end
 
           # Binary operator follows - just return identifier, led will handle with min_bp
           bp(next_tok.kind) ->
             ast = Builder.Helpers.from_token(token)
-            led(ast, state, log, min_bp, context)
+            led(ast, state, log, min_bp, context, opts)
 
           # Could be no-parens call argument - delegate to Calls
           is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
-              # Preserve the original min_bp for proper associativity
-              led(right, state, log, min_bp, context)
+              # For unary operands with do-blocks: ALL binary ops should attach
+              # For binary RHS with do-blocks: preserve min_bp for associativity
+              # For non-do-block expressions: always preserve min_bp
+              led_min_bp =
+                if has_do_block?(right) and unary_operand, do: 0, else: min_bp
+
+              led(right, state, log, led_min_bp, context, opts)
             end
 
           # Just a bare identifier
           true ->
             ast = Builder.Helpers.from_token(token)
-            led(ast, state, log, min_bp, context)
+            led(ast, state, log, min_bp, context, opts)
         end
 
       _ ->
         # EOF or error - just return identifier
         ast = Builder.Helpers.from_token(token)
-        led(ast, state, log, min_bp, context)
+        led(ast, state, log, min_bp, context, opts)
     end
   end
 
@@ -775,7 +784,7 @@ defmodule ToxicParser.Pratt do
   This is exposed for modules like Calls that need to continue parsing after
   building a call expression.
   """
-  def led(left, state, log, min_bp, context) do
+  def led(left, state, log, min_bp, context, opts \\ []) do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
@@ -827,7 +836,7 @@ defmodule ToxicParser.Pratt do
                     end
 
                   # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
-                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                 {:ok, other, state} ->
                   {:error, {:expected, :")", got: other.kind}, state, log}
@@ -868,7 +877,7 @@ defmodule ToxicParser.Pratt do
 
                   combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}
                   # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
-                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                 {:ok, other, state} ->
                   {:error, {:expected, :")", got: other.kind}, state, log}
@@ -900,7 +909,7 @@ defmodule ToxicParser.Pratt do
                     {{:., dot_meta, [left, :{}]},
                      newlines_meta ++ [closing: close_meta] ++ dot_meta, args}
 
-                  led(combined, state, log, min_bp, context)
+                  led(combined, state, log, min_bp, context, opts)
                 end
 
               _ ->
@@ -960,7 +969,7 @@ defmodule ToxicParser.Pratt do
                               dot_to_call_with_meta(combined, args, total_newlines, close_meta)
 
                             # Check for nested calls and do-blocks (foo.bar() do...end)
-                            maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+                            maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                           {:ok, other, state} ->
                             {:error, {:expected, :")", got: other.kind}, state, log}
@@ -975,12 +984,12 @@ defmodule ToxicParser.Pratt do
 
                     {:ok, %{kind: :"["}, _} ->
                       # Bracket access: foo.bar[:key] - handle via led() which processes [
-                      led(combined, state, log, min_bp, context)
+                      led(combined, state, log, min_bp, context, opts)
 
                     {:ok, %{kind: :do}, _} ->
                       # Do-block after dot call: foo.bar() do...end
                       # Only handle when rhs was a call (combined has args list)
-                      maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+                      maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                     {:ok, next_tok, _} ->
                       # Check for no-parens call argument after dot expression
@@ -997,14 +1006,14 @@ defmodule ToxicParser.Pratt do
                                Calls.parse_no_parens_args([], state, context, log) do
                           combined = dot_to_no_parens_call(combined, args)
                           # Check for do-blocks after no-parens call: foo.bar arg do...end
-                          maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+                          maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
                         end
                       else
-                        led(combined, state, log, min_bp, context)
+                        led(combined, state, log, min_bp, context, opts)
                       end
 
                     _ ->
-                      led(combined, state, log, min_bp, context)
+                      led(combined, state, log, min_bp, context, opts)
                   end
                 end
             end
@@ -1035,7 +1044,7 @@ defmodule ToxicParser.Pratt do
                     {{:., bracket_meta, [Access, :get]}, bracket_meta,
                      [left | Enum.reverse(indices)]}
 
-                  led(combined, state, log, min_bp, context)
+                  led(combined, state, log, min_bp, context, opts)
 
                 {:ok, other, state} ->
                   {:error, {:expected, :"]", got: other.kind}, state, log}
@@ -1078,7 +1087,7 @@ defmodule ToxicParser.Pratt do
                     op = op_token.value
                     meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
                     combined = Builder.Helpers.binary(op, left, kw_list, meta)
-                    led(combined, state, log, min_bp, context)
+                    led(combined, state, log, min_bp, context, opts)
                   end
                 else
                   parse_binary_rhs(
@@ -1127,7 +1136,12 @@ defmodule ToxicParser.Pratt do
   #   parens_call -> dot_call_identifier call_args_parens call_args_parens
   #   block_expr -> dot_call_identifier call_args_parens do_block
   #   block_expr -> dot_call_identifier call_args_parens call_args_parens do_block
-  defp maybe_nested_call_or_do_block(ast, state, log, min_bp, context) do
+  # When unary_operand: true, this is parsing a unary operator's operand.
+  # In that context, do-blocks should allow ALL binary ops to attach (min_bp=0).
+  # Otherwise (binary RHS), preserve min_bp for proper associativity.
+  defp maybe_nested_call_or_do_block(ast, state, log, min_bp, context, opts \\ []) do
+    unary_operand = Keyword.get(opts, :unary_operand, false)
+
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
         # Another paren call - parse it
@@ -1159,7 +1173,7 @@ defmodule ToxicParser.Pratt do
 
               combined = {ast, meta, Enum.reverse(args)}
               # Recurse for chained calls like foo()()()
-              maybe_nested_call_or_do_block(combined, state, log, min_bp, context)
+              maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
             {:ok, other, state} ->
               {:error, {:expected, :")", got: other.kind}, state, log}
@@ -1172,8 +1186,9 @@ defmodule ToxicParser.Pratt do
           end
         end
 
-      {:ok, %{kind: :do}, _} ->
+      {:ok, %{kind: :do}, _} when context != :matched ->
         # Do-block - parse and attach to call
+        # Only in non-matched contexts; in :matched context the do-block belongs to outer call
         with {:ok, {block_meta, sections}, state, log} <-
                Blocks.parse_do_block(state, context, log) do
           combined =
@@ -1192,8 +1207,10 @@ defmodule ToxicParser.Pratt do
                 Builder.Helpers.call(other, [sections], block_meta)
             end
 
-          # Continue with led() to handle trailing operators
-          led(combined, state, log, min_bp, context)
+          # For unary operands (like `& b_do \\ c`), ALL binary ops should attach.
+          # For binary RHS (like `a ** b_do ** c`), preserve min_bp for associativity.
+          led_min_bp = if unary_operand, do: 0, else: min_bp
+          led(combined, state, log, led_min_bp, context)
         end
 
       _ ->
@@ -1276,9 +1293,9 @@ defmodule ToxicParser.Pratt do
       :at_op,
       :capture_op,
       :dual_op,
-      # ... and .. can start no-parens args: a... (where ... is the arg)
-      :ellipsis_op,
-      :range_op
+      # ... can start no-parens args: foo ... (where ... is the arg)
+      # Note: .. (range_op) cannot be standalone, so it's NOT in this list
+      :ellipsis_op
     ]
   end
 
@@ -1552,6 +1569,14 @@ defmodule ToxicParser.Pratt do
   end
 
   defp extract_meta(_), do: []
+
+  # Check if an AST node represents an unmatched expression (has do-block)
+  # Used to determine if matched_op_expr should bind to the expression
+  defp has_do_block?({_name, meta, _args}) when is_list(meta) do
+    Keyword.has_key?(meta, :do) or Keyword.has_key?(meta, :end)
+  end
+
+  defp has_do_block?(_), do: false
 
   # Build metadata with newlines count if present
   defp build_meta_with_newlines(token_meta, 0) do

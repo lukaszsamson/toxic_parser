@@ -204,7 +204,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "unary - binary combinations (op1 a op2 b)" do
       failures =
-        for op1 <- @unary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens, :unmatched], expr_b <- @expressions -- [:no_parens, :unmatched] do
+        for op1 <- @unary_ops, op2 <- @binary_ops, expr_a <- @expressions -- [:no_parens], expr_b <- @expressions -- [:no_parens, :unmatched] do
           s_op1 = op_to_string(op1)
           s_op2 = op_to_string(op2)
 
