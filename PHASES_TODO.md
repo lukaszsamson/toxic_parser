@@ -17,3 +17,8 @@ Most Phase 5 gaps are now closed: identifier classification includes dot/quoted 
      - No-parens ambiguity/nesting bans and peek_n-based disambiguation are still not enforced; calls accept any arg shapes without the outer-arity-1 rules.
 
 
+Phase 6 gaps are mostly closed: lists/tuples enforce commas, allow trailing commas, keyword tails, and EOE skipping; access syntax is handled in Pratt LED; maps/structs (incl. update) are implemented;
+   basic bitstrings (<<>> with comma-separated segments/keyword tails) are parsed; parens/containers integrate with Pratt and stab parsing. Remaining PH6 issues: bitstring segment modifiers
+   (size/type/unit/signedness/endianness, capture_int) are not parsed—segments are plain expressions only—and there’s no dedicated sync/recovery on container terminators beyond normal error returns. If you
+   need full bitstring modifier support and robust recovery, those items are still outstanding.
+

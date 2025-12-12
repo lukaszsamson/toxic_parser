@@ -579,8 +579,10 @@ defmodule ToxicParser.Grammar.Containers do
                 {:ok, clause, state, log}
               end
 
-            {:ok, token, state} ->
-              {:error, {:expected, :stab_op, got: token.kind}, state, log}
+            {:ok, _token, state} ->
+              # No stab after when+guard - this is just `when` as a binary operator
+              # Return :not_stab so we can try parsing as a regular expression
+              {:not_stab, state, log}
 
             {:eof, state} ->
               {:not_stab, state, log}
@@ -1049,8 +1051,22 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Finish parsing paren expressions - build appropriate AST
   defp finish_paren_exprs([single], open_meta, close_meta, state, log, min_bp, ctx) do
-    # Single expression - add parens metadata to 3-tuple AST nodes
-    expr = add_parens_meta(single, open_meta, close_meta)
+    # Special case: Single-argument unary expressions with `not` or `!` operators
+    # need to be wrapped in __block__ to match Elixir's behavior.
+    # This is from elixir_parser.yrl:
+    #   build_paren_stab(_Before, [{Op, _, [_]}]=Exprs, _After) when ?rearrange_uop(Op) ->
+    #     {'__block__', [], Exprs};
+    # where ?rearrange_uop(Op) is (Op == 'not' orelse Op == '!')
+    expr =
+      case single do
+        {op, _meta, [_arg]} when op in [:not, :!] ->
+          {:__block__, [], [single]}
+
+        _ ->
+          # Regular single expression - add parens metadata to 3-tuple AST nodes
+          add_parens_meta(single, open_meta, close_meta)
+      end
+
     # Continue with Pratt.led to handle trailing operators like *, /, etc.
     Pratt.led(expr, state, log, min_bp, ctx)
   end
