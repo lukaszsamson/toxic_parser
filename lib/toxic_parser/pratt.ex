@@ -105,6 +105,8 @@ defmodule ToxicParser.Pratt do
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       {:error, diag, state} -> {:error, diag, state, log}
+      # Handle 4-tuple errors from nested calls (e.g., Maps.parse_map)
+      {:error, diag, state, log} -> {:error, diag, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
       {:keyword_key, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
