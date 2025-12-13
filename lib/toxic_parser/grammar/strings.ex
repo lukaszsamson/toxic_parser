@@ -188,7 +188,9 @@ defmodule ToxicParser.Grammar.Strings do
   # For sigils, do not unescape content (no_unescape: true)
   defp collect_parts(acc, state, target_ends, kind, log) do
     # Sigils should not unescape content
-    should_unescape = kind not in [:sigil]
+    # Heredocs should not unescape here - unescaping happens after indentation trimming
+    # (because line continuation \\\n affects indentation stripping)
+    should_unescape = kind not in [:sigil, :heredoc_binary, :heredoc_charlist]
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: end_kind} = end_tok, _} ->
@@ -319,6 +321,7 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Build AST for heredocs
+  # Note: For heredocs, parts are NOT unescaped yet (to allow proper line continuation handling)
   defp build_heredoc_ast(parts, kind, start_meta, indentation, state, ctx, log, min_bp) do
     delimiter =
       case kind do
@@ -329,7 +332,8 @@ defmodule ToxicParser.Grammar.Strings do
     meta_with_indent = [{:delimiter, delimiter}, {:indentation, indentation} | start_meta]
 
     if has_interpolations?(parts) do
-      args = build_interpolated_parts(parts, kind)
+      # Unescape fragments now (after indentation trimming)
+      args = build_interpolated_parts_unescape(parts, kind)
 
       ast =
         case kind do
@@ -343,7 +347,8 @@ defmodule ToxicParser.Grammar.Strings do
 
       Pratt.led(ast, state, log, min_bp, ctx)
     else
-      content = merge_fragments(parts)
+      # Unescape and merge fragments
+      content = merge_fragments_unescape(parts)
 
       value =
         case kind do
@@ -356,11 +361,21 @@ defmodule ToxicParser.Grammar.Strings do
     end
   end
 
-  # Build list of parts for interpolated string/heredoc
+  # Build list of parts for interpolated string/heredoc (no unescaping needed)
   defp build_interpolated_parts(parts, _kind) do
     for part <- parts do
       case part do
         {:fragment, content} -> content
+        {:interpolation, ast} -> ast
+      end
+    end
+  end
+
+  # Build list of parts for heredoc with interpolation (with unescaping)
+  defp build_interpolated_parts_unescape(parts, _kind) do
+    for part <- parts do
+      case part do
+        {:fragment, content} -> unescape(content)
         {:interpolation, ast} -> ast
       end
     end
@@ -374,6 +389,17 @@ defmodule ToxicParser.Grammar.Strings do
       _ -> false
     end)
     |> Enum.map(fn {:fragment, content} -> content end)
+    |> Enum.join("")
+  end
+
+  # Merge all fragments into a single string with unescaping (for heredocs)
+  defp merge_fragments_unescape(parts) do
+    parts
+    |> Enum.filter(fn
+      {:fragment, _} -> true
+      _ -> false
+    end)
+    |> Enum.map(fn {:fragment, content} -> unescape(content) end)
     |> Enum.join("")
   end
 
@@ -448,6 +474,12 @@ defmodule ToxicParser.Grammar.Strings do
 
     trimmed = rev_chars |> Enum.reverse() |> :erlang.list_to_binary()
     {trimmed, final_at_line_start, final_spaces_left}
+  end
+
+  defp trim_chars([?\\ , ?\n | rest], indent, _at_line_start, _spaces_left, acc) do
+    # Line continuation (backslash-newline): remove both and strip following indentation
+    # The \\\n escape becomes empty after unescaping, so we don't add anything
+    trim_chars(rest, indent, true, indent, acc)
   end
 
   defp trim_chars([?\n | rest], indent, _at_line_start, _spaces_left, acc) do
