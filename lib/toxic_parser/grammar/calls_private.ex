@@ -99,9 +99,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   # Quoted strings like "foo" or 'bar' could be keyword keys ("foo": or 'bar':)
   # We can't tell without parsing, so this just checks if the token could start one
-  defp can_be_quoted_keyword?(%{kind: kind}) do
-    kind in [:bin_string_start, :list_string_start]
-  end
+  defp can_be_quoted_keyword?(%{kind: kind}) when kind in [:bin_string_start, :list_string_start],
+    do: true
 
   defp can_be_quoted_keyword?(_), do: false
 end

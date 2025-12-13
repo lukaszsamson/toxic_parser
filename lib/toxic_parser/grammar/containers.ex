@@ -1037,8 +1037,6 @@ defmodule ToxicParser.Grammar.Containers do
     [annotated | rest]
   end
 
-  defp annotate_last_expr_eoe([], _eoe_tok), do: []
-
   # Build end_of_expression metadata from EOE token
   defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
        when is_integer(newlines) do

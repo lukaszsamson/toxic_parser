@@ -265,13 +265,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
           s_op = op_to_string(op)
 
           code1 =
-            "#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")}..#{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+            "#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_b, "b")}..#{gen_expr(expr_c, "c")}//#{gen_expr(expr_d, "d")}"
 
           code2 =
-            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")}//#{gen_expr(expr_a, "d")}"
+            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_b, "b")} #{s_op} #{gen_expr(expr_c, "c")}//#{gen_expr(expr_d, "d")}"
 
           code3 =
-            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}"
+            "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_b, "b")}//#{gen_expr(expr_c, "c")} #{s_op} #{gen_expr(expr_d, "d")}"
 
           [
             check(code1),
@@ -300,13 +300,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
           [
             check(
-              "#{s_op} #{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"
+              "#{s_op} #{gen_expr(expr_a, "a")}..#{gen_expr(expr_b, "b")}//#{gen_expr(expr_c, "c")}"
             ),
             check(
-              "#{gen_expr(expr_a, "a")}..#{s_op} #{gen_expr(expr_a, "b")}//#{gen_expr(expr_a, "c")}"
+              "#{gen_expr(expr_a, "a")}..#{s_op} #{gen_expr(expr_b, "b")}//#{gen_expr(expr_c, "c")}"
             ),
             check(
-              "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_a, "b")}//#{s_op} #{gen_expr(expr_a, "c")}"
+              "#{gen_expr(expr_a, "a")}..#{gen_expr(expr_b, "b")}//#{s_op} #{gen_expr(expr_c, "c")}"
             )
           ]
         end
@@ -335,15 +335,15 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
           # Inside values
           code1 =
-            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")} #{s_op} #{gen_expr(expr_a, "d")}}"
+            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_b, "b")} => #{gen_expr(expr_c, "c")} #{s_op} #{gen_expr(expr_d, "d")}}"
 
           # Inside keys
           code2 =
-            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} #{s_op} #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
+            "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_b, "b")} #{s_op} #{gen_expr(expr_c, "c")} => #{gen_expr(expr_d, "d")}}"
 
           # Inside struct
           code3 =
-            "%{#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_a, "b")} | #{gen_expr(expr_a, "c")} => #{gen_expr(expr_a, "d")}}"
+            "%{#{gen_expr(expr_a, "a")} #{s_op} #{gen_expr(expr_b, "b")} | #{gen_expr(expr_c, "c")} => #{gen_expr(expr_d, "d")}}"
 
           [
             check(code1),
@@ -398,13 +398,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
           [
             check(
-              "%{#{s_op} #{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"
+              "%{#{s_op} #{gen_expr(expr_a, "a")} | #{gen_expr(expr_b, "b")} => #{gen_expr(expr_c, "c")}}"
             ),
             check(
-              "%{#{gen_expr(expr_a, "a")} | #{s_op} #{gen_expr(expr_a, "b")} => #{gen_expr(expr_a, "c")}}"
+              "%{#{gen_expr(expr_a, "a")} | #{s_op} #{gen_expr(expr_b, "b")} => #{gen_expr(expr_c, "c")}}"
             ),
             check(
-              "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_a, "b")} => #{s_op} #{gen_expr(expr_a, "c")}}"
+              "%{#{gen_expr(expr_a, "a")} | #{gen_expr(expr_b, "b")} => #{s_op} #{gen_expr(expr_c, "c")}}"
             )
           ]
         end
