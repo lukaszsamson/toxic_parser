@@ -4311,7 +4311,6 @@ defmodule ToxicParser.ConformanceLargeTest do
   end
 
   describe "interpolation inside interpolation" do
-    @describetag :skip
     test "terminators in interpolation" do
       code = """
       defp do_at() do

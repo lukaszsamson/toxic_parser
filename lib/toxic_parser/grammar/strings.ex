@@ -236,7 +236,9 @@ defmodule ToxicParser.Grammar.Strings do
 
       _ ->
         # Parse the expression inside interpolation
-        case Expressions.expr_list(state, :matched, log) do
+        # Use :unmatched context so do-blocks are consumed by inner calls
+        # (e.g., "foo#{K.'a' do :ok end}bar" - the do belongs to the 'a' call)
+        case Expressions.expr_list(state, :unmatched, log) do
           {:ok, expr, state, log} ->
             # Consume end_interpolation
             case TokenAdapter.peek(state) do
