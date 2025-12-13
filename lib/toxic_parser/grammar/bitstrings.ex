@@ -12,6 +12,17 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
   def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+    with {:ok, ast, state, log} <- parse_base(state, ctx, log) do
+      Pratt.led(ast, state, log, min_bp, ctx)
+    end
+  end
+
+  @doc """
+  Parse bitstring base without calling Pratt.led.
+  Used when caller controls led binding (e.g., in stab patterns).
+  """
+  @spec parse_base(State.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse_base(%State{} = state, ctx, %EventLog{} = log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
@@ -25,14 +36,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
         newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
         meta = newlines_meta ++ [closing: close_meta] ++ open_meta
         ast = {:<<>>, meta, []}
-        Pratt.led(ast, state, log, min_bp, ctx)
+        {:ok, ast, state, log}
 
       _ ->
         with {:ok, parts, close_meta, state, log} <- parse_segments([], state, ctx, log) do
           newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
           meta = newlines_meta ++ [closing: close_meta] ++ open_meta
           ast = {:<<>>, meta, parts}
-          Pratt.led(ast, state, log, min_bp, ctx)
+          {:ok, ast, state, log}
         end
     end
   end

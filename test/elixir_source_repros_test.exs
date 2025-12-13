@@ -63,6 +63,24 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     end
   end
 
+  describe "bitstring stab patterns" do
+    test "case clause with bitstring pattern should be separate clause" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/base.ex around line 790
+      # Bitstring pattern in case clause should not consume -> into the pattern
+      code = """
+      case x do
+        _ when not y ->
+          false
+
+        <<c1::8>> ->
+          c1
+      end
+      """
+
+      assert_conforms(code)
+    end
+  end
+
   # Helper functions
 
   defp assert_conforms(code) do

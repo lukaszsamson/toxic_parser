@@ -66,7 +66,7 @@ defmodule ToxicParser.Grammar.Containers do
         parse_tuple_base(state, ctx, log)
 
       {:ok, %{kind: :"<<", value: _}, _} ->
-        Bitstrings.parse(state, ctx, log)
+        Bitstrings.parse_base(state, ctx, log)
 
       {:eof, state} ->
         {:no_container, state}
