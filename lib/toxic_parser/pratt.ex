@@ -985,7 +985,15 @@ defmodule ToxicParser.Pratt do
 
                         case TokenAdapter.next(state) do
                           {:ok, %{kind: :")"} = close_tok, state} ->
-                            total_newlines = leading_newlines + trailing_newlines
+                            # Only count trailing newlines for empty args
+                            # (matches behavior in maybe_nested_call_or_do_block)
+                            total_newlines =
+                              if args == [] do
+                                leading_newlines + trailing_newlines
+                              else
+                                leading_newlines
+                              end
+
                             close_meta = build_meta(close_tok.metadata)
 
                             # When followed by parens, convert to call form with proper metadata

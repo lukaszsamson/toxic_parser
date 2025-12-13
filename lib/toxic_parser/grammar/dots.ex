@@ -102,7 +102,15 @@ defmodule ToxicParser.Grammar.Dots do
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"} = close_tok, state} ->
-          total_newlines = leading_newlines + trailing_newlines
+          # Only count trailing newlines for empty args
+          # (newlines metadata represents leading newlines inside parens)
+          total_newlines =
+            if args == [] do
+              leading_newlines + trailing_newlines
+            else
+              leading_newlines
+            end
+
           callee_meta = Builder.Helpers.token_meta(tok.metadata)
           close_meta = Builder.Helpers.token_meta(close_tok.metadata)
 

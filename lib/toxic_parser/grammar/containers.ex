@@ -1370,11 +1370,20 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp parse_list_element_base(acc, state, ctx, log) do
+    # Check if this element starts with [ or { - if so, it's a list/tuple literal
+    # and should NOT be flattened even if it looks like a keyword list
+    is_container_literal =
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: kind}, _} when kind in [:"[", :"{"] -> true
+        _ -> false
+      end
+
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
       {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
       # Check if expr is a keyword list (from quoted keyword parsing like "": 1)
       # If so, we should merge it rather than wrap it as a single element
+      # BUT: if it started as a container literal ([...] or {...}), don't merge
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
@@ -1383,15 +1392,15 @@ defmodule ToxicParser.Grammar.Containers do
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
               {:ok, _close, state} = TokenAdapter.next(state)
-              {:ok, merge_keyword_expr(acc, expr), state, log}
+              {:ok, merge_keyword_expr(acc, expr, is_container_literal), state, log}
 
             _ ->
-              parse_list_elements_base(prepend_expr(acc, expr), state, ctx, log)
+              parse_list_elements_base(prepend_expr(acc, expr, is_container_literal), state, ctx, log)
           end
 
         {:ok, %{kind: :"]"}, _} ->
           {:ok, _close, state} = TokenAdapter.next(state)
-          {:ok, merge_keyword_expr(acc, expr), state, log}
+          {:ok, merge_keyword_expr(acc, expr, is_container_literal), state, log}
 
         {:ok, tok, state} ->
           {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
@@ -1407,21 +1416,29 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Check if expr is a keyword list (list of {atom, value} tuples)
   # If so, merge it into the result; otherwise prepend as single element
-  defp merge_keyword_expr(acc, expr) when is_list(expr) do
-    if is_keyword_list?(expr) do
+  # BUT: if is_container_literal is true, the list came from a [...] or {...}
+  # literal and should NOT be flattened
+  defp merge_keyword_expr(acc, expr, is_container_literal)
+
+  defp merge_keyword_expr(acc, expr, is_container_literal) when is_list(expr) do
+    if not is_container_literal and is_keyword_list?(expr) do
       Enum.reverse(acc) ++ expr
     else
       Enum.reverse([expr | acc])
     end
   end
 
-  defp merge_keyword_expr(acc, expr) do
+  defp merge_keyword_expr(acc, expr, _is_container_literal) do
     Enum.reverse([expr | acc])
   end
 
   # Prepend expr to acc, handling keyword lists specially
-  defp prepend_expr(acc, expr) when is_list(expr) do
-    if is_keyword_list?(expr) do
+  # BUT: if is_container_literal is true, the list came from a [...] or {...}
+  # literal and should NOT be flattened
+  defp prepend_expr(acc, expr, is_container_literal)
+
+  defp prepend_expr(acc, expr, is_container_literal) when is_list(expr) do
+    if not is_container_literal and is_keyword_list?(expr) do
       # Reverse keyword list and prepend each element to acc
       Enum.reduce(Enum.reverse(expr), acc, fn elem, acc -> [elem | acc] end)
     else
@@ -1429,7 +1446,7 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp prepend_expr(acc, expr), do: [expr | acc]
+  defp prepend_expr(acc, expr, _is_container_literal), do: [expr | acc]
 
   # Check if a list is a keyword-like list (list of {key, value} tuples)
   # The key can be an atom (standard keyword) or an AST (interpolated keyword)

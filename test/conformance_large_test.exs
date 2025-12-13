@@ -4804,7 +4804,6 @@ defmodule ToxicParser.ConformanceLargeTest do
     assert toxic_parse(code) == s2q(code)
   end
 
-  @tag :skip
   test "elixir sources" do
     # files = @regressions
     files =
