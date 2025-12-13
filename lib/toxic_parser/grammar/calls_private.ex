@@ -38,6 +38,14 @@ defmodule ToxicParser.Grammar.CallsPrivate do
             end
 
           true ->
+            # Check if this argument starts with [ or { - if so, it's a container literal
+            # and should NOT be merged with following keywords even if it's a keyword list
+            is_container_literal =
+              case tok.kind do
+                kind when kind in [:"[", :"{"] -> true
+                _ -> false
+              end
+
             # Inside parens, use :unmatched so do_identifiers (case, if, etc.)
             # can consume their do-blocks. This is correct because when inside parens,
             # the do-block clearly belongs to the inner expression, not an outer call.
@@ -51,10 +59,12 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                   {:ok, _comma, state} = TokenAdapter.next(state)
                   # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
                   # If so, and next is also a keyword, merge them
+                  # BUT: if it started as a container literal ([...] or {...}), don't merge
                   state = skip_eoe(state)
 
                   case TokenAdapter.peek(state) do
-                    {:ok, next_tok, _} when is_keyword_list_result(arg) ->
+                    {:ok, next_tok, _}
+                    when is_keyword_list_result(arg) and not is_container_literal ->
                       if Keywords.starts_kw?(next_tok) or
                            can_be_quoted_keyword?(next_tok) do
                         # Continue collecting keywords into this list

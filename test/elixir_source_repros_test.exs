@@ -46,6 +46,23 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     end
   end
 
+  describe "heredoc line continuation" do
+    test "line continuation in indented heredoc should strip following indentation" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/access.ex around line 212
+      # Heredoc with indentation and line continuation (backslash at end of line)
+      code = ~S'''
+        """
+        #{x} does not work
+
+        first. \
+        second
+        """
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
   # Helper functions
 
   defp assert_conforms(code) do
