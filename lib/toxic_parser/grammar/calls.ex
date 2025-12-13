@@ -10,6 +10,10 @@ defmodule ToxicParser.Grammar.Calls do
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Expressions, Keywords}
 
+  # Check if an expression result is a keyword list (from quoted keyword parsing)
+  defguardp is_keyword_list_result(arg)
+            when is_list(arg) and length(arg) > 0
+
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
@@ -167,7 +171,34 @@ defmodule ToxicParser.Grammar.Calls do
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :","}, _} ->
                 {:ok, _comma, state} = TokenAdapter.next(state)
-                {:ok, expr, state, log}
+                # After comma, check if next is keyword or close bracket
+                case TokenAdapter.peek(state) do
+                  {:ok, %{kind: :"]"}, _} ->
+                    # Trailing comma - return expr
+                    {:ok, expr, state, log}
+
+                  {:ok, kw_tok, _} ->
+                    # Check if expr was a keyword list from quoted key parsing
+                    # If so, and next is also a keyword (regular or quoted), merge them
+                    cond do
+                      is_keyword_list_result(expr) and Keywords.starts_kw?(kw_tok) ->
+                        with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                          {:ok, expr ++ more_kw, state, log}
+                        end
+
+                      is_keyword_list_result(expr) and
+                          kw_tok.kind in [:list_string_start, :bin_string_start] ->
+                        # Another quoted keyword - parse it and continue
+                        parse_quoted_kw_continuation(expr, state, ctx, log)
+
+                      true ->
+                        # Not a keyword continuation - just return expr with trailing comma consumed
+                        {:ok, expr, state, log}
+                    end
+
+                  _ ->
+                    {:ok, expr, state, log}
+                end
 
               _ ->
                 {:ok, expr, state, log}
@@ -368,9 +399,26 @@ defmodule ToxicParser.Grammar.Calls do
             # The do-block belongs to the outer call, not to individual args.
             with {:ok, arg, state, log} <- Expressions.expr(state, :matched, log) do
               case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, state} ->
+                {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
-                  parse_no_parens_args([arg | acc], state, ctx, log)
+                  # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
+                  # If so, and next is also a keyword, merge them
+                  case TokenAdapter.peek(state) do
+                    {:ok, next_tok, _} when is_keyword_list_result(arg) ->
+                      if Keywords.starts_kw?(next_tok) do
+                        # Continue collecting keywords into this list
+                        with {:ok, more_kw, state, log} <-
+                               Keywords.parse_kw_call(state, ctx, log) do
+                          merged_kw = arg ++ more_kw
+                          {:ok, Enum.reverse([merged_kw | acc]), state, log}
+                        end
+                      else
+                        parse_no_parens_args([arg | acc], state, ctx, log)
+                      end
+
+                    _ ->
+                      parse_no_parens_args([arg | acc], state, ctx, log)
+                  end
 
                 _ ->
                   {:ok, Enum.reverse([arg | acc]), state, log}
@@ -580,6 +628,53 @@ defmodule ToxicParser.Grammar.Calls do
       _ ->
         # Return without calling led
         {:ok, ast, state, log}
+    end
+  end
+
+  # Parse continuation of keyword list when we encounter another quoted keyword
+  # Used when we have ['foo': 1, 'bar': 2] and need to parse 'bar': 2
+  defp parse_quoted_kw_continuation(acc_kw, state, ctx, log) do
+    # Parse the quoted keyword - should return keyword_key
+    case Expressions.expr(state, ctx, log) do
+      {:ok, expr, state, log} when is_keyword_list_result(expr) ->
+        # Got another keyword pair, check for more
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"]"}, _} ->
+                # Trailing comma
+                {:ok, acc_kw ++ expr, state, log}
+
+              {:ok, kw_tok, _} ->
+                cond do
+                  Keywords.starts_kw?(kw_tok) ->
+                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                      {:ok, acc_kw ++ expr ++ more_kw, state, log}
+                    end
+
+                  kw_tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_quoted_kw_continuation(acc_kw ++ expr, state, ctx, log)
+
+                  true ->
+                    {:ok, acc_kw ++ expr, state, log}
+                end
+
+              _ ->
+                {:ok, acc_kw ++ expr, state, log}
+            end
+
+          _ ->
+            {:ok, acc_kw ++ expr, state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        # Not a keyword - error
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 end

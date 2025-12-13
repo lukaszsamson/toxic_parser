@@ -2,8 +2,6 @@ defmodule ToxicParser.ConformanceLargeTest do
   use ExUnit.Case, async: true
 
   describe "keyword list" do
-    @describetag :skip
-
     test "not quoted single list" do
       code = "[foo: 1]"
 
@@ -100,29 +98,29 @@ defmodule ToxicParser.ConformanceLargeTest do
       assert toxic_parse(code) == s2q(code)
     end
 
-    # test "bitstring arg" do
-    #   code = "<<1, foo: 1>>"
+    test "bitstring arg" do
+      code = "<<1, foo: 1>>"
 
-    #   assert toxic_parse(code) == s2q(code)
-    # end
+      assert toxic_parse(code) == s2q(code)
+    end
 
-    # test "bitstring arg quoted" do
-    #   code = "<<1, 'foo': 1>>"
+    test "bitstring arg quoted" do
+      code = "<<1, 'foo': 1>>"
 
-    #   assert toxic_parse(code) == s2q(code)
-    # end
+      assert toxic_parse(code) == s2q(code)
+    end
 
-    # test "bitstring arg negative case" do
-    #   code = "<<1, {:foo, 1}>>"
+    test "bitstring arg negative case" do
+      code = "<<1, {:foo, 1}>>"
 
-    #   assert toxic_parse(code) == s2q(code)
-    # end
+      assert toxic_parse(code) == s2q(code)
+    end
 
-    # test "bitstring arg quoted negative case" do
-    #   code = "<<1, {:'foo', 1}>>"
+    test "bitstring arg quoted negative case" do
+      code = "<<1, {:'foo', 1}>>"
 
-    #   assert toxic_parse(code) == s2q(code)
-    # end
+      assert toxic_parse(code) == s2q(code)
+    end
 
     test "access arg" do
       code = "a[foo: 1]"

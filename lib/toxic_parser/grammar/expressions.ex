@@ -101,12 +101,18 @@ defmodule ToxicParser.Grammar.Expressions do
 
               # String was a quoted keyword key like "a": - parse value and return as keyword pair
               {:keyword_key, key_atom, state, log} ->
+                # Skip EOE (newlines) after the colon before parsing value
+                state = skip_eoe(state)
+
                 with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
                   {:ok, [{key_atom, value_ast}], state, log}
                 end
 
               # Interpolated keyword key like "fo#{1}o": - build binary_to_atom call
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+                # Skip EOE (newlines) after the colon before parsing value
+                state = skip_eoe(state)
+
                 with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
                   {:ok, [{key_ast, value_ast}], state, log}
@@ -287,10 +293,14 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp annotate_eoe(ast, _eoe_meta), do: ast
 
-  @doc false
-  # Build an interpolated keyword key AST
-  # Elixir produces: {{:., meta, [:erlang, :binary_to_atom]}, call_meta, [binary, :utf8]}
-  # where binary is {:<<>>, meta, [parts...]}
+  @doc """
+  Builds an AST node for an interpolated keyword key like "foo\#{x}":
+  Returns {:., meta, [:erlang, :binary_to_atom]} call.
+
+  Elixir produces: {{:., meta, [:erlang, :binary_to_atom]}, call_meta, [binary, :utf8]}
+  where binary is {:<<>>, meta, [parts...]}
+  """
+  @spec build_interpolated_keyword_key(list(), atom(), keyword(), String.t()) :: Macro.t()
   def build_interpolated_keyword_key(parts, kind, start_meta, delimiter) do
     # Convert parts to binary parts for {:<<>>, ...}
     binary_parts = parts_to_binary(parts, kind, start_meta)

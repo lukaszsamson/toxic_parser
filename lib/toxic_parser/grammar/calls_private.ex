@@ -5,6 +5,10 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{Expressions, Keywords}
 
+  # Check if an expression result is a keyword list (from quoted keyword parsing)
+  defguardp is_keyword_list_result(arg)
+            when is_list(arg) and length(arg) > 0
+
   @spec expect(State.t(), atom()) :: {:ok, atom(), State.t()} | {:error, term(), State.t()}
   def expect(state, kind) do
     case TokenAdapter.next(state) do
@@ -45,7 +49,26 @@ defmodule ToxicParser.Grammar.CallsPrivate do
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
-                  parse_paren_args([arg | acc], state, :unmatched, log)
+                  # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
+                  # If so, and next is also a keyword, merge them
+                  state = skip_eoe(state)
+
+                  case TokenAdapter.peek(state) do
+                    {:ok, next_tok, _} when is_keyword_list_result(arg) ->
+                      if Keywords.starts_kw?(next_tok) do
+                        # Continue collecting keywords into this list
+                        with {:ok, more_kw, state, log} <-
+                               Keywords.parse_kw_call(state, :unmatched, log) do
+                          merged_kw = arg ++ more_kw
+                          {:ok, [merged_kw | acc], state, log}
+                        end
+                      else
+                        parse_paren_args([arg | acc], state, :unmatched, log)
+                      end
+
+                    _ ->
+                      parse_paren_args([arg | acc], state, :unmatched, log)
+                  end
 
                 _ ->
                   {:ok, [arg | acc], state, log}

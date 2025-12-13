@@ -504,6 +504,8 @@ defmodule ToxicParser.Grammar.Maps do
       # keyword_key means "string": - convert to keyword pair
       {:keyword_key, key_atom, state, log} ->
         alias ToxicParser.Grammar.Expressions
+        # Skip EOE (newlines) after the colon before parsing value
+        state = skip_eoe(state)
 
         with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
           {:ok, {key_atom, value_ast}, state, log}
@@ -511,6 +513,8 @@ defmodule ToxicParser.Grammar.Maps do
 
       {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
         alias ToxicParser.Grammar.Expressions
+        # Skip EOE (newlines) after the colon before parsing value
+        state = skip_eoe(state)
 
         with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
