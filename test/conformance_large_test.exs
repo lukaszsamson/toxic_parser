@@ -1178,7 +1178,6 @@ defmodule ToxicParser.ConformanceLargeTest do
   end
 
   describe "valid code" do
-    @describetag :skip
     test "semicolons" do
       code = "res = Foo.Bar.run(1, 2, 3); IO.inspect(res)"
 
@@ -2912,6 +2911,7 @@ defmodule ToxicParser.ConformanceLargeTest do
       assert toxic_parse(code) == s2q(code)
     end
 
+    @tag :skip
     test "literal encoder" do
       codes = [
         ~S'''
@@ -3141,6 +3141,9 @@ defmodule ToxicParser.ConformanceLargeTest do
         fn calls ->
           unquote_splicing(calls)
         end
+        ''',
+        ~S'''
+        ((unquote_splicing(1, 2, 3)) -> :ok)
         '''
       ]
 
@@ -3149,6 +3152,7 @@ defmodule ToxicParser.ConformanceLargeTest do
       end
     end
 
+    @tag :skip
     test "line and column opt" do
       code = "foo"
 
@@ -3176,6 +3180,18 @@ defmodule ToxicParser.ConformanceLargeTest do
         end
       end
       """
+
+      assert toxic_parse(code) == s2q(code)
+    end
+
+    test "case with list pattern stab clause" do
+      code = ~S'''
+      case rhs do
+        {:__block__, _, [ast]} -> ast
+        [ast] -> ast
+        block -> block
+      end
+      '''
 
       assert toxic_parse(code) == s2q(code)
     end
@@ -4254,7 +4270,6 @@ defmodule ToxicParser.ConformanceLargeTest do
     assert toxic_parse(code) == s2q(code)
   end
 
-  @tag :skip
   test "nested call and keyword list" do
     code = """
     foo("asd": bar("sss": 1), "aa": ['ss': %{"ds": [s: 1, "a\#{[as: 1]}s": 1]}])

@@ -224,31 +224,43 @@ defmodule ToxicParser.Grammar.Strings do
     {:ok, begin_tok, state} = TokenAdapter.next(state)
     open_meta = token_to_meta(begin_tok.metadata)
 
-    # Parse the expression inside interpolation
-    case Expressions.expr(state, :matched, log) do
-      {:ok, expr, state, log} ->
-        # Consume end_interpolation
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :end_interpolation} = end_tok, _} ->
-            {:ok, _end, state} = TokenAdapter.next(state)
-            close_meta = token_to_meta(end_tok.metadata)
+    # Check for empty interpolation #{} first
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :end_interpolation} = end_tok, _} ->
+        # Empty interpolation - use empty block
+        {:ok, _end, state} = TokenAdapter.next(state)
+        close_meta = token_to_meta(end_tok.metadata)
+        empty_block = {:__block__, [], []}
+        interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
+        {:ok, interp_ast, state, log}
 
-            # Build interpolation AST based on kind
-            interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
-            {:ok, interp_ast, state, log}
+      _ ->
+        # Parse the expression inside interpolation
+        case Expressions.expr_list(state, :matched, log) do
+          {:ok, expr, state, log} ->
+            # Consume end_interpolation
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :end_interpolation} = end_tok, _} ->
+                {:ok, _end, state} = TokenAdapter.next(state)
+                close_meta = token_to_meta(end_tok.metadata)
 
-          {:ok, tok, _} ->
-            {:error, {:expected_end_interpolation, tok.kind}, state, log}
+                # Build interpolation AST based on kind
+                interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
+                {:ok, interp_ast, state, log}
 
-          {:eof, state} ->
-            {:error, :unexpected_eof, state, log}
+              {:ok, tok, _} ->
+                {:error, {:expected_end_interpolation, tok.kind}, state, log}
 
-          {:error, diag, state} ->
-            {:error, diag, state, log}
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
         end
-
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
     end
   end
 

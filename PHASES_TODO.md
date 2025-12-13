@@ -24,3 +24,16 @@ Phase 6 gaps are mostly closed: lists/tuples enforce commas, allow trailing comm
 
 Yes. for comprehensions are still not parsed anywhere. Environment tracking remains minimal: only enter/exit scope events on fn/do-blocks, no bind events for patterns, and no alias/import/use/require
    handling (Env is a stub with scopes only).
+
+Summary: Most REVIEW_G3 gaps have been addressed—bitstrings, keyword lists, map updates, and stab_parens_many are now implemented; the nonterminal mapping still points to NONTERMINALS_GPT but that now
+   matches HL_PLAN. Running mix test currently yields 1004 tests, 18 failures (down from 125), with remaining issues around string/charlist interpolation termination, literal_encoder returning raw literals,
+   struct % with unquote needing {}, semicolon blocks missing __block__, alias/newlines metadata, and a few do-block parsing case-clause errors in blocks/containers. So only the “tests failing” concern
+   remains relevant, albeit reduced; the other REVIEW_G3 items are no longer applicable.
+
+Most REVIEW_GPT gaps (bitstrings, maps/struct updates, keyword parsing, no-parens call lattice, and dot families) have since been implemented, so those items are no longer relevant. Still relevant: the
+   event log/recovery/comment-preservation work is skeletal (no systematic start/end/token/missing emission or sync/fuel), and the strings/sigil/heredoc pipeline is incomplete (interpolation termination,
+   literal_encoder parity, struct/unquote and block/EOE sync issues in conformance).
+
+Most OPUS issues are now addressed (no‑parens call families, keyword parsing, map/struct updates, bitstrings, dot families are implemented). Still relevant: string/sigil/heredoc handling remains
+   incomplete (interpolation termination, literal encoder parity), recovery/event-log/comment wiring is still minimal, and operator-specific behaviors (not‑in rewrite, ..// step/capture_int warnings) plus
+   warn_pipe/keyword-last style warnings are still missing. Context-specific distinctions are better but still not fully enforced in edge cases tied to those remaining gaps.

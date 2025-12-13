@@ -78,6 +78,21 @@ defmodule ToxicParser.Pratt do
   end
 
   @doc """
+  Parses an expression base with dots and paren calls, stopping at `{`.
+  Used for struct names like `%Foo.Bar{}` and `%unquote(struct){}`.
+  """
+  @spec parse_base_with_dots_and_calls(State.t(), context(), EventLog.t()) :: result()
+  def parse_base_with_dots_and_calls(%State{} = state, context, %EventLog{} = log) do
+    with {:ok, token, state} <- TokenAdapter.next(state),
+         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
+      led_dots_and_calls(ast, state, log, context)
+    else
+      {:eof, state} -> {:error, :unexpected_eof, state, log}
+      {:error, diag, state} -> {:error, diag, state, log}
+    end
+  end
+
+  @doc """
   Parses an expression with a minimum binding power.
   Used for map updates where we need to stop before the pipe operator.
   Also used for guard expressions in stab clauses where we need to stop before ->.
@@ -802,7 +817,9 @@ defmodule ToxicParser.Pratt do
         case {next_token.kind, Precedence.binary(next_token.kind)} do
           # Parens call: identifier(args) or expr()(args) (nested call)
           # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
-          {:"(", _} ->
+          # NOTE: Only treat as call if there's NO EOE between left and (
+          # `foo()` is a call, but `foo\n()` is not (the newline separates them)
+          {:"(", _} when eoe_tokens == [] ->
             {:ok, _open_tok, state} = TokenAdapter.next(state)
 
             # Skip leading EOE and count newlines
@@ -1039,7 +1056,10 @@ defmodule ToxicParser.Pratt do
                 end
             end
 
-          {:"[", _} ->
+          # Bracket access: expr[key]
+          # NOTE: Only treat as bracket access if there's NO EOE between left and [
+          # `foo[x]` is bracket access, but `foo\n[x]` is not (the [x] is a separate list)
+          {:"[", _} when eoe_tokens == [] ->
             {:ok, open_tok, state} = TokenAdapter.next(state)
 
             # Skip leading EOE and count newlines (only leading newlines matter for metadata)
@@ -1365,8 +1385,9 @@ defmodule ToxicParser.Pratt do
       {:ok, _, _} ->
         with {:ok, args, state, log} <- parse_dot_container_args_loop([], state, ctx, log) do
           # Skip trailing EOE before close
-          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
-          total_newlines = newlines + trailing_newlines
+          {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+          # For non-empty containers, only count leading newlines (matching calls.ex pattern)
+          total_newlines = newlines
 
           case TokenAdapter.next(state) do
             {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1815,6 +1836,93 @@ defmodule ToxicParser.Pratt do
 
       _ ->
         # Not a dot operator - return what we have
+        {:ok, left, state, log}
+    end
+  end
+
+  # Specialized led that handles dot operators AND paren calls, but stops at `{`.
+  # Used by parse_base_with_dots_and_calls for struct names like %Foo.Bar{} and %unquote(struct){}.
+  defp led_dots_and_calls(left, state, log, context) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :dot_op} = _dot_tok, _} ->
+        {:ok, dot_tok, state} = TokenAdapter.next(state)
+        dot_meta = build_meta(dot_tok.metadata)
+
+        # Parse the RHS of dot - must be an alias or identifier
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+          combined =
+            case rhs do
+              # Alias on RHS - build combined __aliases__ (dot_alias rule)
+              {:__aliases__, rhs_meta, [rhs_alias]} ->
+                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
+              # Simple identifier: {member_atom, member_meta}
+              {member, member_meta} when is_atom(member) ->
+                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+
+              # Other AST node
+              other ->
+                {:., dot_meta, [left, other]}
+            end
+
+          # Continue to handle chained dots and calls
+          led_dots_and_calls(combined, state, log, context)
+        end
+
+      # Handle paren calls: foo(args) or unquote(struct)
+      {:ok, %{kind: :"("}, _} ->
+        {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+        # Skip leading EOE and count newlines
+        {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+
+        with {:ok, args, state, log} <-
+               ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+          # Skip trailing EOE before close paren
+          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+
+          case TokenAdapter.next(state) do
+            {:ok, %{kind: :")"} = close_tok, state} ->
+              # For non-empty calls, only count leading newlines
+              # For empty calls, count all newlines
+              total_newlines =
+                if args == [] do
+                  leading_newlines + trailing_newlines
+                else
+                  leading_newlines
+                end
+
+              close_meta = build_meta(close_tok.metadata)
+              callee_meta = extract_meta(left)
+
+              newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+              call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+              combined =
+                case left do
+                  {name, _meta, nil} when is_atom(name) ->
+                    {name, call_meta, Enum.reverse(args)}
+
+                  _ ->
+                    {left, call_meta, Enum.reverse(args)}
+                end
+
+              # Continue to handle more dots and calls
+              led_dots_and_calls(combined, state, log, context)
+
+            {:ok, other, state} ->
+              {:error, {:expected, :")", got: other.kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+        end
+
+      _ ->
+        # Not a dot or paren - return what we have
         {:ok, left, state, log}
     end
   end

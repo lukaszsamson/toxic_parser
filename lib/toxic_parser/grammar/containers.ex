@@ -387,7 +387,11 @@ defmodule ToxicParser.Grammar.Containers do
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
       parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
-      clause = {:->, parens_meta ++ newlines_meta ++ stab_base_meta, [args, body]}
+      stab_meta = newlines_meta ++ stab_base_meta
+      # Apply parens meta and unwrap splice for stab patterns
+      unwrapped = unwrap_splice(args)
+      {final_args, final_stab_meta} = apply_parens_meta(unwrapped, parens_meta, stab_meta)
+      clause = {:->, final_stab_meta, [final_args, body]}
       parse_remaining_stab_clauses([clause], state, ctx, log)
     end
   end
@@ -417,8 +421,12 @@ defmodule ToxicParser.Grammar.Containers do
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
             parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
-            guard_ast = {:when, when_meta, args ++ [guard]}
-            clause = {:->, parens_meta ++ newlines_meta ++ stab_base_meta, [[guard_ast], body]}
+            stab_meta = newlines_meta ++ stab_base_meta
+            # Apply parens meta and unwrap splice for stab patterns
+            unwrapped = unwrap_splice(args)
+            {final_args, final_stab_meta} = apply_parens_meta(unwrapped, parens_meta, stab_meta)
+            guard_ast = {:when, when_meta, final_args ++ [guard]}
+            clause = {:->, final_stab_meta, [[guard_ast], body]}
             parse_remaining_stab_clauses([clause], state, ctx, log)
           end
 
@@ -559,14 +567,17 @@ defmodule ToxicParser.Grammar.Containers do
             case extract_trailing_when_guard(patterns) do
               {:guard, new_patterns, guard, when_meta} ->
                 # Apply parens meta before wrapping with guard
-                {pats, stab_m} = apply_parens_meta(new_patterns, parens_meta, stab_meta)
+                # unwrap_splice for stab clause patterns
+                unwrapped = unwrap_splice(new_patterns)
+                {pats, stab_m} = apply_parens_meta(unwrapped, parens_meta, stab_meta)
                 # Wrap with guard
                 guard_patterns = [{:when, when_meta, pats ++ [guard]}]
                 {guard_patterns, stab_m}
 
               :no_guard ->
-                # No guard extraction needed
-                apply_parens_meta(patterns, parens_meta, stab_meta)
+                # unwrap_splice for stab clause patterns
+                unwrapped = unwrap_splice(patterns)
+                apply_parens_meta(unwrapped, parens_meta, stab_meta)
             end
 
           clause = {:->, final_stab_meta, [final_patterns, body]}
@@ -591,9 +602,11 @@ defmodule ToxicParser.Grammar.Containers do
                 if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
 
               with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
+                # unwrap_splice for stab clause patterns
+                unwrapped = unwrap_splice(patterns)
                 # Apply parens meta before wrapping with guard
                 {final_patterns, final_stab_meta} =
-                  apply_parens_meta(patterns, parens_meta, stab_meta)
+                  apply_parens_meta(unwrapped, parens_meta, stab_meta)
 
                 # Wrap patterns with guard in a when clause
                 patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
@@ -883,8 +896,14 @@ defmodule ToxicParser.Grammar.Containers do
   @doc """
   Parse stab clause body with custom terminator.
   Exported for use by fn parsing.
+
+  The body can contain multiple expressions separated by EOE (newlines/semicolons).
+  Expressions are collected until we see:
+  - The terminator (e.g., :end, :))
+  - A block identifier (e.g., :else, :rescue)
+  - The start of a new stab clause (detected by trying to parse and seeing ->)
   """
-  def parse_stab_body(state, ctx, log, terminator) do
+  def parse_stab_body(state, _ctx, log, terminator) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: ^terminator}, _} ->
         # Empty body at terminator - return nil
@@ -899,10 +918,10 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, nil, state, log}
 
       {:ok, _, _} ->
-        with {:ok, body, state, log} <- Expressions.expr(state, ctx, log) do
-          # Annotate with end_of_expression if followed by EOE
-          body = maybe_annotate_stab_body_eoe(body, state)
-          {:ok, body, state, log}
+        # Parse first expression - always use :unmatched in stab body to allow do-blocks
+        with {:ok, first_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+          # Check if there are more expressions in the body
+          collect_stab_body_exprs([first_expr], state, :unmatched, log, terminator)
         end
 
       {:eof, state} ->
@@ -913,17 +932,112 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  # Annotate stab body with end_of_expression metadata if followed by EOE
-  defp maybe_annotate_stab_body_eoe(body, state) do
+  # Collect additional expressions for the stab body
+  # Expressions after the first are separated by EOE (semicolons/newlines)
+  defp collect_stab_body_exprs(acc, state, ctx, log, terminator) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe} = eoe_tok, _} ->
-        eoe_meta = build_eoe_meta(eoe_tok)
-        annotate_body_eoe(body, eoe_meta)
+        # Annotate the last expression with EOE metadata
+        acc = annotate_last_expr_eoe(acc, eoe_tok)
+        # Consume EOE
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        state = skip_eoe(state)
 
-      _ ->
-        body
+        # Check what's next after EOE
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: ^terminator}, _} ->
+            # Terminator - done collecting
+            build_stab_body(acc, state, log)
+
+          # Block identifiers stop collection (for do blocks)
+          {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
+            build_stab_body(acc, state, log)
+
+          {:ok, _, _} ->
+            # More content after EOE - need to check if it's a new stab clause
+            # or more body expressions
+            check_and_collect_stab_body(acc, state, ctx, log, terminator)
+
+          {:eof, state} ->
+            build_stab_body(acc, state, log)
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
+      {:ok, %{kind: ^terminator}, _} ->
+        # Terminator without EOE - done
+        build_stab_body(acc, state, log)
+
+      {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
+        build_stab_body(acc, state, log)
+
+      {:eof, state} ->
+        build_stab_body(acc, state, log)
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+
+      {:ok, _, _} ->
+        # Unexpected token - stop collecting (caller will handle)
+        build_stab_body(acc, state, log)
     end
   end
+
+  # Check if the next content is a new stab clause or more body expressions
+  defp check_and_collect_stab_body(acc, state, ctx, log, terminator) do
+    # Try to see if this looks like the start of a new stab clause
+    # We use checkpoint to try parsing, then rewind if it's a stab
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+    case try_parse_stab_clause(checkpoint_state, ctx, log, terminator) do
+      {:ok, _clause, _state2, _log2} ->
+        # This is a new stab clause - stop collecting body, rewind
+        build_stab_body(acc, TokenAdapter.rewind(checkpoint_state, ref), log)
+
+      {:not_stab, _state2, _log2} ->
+        # Not a stab - this expression is part of the current body
+        # Rewind and parse as expression
+        state = TokenAdapter.rewind(checkpoint_state, ref)
+
+        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+          collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
+        end
+
+      {:error, _reason, _state2, _log2} ->
+        # Error parsing as stab - try as expression
+        state = TokenAdapter.rewind(checkpoint_state, ref)
+
+        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+          collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
+        end
+    end
+  end
+
+  # Build the final stab body from collected expressions
+  # unquote_splicing always gets wrapped in __block__ (parser assumes block is being spliced)
+  # See elixir_parser.yrl: build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter)
+  defp build_stab_body([{:unquote_splicing, _, [_]} = single], state, log) do
+    {:ok, {:__block__, [], [single]}, state, log}
+  end
+
+  defp build_stab_body([single], state, log), do: {:ok, single, state, log}
+
+  defp build_stab_body(exprs, state, log) do
+    # Multiple expressions - wrap in __block__
+    # Expressions are accumulated in reverse order, so reverse them
+    block = {:__block__, [], Enum.reverse(exprs)}
+    {:ok, block, state, log}
+  end
+
+  # Annotate the last (most recent) expression with EOE metadata
+  defp annotate_last_expr_eoe([last | rest], eoe_tok) do
+    eoe_meta = build_eoe_meta(eoe_tok)
+    annotated = annotate_body_eoe(last, eoe_meta)
+    [annotated | rest]
+  end
+
+  defp annotate_last_expr_eoe([], _eoe_tok), do: []
 
   # Build end_of_expression metadata from EOE token
   defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
@@ -1048,11 +1162,16 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse expressions in parens, handling semicolons as separators
   # Grammar: paren_expr -> expr (';' expr)* ')'
   # Multiple expressions become a __block__
+  # NOTE: Inside parens, we always use :unmatched context because parens create
+  # a new expression boundary - do-blocks inside belong to the inner call.
   defp parse_expr_in_paren_impl(open_meta, acc, state, ctx, log, min_bp) do
-    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+    # Use :unmatched inside parens to allow do-blocks on inner calls
+    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
       # Check for EOE (semicolon) or close paren
       case TokenAdapter.peek(state) do
-        {:ok, %{kind: :eoe}, _} ->
+        {:ok, %{kind: :eoe} = eoe_tok, _} ->
+          # Annotate expression with EOE metadata before consuming
+          annotated_expr = annotate_paren_expr_eoe(expr, eoe_tok)
           # Consume EOE
           {:ok, _eoe, state} = TokenAdapter.next(state)
           state = skip_eoe(state)
@@ -1061,11 +1180,20 @@ defmodule ToxicParser.Grammar.Containers do
             {:ok, %{kind: :")"} = close_tok, _} ->
               {:ok, _close, state} = TokenAdapter.next(state)
               close_meta = token_meta(close_tok.metadata)
-              finish_paren_exprs([expr | acc], open_meta, close_meta, state, log, min_bp, ctx)
+
+              finish_paren_exprs(
+                [annotated_expr | acc],
+                open_meta,
+                close_meta,
+                state,
+                log,
+                min_bp,
+                ctx
+              )
 
             {:ok, _, _} ->
               # More expressions after semicolon
-              parse_expr_in_paren_impl(open_meta, [expr | acc], state, ctx, log, min_bp)
+              parse_expr_in_paren_impl(open_meta, [annotated_expr | acc], state, ctx, log, min_bp)
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -1091,18 +1219,33 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
+  # Annotate expression with end_of_expression metadata from EOE token
+  defp annotate_paren_expr_eoe({name, meta, args}, eoe_tok) when is_list(meta) do
+    eoe_meta = build_eoe_meta(eoe_tok)
+    {name, [{:end_of_expression, eoe_meta} | meta], args}
+  end
+
+  defp annotate_paren_expr_eoe(expr, _eoe_tok), do: expr
+
   # Finish parsing paren expressions - build appropriate AST
   defp finish_paren_exprs([single], open_meta, close_meta, state, log, min_bp, ctx) do
-    # Special case: Single-argument unary expressions with `not` or `!` operators
-    # need to be wrapped in __block__ to match Elixir's behavior.
-    # This is from elixir_parser.yrl:
+    # Special cases for single expressions that need to be wrapped in __block__:
+    # 1. Single-argument unary expressions with `not` or `!` operators (rearrange_uop)
+    # 2. unquote_splicing - always wrapped because the parser assumes a block is being spliced
+    #
+    # From elixir_parser.yrl:
     #   build_paren_stab(_Before, [{Op, _, [_]}]=Exprs, _After) when ?rearrange_uop(Op) ->
     #     {'__block__', [], Exprs};
-    # where ?rearrange_uop(Op) is (Op == 'not' orelse Op == '!')
+    #   build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter) ->
+    #     {'__block__', block_meta(BeforeAfter), Exprs};
     expr =
       case single do
         {op, _meta, [_arg]} when op in [:not, :!] ->
           {:__block__, [], [single]}
+
+        {:unquote_splicing, _meta, [_arg]} ->
+          # unquote_splicing always gets wrapped in __block__ with closing metadata
+          {:__block__, [closing: close_meta] ++ open_meta, [single]}
 
         _ ->
           # Regular single expression - add parens metadata to 3-tuple AST nodes
@@ -1360,13 +1503,13 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # Parse tuple elements, returning close token metadata
-  defp parse_tuple_elements(acc, state, ctx, log) do
+  defp parse_tuple_elements(acc, state, _ctx, log) do
     # Check if next token starts a keyword list
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
-          # Parse keyword data and finish
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+          # Parse keyword data and finish - use :unmatched to allow do-blocks in values
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
             # Skip EOE before close
             {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -1386,7 +1529,7 @@ defmodule ToxicParser.Grammar.Containers do
             end
           end
         else
-          parse_tuple_element(acc, state, ctx, log)
+          parse_tuple_element(acc, state, :unmatched, log)
         end
 
       {:eof, state} ->
@@ -1397,8 +1540,9 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_tuple_element(acc, state, ctx, log) do
-    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+  defp parse_tuple_element(acc, state, _ctx, log) do
+    # Inside containers (tuples, lists, etc.), use :unmatched to allow do-blocks
+    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
       # Skip EOE after expression
       {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -1418,8 +1562,9 @@ defmodule ToxicParser.Grammar.Containers do
               # Check if expr was a keyword list and next is also a keyword
               cond do
                 is_keyword_list_result(expr) and Keywords.starts_kw?(kw_tok) ->
-                  # Merge with remaining keywords
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                  # Merge with remaining keywords - use :unmatched to allow do-blocks
+                  with {:ok, kw_list, state, log} <-
+                         Keywords.parse_kw_data(state, :unmatched, log) do
                     {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
                     case TokenAdapter.peek(state) do
@@ -1459,14 +1604,14 @@ defmodule ToxicParser.Grammar.Containers do
                 is_keyword_list_result(expr) and
                     kw_tok.kind in [:list_string_start, :bin_string_start] ->
                   # Another quoted keyword - parse and merge
-                  parse_tuple_quoted_kw_continuation(expr, acc, state, ctx, log)
+                  parse_tuple_quoted_kw_continuation(expr, acc, state, :unmatched, log)
 
                 true ->
-                  parse_tuple_elements([expr | acc], state, ctx, log)
+                  parse_tuple_elements([expr | acc], state, :unmatched, log)
               end
 
             _ ->
-              parse_tuple_elements([expr | acc], state, ctx, log)
+              parse_tuple_elements([expr | acc], state, :unmatched, log)
           end
 
         {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -1487,8 +1632,9 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # Parse continuation of keyword list in tuple when we encounter another quoted keyword
-  defp parse_tuple_quoted_kw_continuation(acc_kw, tuple_acc, state, ctx, log) do
-    case Expressions.expr(state, ctx, log) do
+  defp parse_tuple_quoted_kw_continuation(acc_kw, tuple_acc, state, _ctx, log) do
+    # Inside containers, use :unmatched to allow do-blocks
+    case Expressions.expr(state, :unmatched, log) do
       {:ok, expr, state, log} when is_keyword_list_result(expr) ->
         {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
@@ -1507,7 +1653,8 @@ defmodule ToxicParser.Grammar.Containers do
               {:ok, kw_tok, _} ->
                 cond do
                   Keywords.starts_kw?(kw_tok) ->
-                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                    with {:ok, kw_list, state, log} <-
+                           Keywords.parse_kw_data(state, :unmatched, log) do
                       {state, _newlines} = skip_eoe_count_newlines(state, 0)
 
                       case TokenAdapter.peek(state) do
@@ -1529,7 +1676,13 @@ defmodule ToxicParser.Grammar.Containers do
                     end
 
                   kw_tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_tuple_quoted_kw_continuation(acc_kw ++ expr, tuple_acc, state, ctx, log)
+                    parse_tuple_quoted_kw_continuation(
+                      acc_kw ++ expr,
+                      tuple_acc,
+                      state,
+                      :unmatched,
+                      log
+                    )
 
                   true ->
                     {:error, {:expected, :keyword}, state, log}
@@ -1562,4 +1715,16 @@ defmodule ToxicParser.Grammar.Containers do
         error
     end
   end
+
+  # Unwrap unquote_splicing from __block__ wrapper in stab clause patterns.
+  # See elixir_parser.yrl:
+  #   %% Every time the parser sees a (unquote_splicing())
+  #   %% it assumes that a block is being spliced, wrapping
+  #   %% the splicing in a __block__. But in the stab clause,
+  #   %% we can have (unquote_splicing(1, 2, 3)) -> :ok, in such
+  #   %% case, we don't actually want the block, since it is
+  #   %% an arg style call. unwrap_splice unwraps the splice
+  #   %% from such blocks.
+  defp unwrap_splice([{:__block__, _, [{:unquote_splicing, _, _}] = splice}]), do: splice
+  defp unwrap_splice(other), do: other
 end

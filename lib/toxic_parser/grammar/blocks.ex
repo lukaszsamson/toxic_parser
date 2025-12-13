@@ -53,7 +53,7 @@ defmodule ToxicParser.Grammar.Blocks do
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
     with {:ok, clauses, state, log} <- Containers.parse_stab_eoe_until([], state, ctx, log, :end),
-         {:ok, end_meta, state} <- expect_kind_with_meta(state, :end) do
+         {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
       log = exit_scope(log, :fn, fn_tok.metadata)
       end_location = token_meta(end_meta)
       # Build metadata: [newlines: N, closing: [...], line: L, column: C]
@@ -92,7 +92,7 @@ defmodule ToxicParser.Grammar.Blocks do
 
         with {:ok, sections, state, log} <-
                parse_labeled_sections([], :do, state, ctx, log),
-             {:ok, end_meta, state} <- expect_kind_with_meta(state, :end) do
+             {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
           log = exit_scope(log, :do_block, do_meta)
           end_location = token_meta(end_meta)
           # Build do/end metadata like elixir_parser.yrl does
@@ -117,12 +117,12 @@ defmodule ToxicParser.Grammar.Blocks do
 
   defp token_meta(_), do: []
 
-  defp expect_kind_with_meta(state, kind) do
+  defp expect_kind_with_meta(state, kind, log) do
     case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind, metadata: meta}, state} -> {:ok, meta, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
+      {:ok, %{kind: ^kind, metadata: meta}, state} -> {:ok, meta, state, log}
+      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state, log}
+      {:eof, state} -> {:error, :unexpected_eof, state, log}
+      {:error, diag, state} -> {:error, diag, state, log}
     end
   end
 
@@ -269,6 +269,9 @@ defmodule ToxicParser.Grammar.Blocks do
 
   defp annotate_eoe(ast, _eoe_meta), do: ast
 
+  # unquote_splicing always gets wrapped in __block__ (parser assumes block is being spliced)
+  # See elixir_parser.yrl: build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter)
+  defp build_block([{:unquote_splicing, _, [_]} = single]), do: {:__block__, [], [single]}
   defp build_block([single]), do: single
   defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
 

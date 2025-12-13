@@ -102,9 +102,13 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       _ ->
-        # sub_matched_expr with dot operator support for dotted aliases
-        # parse_base_with_dots handles Foo.Bar.Baz but stops before {}
-        Pratt.parse_base_with_dots(state, :matched, log)
+        # sub_matched_expr with dot operator and paren call support
+        # parse_base_with_dots_and_calls handles:
+        #   - Foo.Bar.Baz (dotted aliases)
+        #   - unquote(struct) (paren calls)
+        #   - module.Foo.Bar (dotted calls)
+        # But stops at { which is the struct body
+        Pratt.parse_base_with_dots_and_calls(state, :matched, log)
     end
   end
 

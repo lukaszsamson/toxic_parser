@@ -137,9 +137,13 @@ defmodule ToxicParser.Grammar.Expressions do
         # Skip all consecutive EOE tokens (handles cases like "1\n;2")
         state = skip_eoe(state)
 
-        # Check if we've reached EOF after trailing EOE
+        # Check if we've reached EOF or terminator after trailing EOE
         case TokenAdapter.peek(state) do
           {:eof, state} ->
+            finalize_exprs(acc, state, log)
+
+          # Stop at terminators that shouldn't start new expressions
+          {:ok, %{kind: kind}, _} when kind in [:end_interpolation, :"}"] ->
             finalize_exprs(acc, state, log)
 
           {:ok, _, _} ->

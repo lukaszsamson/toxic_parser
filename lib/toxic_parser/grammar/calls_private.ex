@@ -55,8 +55,10 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
                   case TokenAdapter.peek(state) do
                     {:ok, next_tok, _} when is_keyword_list_result(arg) ->
-                      if Keywords.starts_kw?(next_tok) do
+                      if Keywords.starts_kw?(next_tok) or
+                           can_be_quoted_keyword?(next_tok) do
                         # Continue collecting keywords into this list
+                        # This handles both standard keywords (foo:) and quoted keywords ("foo":)
                         with {:ok, more_kw, state, log} <-
                                Keywords.parse_kw_call(state, :unmatched, log) do
                           merged_kw = arg ++ more_kw
@@ -94,4 +96,12 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         state
     end
   end
+
+  # Quoted strings like "foo" or 'bar' could be keyword keys ("foo": or 'bar':)
+  # We can't tell without parsing, so this just checks if the token could start one
+  defp can_be_quoted_keyword?(%{kind: kind}) do
+    kind in [:bin_string_start, :list_string_start]
+  end
+
+  defp can_be_quoted_keyword?(_), do: false
 end
