@@ -26,7 +26,7 @@ defmodule ToxicParser.Position do
   @doc """
   Converts Toxic meta or error positions into a range map.
   """
-  @spec range_from_meta(term(), [non_neg_integer()]) :: %{
+  @spec range_from_meta(term(), tuple()) :: %{
           start: location(),
           end: location()
         }

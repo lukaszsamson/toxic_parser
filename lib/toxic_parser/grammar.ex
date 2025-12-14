@@ -38,7 +38,7 @@ defmodule ToxicParser.Grammar do
 
   defp zero_meta do
     %{
-      range: %{start: Position.to_location(1, 1, [0]), end: Position.to_location(1, 1, [0])},
+      range: %{start: Position.to_location(1, 1, {0}), end: Position.to_location(1, 1, {0})},
       delimiter: nil,
       newlines: 0,
       synthesized?: false,
