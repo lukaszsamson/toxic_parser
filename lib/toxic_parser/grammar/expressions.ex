@@ -59,6 +59,9 @@ defmodule ToxicParser.Grammar.Expressions do
     end
   end
 
+  defp keyword_value_ctx(:no_parens), do: :matched
+  defp keyword_value_ctx(ctx), do: ctx
+
   @doc "Parses a matched expression (no trailing do-block attachment)."
   @spec matched_expr(State.t(), EventLog.t()) :: result()
   def matched_expr(%State{} = state, %EventLog{} = log) do
@@ -104,7 +107,7 @@ defmodule ToxicParser.Grammar.Expressions do
                 # Skip EOE (newlines) after the colon before parsing value
                 state = skip_eoe(state)
 
-                with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
+                with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
                   {:ok, [{key_atom, value_ast}], state, log}
                 end
 
@@ -113,7 +116,7 @@ defmodule ToxicParser.Grammar.Expressions do
                 # Skip EOE (newlines) after the colon before parsing value
                 state = skip_eoe(state)
 
-                with {:ok, value_ast, state, log} <- expr(state, :matched, log) do
+                with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
                   {:ok, [{key_ast, value_ast}], state, log}
                 end

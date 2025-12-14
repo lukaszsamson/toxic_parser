@@ -2406,6 +2406,11 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms(~S[foo('a': 1)])
     end
 
+    test "keyword values with quoted keys allow blocks" do
+      assert_conforms(~S[foo("a": a do end)])
+      assert_conforms(~S(["a": a do end]))
+    end
+
     test "keyword trailing comma (warning)" do
       # warn_trailing_comma in parser
       assert_conforms("foo(a: 1,)")
