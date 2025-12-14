@@ -21,7 +21,6 @@ defmodule ToxicParser.PrattPrecedenceTest do
 
   test "unary binding powers include not and capture" do
     assert {_, :nonassoc} = Precedence.unary(:unary_op)
-    assert {_, :nonassoc} = Precedence.unary(:unary_not_op)
     assert {_, :nonassoc} = Precedence.unary(:capture_op)
   end
 

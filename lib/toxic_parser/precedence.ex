@@ -36,8 +36,7 @@ defmodule ToxicParser.Precedence do
 
   @unary_bp [
     {:capture_op, 90, :nonassoc},
-    {:unary_not_op, 135, :nonassoc},
-    {:ellipsis_op, 300, :nonassoc},
+    {:ellipsis_op, 90, :nonassoc},
     {:unary_op, 300, :nonassoc},
     {:at_op, 320, :nonassoc}
   ]
