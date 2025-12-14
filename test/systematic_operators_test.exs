@@ -210,7 +210,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
         |> Enum.reject(&is_nil/1)
 
       assert failures == [],
-             "Failed combinations: #{inspect(failures, pretty: true, limit: :infinity)}"
+             "Failed combinations: #{inspect(failures |> Enum.take(5), pretty: true, limit: :infinity)}"
     end
 
     test "unary - binary combinations (op1 a op2 b)" do
@@ -248,7 +248,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
         |> Enum.reject(&is_nil/1)
 
       assert failures == [],
-             "Failed combinations: #{inspect(failures, pretty: true, limit: :infinity)}"
+             "Failed combinations: #{inspect(failures |> Enum.take(5), pretty: true, limit: :infinity)}"
     end
 
     test "ternary range (a..b//c) combinations" do

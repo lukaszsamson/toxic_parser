@@ -10,15 +10,12 @@ defmodule ToxicParser.Precedence do
   @type assoc :: :left | :right | :nonassoc
 
   @binary_bp [
-    {:do_op, 5, :left},
     {:stab_op, 10, :right},
-    {:comma_op, 20, :left},
     {:in_match_op, 40, :left},
     {:when_op, 50, :right},
     {:type_op, 60, :right},
     {:pipe_op, 70, :right},
     {:assoc_op, 80, :right},
-    {:capture_op, 90, :nonassoc},
     {:match_op, 100, :right},
     {:or_op, 120, :left},
     {:and_op, 130, :left},
@@ -33,8 +30,7 @@ defmodule ToxicParser.Precedence do
     {:dual_op, 210, :left},
     {:mult_op, 220, :left},
     {:power_op, 230, :left},
-    {:dot_op, 310, :left},
-    {:access_op, 330, :nonassoc}
+    {:dot_op, 310, :left}
   ]
 
   @unary_bp [
@@ -75,10 +71,6 @@ defmodule ToxicParser.Precedence do
   @doc "Returns the binding power for dot vs dot-call handling."
   @spec dot() :: {bp(), assoc()} | nil
   def dot, do: binary(:dot_op)
-
-  @doc "Returns access binding power."
-  @spec access() :: {bp(), assoc()} | nil
-  def access, do: binary(:access_op)
 
   @doc "Returns the full binary precedence list."
   @spec binary_table() :: [{atom(), bp(), assoc()}]

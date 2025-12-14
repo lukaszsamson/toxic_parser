@@ -122,7 +122,7 @@ defmodule ToxicParser.Grammar.Containers do
 
       # Check for stab operator at start: (-> expr)
       {:ok, %{kind: :stab_op}, _} ->
-        parse_paren_stab(open_meta, state, ctx, log)
+        parse_paren_stab(open_meta, state, ctx, log, min_bp)
 
       # Check for empty inner parens followed by stab/when: (() -> expr) or (() when g -> expr)
       {:ok, %{kind: :"("}, _} ->
@@ -156,18 +156,20 @@ defmodule ToxicParser.Grammar.Containers do
 
       _ ->
         # Parse stab expression(s) after leading semicolon
-        parse_paren_stab(open_meta, state, ctx, log)
+        parse_paren_stab(open_meta, state, ctx, log, min_bp)
     end
   end
 
   # Parse stab expressions inside parens
-  defp parse_paren_stab(_open_meta, state, ctx, log) do
+  # min_bp controls whether to continue with led() for trailing operators
+  defp parse_paren_stab(_open_meta, state, ctx, log, min_bp) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
       state = skip_eoe(state)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"}, state} ->
-          {:ok, clauses, state, log}
+          # Continue with Pratt.led to handle trailing operators like |
+          Pratt.led(clauses, state, log, min_bp, ctx)
 
         {:ok, token, state} ->
           {:error, {:expected, :")", got: token.kind}, state, log}
@@ -505,7 +507,8 @@ defmodule ToxicParser.Grammar.Containers do
     case try_parse_stab_clause(checkpoint_state, ctx, log) do
       {:ok, clause, new_state, log} ->
         # Successfully parsed a stab clause, continue with remaining clauses
-        parse_remaining_stab_clauses([clause], new_state, ctx, log)
+        # Pass min_bp to continue with led() for trailing operators
+        parse_remaining_stab_clauses([clause], new_state, ctx, log, min_bp)
 
       {:not_stab, _state, _log} ->
         # Not a stab - rewind and parse as regular expression
@@ -710,8 +713,31 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, [], state, log}
 
       # stab_parens_many: fn (args) -> body end
+      # But we need to check if this is actually stab_parens_many or just
+      # a parenthesized expression in the pattern (like `(e and f) or g -> ...`)
       {:ok, %{kind: :"("} = open_tok, _} ->
-        parse_stab_parens_many(open_tok, state, ctx, log)
+        # Try parsing as stab_parens_many first
+        {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+        case parse_stab_parens_many(open_tok, checkpoint_state, ctx, log) do
+          {:ok, patterns, state2, log2, parens_meta} ->
+            # Check if followed by -> or when (actual stab_parens_many)
+            case TokenAdapter.peek(state2) do
+              {:ok, %{kind: kind}, _} when kind in [:stab_op, :when_op] ->
+                # Yes, this is stab_parens_many
+                {:ok, patterns, state2, log2, parens_meta}
+
+              _ ->
+                # No, it's just a parenthesized expression - rewind and parse normally
+                state = TokenAdapter.rewind(checkpoint_state, ref)
+                parse_stab_pattern_exprs(acc, state, ctx, log)
+            end
+
+          {:error, _reason, _state2, _log2} ->
+            # Error parsing as stab_parens_many - try as regular pattern
+            state = TokenAdapter.rewind(checkpoint_state, ref)
+            parse_stab_pattern_exprs(acc, state, ctx, log)
+        end
 
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
@@ -998,17 +1024,21 @@ defmodule ToxicParser.Grammar.Containers do
       {:not_stab, _state2, _log2} ->
         # Not a stab - this expression is part of the current body
         # Rewind and parse as expression
+        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
+        # as a binary operator. The -> belongs to the clause parser.
         state = TokenAdapter.rewind(checkpoint_state, ref)
 
-        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
           collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
         end
 
       {:error, _reason, _state2, _log2} ->
         # Error parsing as stab - try as expression
+        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
+        # as a binary operator. The -> belongs to the clause parser.
         state = TokenAdapter.rewind(checkpoint_state, ref)
 
-        with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
           collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
         end
     end
@@ -1067,19 +1097,21 @@ defmodule ToxicParser.Grammar.Containers do
   defp annotate_body_eoe(body, _eoe_meta), do: body
 
   # Parse remaining stab clauses after the first one
-  defp parse_remaining_stab_clauses(acc, state, ctx, log) do
+  # min_bp controls whether to continue with led() for trailing operators
+  defp parse_remaining_stab_clauses(acc, state, ctx, log, min_bp \\ 0) do
     state = skip_eoe(state)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
-        {:ok, Enum.reverse(acc), state, log}
+        # Continue with Pratt.led to handle trailing operators like |
+        Pratt.led(Enum.reverse(acc), state, log, min_bp, ctx)
 
       {:ok, _, _} ->
         # Try to parse another stab clause
         case try_parse_stab_clause(state, ctx, log) do
           {:ok, clause, state, log} ->
-            parse_remaining_stab_clauses([clause | acc], state, ctx, log)
+            parse_remaining_stab_clauses([clause | acc], state, ctx, log, min_bp)
 
           {:not_stab, state, log} ->
             # Expression without stab - this is an error in stab context
@@ -1395,7 +1427,12 @@ defmodule ToxicParser.Grammar.Containers do
               {:ok, merge_keyword_expr(acc, expr, is_container_literal), state, log}
 
             _ ->
-              parse_list_elements_base(prepend_expr(acc, expr, is_container_literal), state, ctx, log)
+              parse_list_elements_base(
+                prepend_expr(acc, expr, is_container_literal),
+                state,
+                ctx,
+                log
+              )
           end
 
         {:ok, %{kind: :"]"}, _} ->

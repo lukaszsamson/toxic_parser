@@ -630,13 +630,15 @@ defmodule ToxicParser.Pratt do
         # Call Containers.parse with min_bp to preserve operator precedence
         Containers.parse(state, context, log, min_bp)
 
-      # String tokens need special handling to preserve min_bp
+      # String and quoted atom tokens need special handling to preserve min_bp
       token.kind in [
         :bin_string_start,
         :list_string_start,
         :bin_heredoc_start,
         :list_heredoc_start,
-        :sigil_start
+        :sigil_start,
+        :atom_unsafe_start,
+        :atom_safe_start
       ] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Strings
@@ -790,6 +792,7 @@ defmodule ToxicParser.Pratt do
       nil,
       :"{",
       :"[",
+      :"(",
       :"<<",
       :unary_op,
       :at_op,
@@ -821,58 +824,68 @@ defmodule ToxicParser.Pratt do
           # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
           # NOTE: Only treat as call if there's NO EOE between left and (
           # `foo()` is a call, but `foo\n()` is not (the newline separates them)
+          # Also, for bare identifiers like `if (a)`, only treat as call if
+          # the identifier came from a :paren_identifier token (no space before `(`)
           {:"(", _} when eoe_tokens == [] ->
-            {:ok, _open_tok, state} = TokenAdapter.next(state)
+            if is_paren_call_valid(left) do
+              {:ok, _open_tok, state} = TokenAdapter.next(state)
 
-            # Skip leading EOE and count newlines
-            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+              # Skip leading EOE and count newlines
+              {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-            with {:ok, args, state, log} <-
-                   ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-              # Skip trailing EOE before close paren
-              {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+              with {:ok, args, state, log} <-
+                     ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+                # Skip trailing EOE before close paren
+                {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
-              case TokenAdapter.next(state) do
-                {:ok, %{kind: :")"} = close_tok, state} ->
-                  # For non-empty calls, only count leading newlines
-                  # For empty calls, count all newlines
-                  total_newlines =
-                    if args == [] do
-                      leading_newlines + trailing_newlines
-                    else
-                      leading_newlines
-                    end
+                case TokenAdapter.next(state) do
+                  {:ok, %{kind: :")"} = close_tok, state} ->
+                    # For non-empty calls, only count leading newlines
+                    # For empty calls, count all newlines
+                    total_newlines =
+                      if args == [] do
+                        leading_newlines + trailing_newlines
+                      else
+                        leading_newlines
+                      end
 
-                  close_meta = build_meta(close_tok.metadata)
-                  # Get line/column from left AST (the callee)
-                  callee_meta = extract_meta(left)
+                    close_meta = build_meta(close_tok.metadata)
+                    # Get line/column from left AST (the callee)
+                    callee_meta = extract_meta(left)
 
-                  newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-                  call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+                    newlines_meta =
+                      if total_newlines > 0, do: [newlines: total_newlines], else: []
 
-                  # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
-                  # Otherwise it's a nested call: {left, call_meta, args}
-                  combined =
-                    case left do
-                      {name, _meta, nil} when is_atom(name) ->
-                        {name, call_meta, Enum.reverse(args)}
+                    call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
 
-                      _ ->
-                        {left, call_meta, Enum.reverse(args)}
-                    end
+                    # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
+                    # Otherwise it's a nested call: {left, call_meta, args}
+                    combined =
+                      case left do
+                        {name, _meta, nil} when is_atom(name) ->
+                          {name, call_meta, Enum.reverse(args)}
 
-                  # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
-                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+                        _ ->
+                          {left, call_meta, Enum.reverse(args)}
+                      end
 
-                {:ok, other, state} ->
-                  {:error, {:expected, :")", got: other.kind}, state, log}
+                    # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
+                    maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
-                {:eof, state} ->
-                  {:error, :unexpected_eof, state, log}
+                  {:ok, other, state} ->
+                    {:error, {:expected, :")", got: other.kind}, state, log}
 
-                {:error, diag, state} ->
-                  {:error, diag, state, log}
+                  {:eof, state} ->
+                    {:error, :unexpected_eof, state, log}
+
+                  {:error, diag, state} ->
+                    {:error, diag, state, log}
+                end
               end
+            else
+              # Not a valid paren call (e.g., `if (a)` with space - `if` is :identifier, not :paren_identifier)
+              # Return left as-is, the `(` will be handled as a separate parenthesized expression
+              {:ok, left, state, log}
             end
 
           # dot_call_op: expr.(args) - anonymous function call
@@ -1113,6 +1126,14 @@ defmodule ToxicParser.Pratt do
           {:ternary_op, {bp, _assoc}} when bp >= min_bp ->
             parse_ternary_op(left, state, min_bp, context, log)
 
+          # dual_op (+/-) after EOE is NOT a binary operator - it starts a new expression
+          # e.g., "x()\n\n-1" should be two expressions: x() and -1 (unary minus)
+          # This matches Elixir's behavior where dual_op after newlines is unary
+          {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
+            # Push back EOE tokens and return left - dual_op after EOE is not continuation
+            state = pushback_eoe_tokens(state, eoe_tokens)
+            {:ok, left, state, log}
+
           {_, {bp, assoc}} when bp >= min_bp ->
             {:ok, op_token, state} = TokenAdapter.next(state)
             # For right associativity, use same bp to allow chaining at same level
@@ -1237,31 +1258,62 @@ defmodule ToxicParser.Pratt do
           end
         end
 
-      {:ok, %{kind: :do}, _} when context != :matched ->
-        # Do-block - parse and attach to call
-        # Only in non-matched contexts; in :matched context the do-block belongs to outer call
-        with {:ok, {block_meta, sections}, state, log} <-
-               Blocks.parse_do_block(state, context, log) do
-          combined =
+      {:ok, %{kind: :do}, _} ->
+        # In :matched context (used when parsing no-parens call arguments), do-blocks
+        # belong to the outer call (e.g. `foo bar do ... end`) and must NOT attach to
+        # the final argument expression (e.g. `bar do ... end`).
+        if context == :matched do
+          led(ast, state, log, min_bp, context)
+        else
+          # Do-block - parse and attach to call
+          # Attach do-block if the AST is a call form (has args list).
+          # Do NOT attach to:
+          # - Bare identifiers like `(b)` in `if (a) or (b) do` - these have `:parens` metadata
+          #   but args=nil, not a call form
+          # - Variables/atoms that aren't calls
+          #
+          # Per Elixir's grammar, block_expr (call + do-block) can appear as operand
+          # in unmatched_expr, so min_bp doesn't affect do-block attachment.
+          should_attach =
             case ast do
-              {name, meta, args} when is_list(args) ->
-                # Prepend do/end metadata to the call's existing metadata
-                # Remove no_parens: true as it doesn't apply with do-blocks
-                clean_meta = Keyword.delete(meta, :no_parens)
-                {name, block_meta ++ clean_meta, args ++ [sections]}
+              # Call with args list (including empty args [])
+              {_name, meta, args} when is_list(args) ->
+                # Don't attach to parenthesized expressions like `(x)` which have
+                # :parens metadata.
+                not Keyword.has_key?(meta, :parens)
 
-              # Bare identifier: {name, meta, nil} - convert to call with do-block
-              {name, meta, nil} when is_atom(name) ->
-                {name, block_meta ++ meta, [sections]}
-
-              other ->
-                Builder.Helpers.call(other, [sections], block_meta)
+              # Bare identifier, variable, literal - not a call
+              _ ->
+                false
             end
 
-          # For unary operands (like `& b_do \\ c`), ALL binary ops should attach.
-          # For binary RHS (like `a ** b_do ** c`), preserve min_bp for associativity.
-          led_min_bp = if unary_operand, do: 0, else: min_bp
-          led(combined, state, log, led_min_bp, context)
+          if should_attach do
+            with {:ok, {block_meta, sections}, state, log} <-
+                   Blocks.parse_do_block(state, context, log) do
+              combined =
+                case ast do
+                  {name, meta, args} when is_list(args) ->
+                    # Prepend do/end metadata to the call's existing metadata
+                    # Remove no_parens: true as it doesn't apply with do-blocks
+                    clean_meta = Keyword.delete(meta, :no_parens)
+                    {name, block_meta ++ clean_meta, args ++ [sections]}
+
+                  # Bare identifier: {name, meta, nil} - convert to call with do-block
+                  {name, meta, nil} when is_atom(name) ->
+                    {name, block_meta ++ meta, [sections]}
+
+                  other ->
+                    Builder.Helpers.call(other, [sections], block_meta)
+                end
+
+              # For unary operands (like `& b_do \\ c`), ALL binary ops should attach.
+              # For binary RHS (like `a ** b_do ** c`), preserve min_bp for associativity.
+              led_min_bp = if unary_operand, do: 0, else: min_bp
+              led(combined, state, log, led_min_bp, context)
+            end
+          else
+            led(ast, state, log, min_bp, context)
+          end
         end
 
       _ ->
@@ -1592,13 +1644,24 @@ defmodule ToxicParser.Pratt do
     {atom, build_meta(meta), nil}
   end
 
-  # Paren identifier: same as identifier, ( will be handled by led
+  # Paren identifier: same as identifier, but mark it so led() knows to handle (
+  # Add paren_call: true marker so led() can distinguish if(a) from if (a)
   defp literal_to_ast(%{kind: :paren_identifier, value: atom, metadata: meta}) do
-    {atom, build_meta(meta), nil}
+    {atom, [paren_call: true] ++ build_meta(meta), nil}
   end
 
   # Do identifier: same as identifier
   defp literal_to_ast(%{kind: :do_identifier, value: atom, metadata: meta}) do
+    {atom, build_meta(meta), nil}
+  end
+
+  # Bracket identifier: same as identifier, [ will be handled by led
+  defp literal_to_ast(%{kind: :bracket_identifier, value: atom, metadata: meta}) do
+    {atom, build_meta(meta), nil}
+  end
+
+  # Op identifier: same as identifier, for no-parens calls
+  defp literal_to_ast(%{kind: :op_identifier, value: atom, metadata: meta}) do
     {atom, build_meta(meta), nil}
   end
 
@@ -1635,6 +1698,15 @@ defmodule ToxicParser.Pratt do
   end
 
   defp extract_meta(_), do: []
+
+  # Check if AST can receive a paren call in led()
+  # Bare identifiers need paren_call: true marker (from :paren_identifier token)
+  # Other expressions (calls, dot expressions, etc.) can always receive paren calls
+  defp is_paren_call_valid({_name, meta, nil}) when is_list(meta) do
+    Keyword.get(meta, :paren_call, false)
+  end
+
+  defp is_paren_call_valid(_), do: true
 
   # Check if an AST node represents an unmatched expression (has do-block)
   # Used to determine if matched_op_expr should bind to the expression

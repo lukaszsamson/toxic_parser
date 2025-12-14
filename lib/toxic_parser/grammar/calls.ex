@@ -45,7 +45,10 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp parse_identifier(kind, tok, state, ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} ->
+      # Only treat as paren call if the identifier was :paren_identifier
+      # (tokenized without space before the paren, e.g., "foo(a)" not "foo (a)")
+      # Plain :identifier followed by ( means the ( is a separate parenthesized expression
+      {:ok, %{kind: :"("}, _} when kind == :paren_identifier ->
         parse_paren_call(tok, state, ctx, log)
 
       {:ok, %{kind: :"["} = open_tok, _} when kind == :bracket_identifier ->
@@ -252,6 +255,7 @@ defmodule ToxicParser.Grammar.Calls do
       nil,
       :"{",
       :"[",
+      :"(",
       :"<<",
       :unary_op,
       :at_op,

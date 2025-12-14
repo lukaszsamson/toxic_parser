@@ -222,16 +222,21 @@ defmodule ToxicParser.Grammar.Maps do
             {:not_update, state}
 
           true ->
+            # Skip any EOE before checking for |
             state = skip_eoe(state)
 
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
                 # This is a map update!
                 {:ok, _pipe, state} = TokenAdapter.next(state)
-                # Skip EOE after | and count newlines for metadata
+                # Skip EOE after | and count newlines
                 {state, newlines_after_pipe} = skip_eoe_count_newlines(state, 0)
-                # Build pipe metadata with newlines if present
-                pipe_meta = token_meta_with_newlines(pipe_tok.metadata, newlines_after_pipe)
+                # Newlines can come from BEFORE the | (in token metadata) or AFTER (in EOE)
+                # Take the max of both
+                token_newlines = Map.get(pipe_tok.metadata, :newlines, 0)
+                effective_newlines = max(token_newlines, newlines_after_pipe)
+                # Build pipe metadata with combined newlines
+                pipe_meta = token_meta_with_newlines(pipe_tok.metadata, effective_newlines)
 
                 # Parse entries after |
                 case TokenAdapter.peek(state) do
@@ -354,9 +359,7 @@ defmodule ToxicParser.Grammar.Maps do
   # - type_op (::): 60
   # - when_op: 50
   # - in_match_op (<-): 40
-  # - comma_op: 20
   # - stab_op (->): 10
-  # - do_op: 5
   defp key_has_lower_precedence_op?({op, _, args}) when is_atom(op) and is_list(args) do
     # Check if this node's operator has precedence < 70
     op_has_low_precedence?(op) or
@@ -370,9 +373,7 @@ defmodule ToxicParser.Grammar.Maps do
   # - type_op (::): 60
   # - when_op: 50
   # - in_match_op (<-, \\): 40
-  # - comma_op: 20
   # - stab_op (->): 10
-  # - do_op: 5
   defp op_has_low_precedence?(op) when op in [:"::", :when, :<-, :\\, :",", :->, :do], do: true
   defp op_has_low_precedence?(_), do: false
 
@@ -611,6 +612,7 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
+  # Build token metadata with explicit newlines count
   defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
 
   defp token_meta_with_newlines(%{range: %{start: %{line: line, column: column}}}, newlines)

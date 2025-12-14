@@ -25,7 +25,7 @@ defmodule ToxicParser.State do
           fuel: pos_integer() | :infinity,
           expression_context: expression_context(),
           checkpoints: %{reference() => checkpoint()},
-          line_index: [non_neg_integer()],
+          line_index: tuple(),
           terminators: [term()],
           max_peek: pos_integer(),
           source: binary(),
@@ -41,7 +41,7 @@ defmodule ToxicParser.State do
             fuel: :infinity,
             expression_context: :matched,
             checkpoints: %{},
-            line_index: [],
+            line_index: {},
             terminators: [],
             max_peek: 4,
             source: "",
@@ -80,12 +80,13 @@ defmodule ToxicParser.State do
 
   @doc """
   Returns the precomputed line offset table for the given source.
+  Returns a tuple for O(1) lookup by line number.
   """
-  @spec line_index(binary()) :: [non_neg_integer()]
+  @spec line_index(binary()) :: tuple()
   def line_index(source) when is_binary(source) do
     starts =
       for {pos, 1} <- :binary.matches(source, "\n"), do: pos + 1
 
-    [0 | starts]
+    [0 | starts] |> List.to_tuple()
   end
 end

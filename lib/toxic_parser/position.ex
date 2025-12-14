@@ -7,13 +7,17 @@ defmodule ToxicParser.Position do
 
   @doc """
   Builds a location map from 1-based line/column and a precomputed line index.
+  Line index should be a tuple for O(1) lookup.
   """
-  @spec to_location(pos_integer(), pos_integer(), [non_neg_integer()]) :: location()
-  def to_location(line, column, line_index) do
+  @spec to_location(pos_integer(), pos_integer(), tuple()) :: location()
+  def to_location(line, column, line_index) when is_tuple(line_index) do
+    idx = line - 1
+
     offset =
-      case Enum.fetch(line_index, line - 1) do
-        {:ok, base} -> base + max(column - 1, 0)
-        :error -> 0
+      if idx >= 0 and idx < tuple_size(line_index) do
+        elem(line_index, idx) + max(column - 1, 0)
+      else
+        0
       end
 
     %{offset: offset, line: line, column: column}

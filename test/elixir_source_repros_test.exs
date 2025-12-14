@@ -81,6 +81,96 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     end
   end
 
+  describe "stab clause unions" do
+    test "union of two stab clauses in parentheses" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/calendar.ex line 168
+      # Function types with union patterns: (-> 1) | (-> 2)
+      # The closing ) of a stab clause should allow led to continue with trailing operators
+      code = ~S'''
+      (-> 1) | (-> 2)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "complex union function types in typespecs" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/calendar.ex line 168
+      # Pattern: (:am | :pm -> String.t()) | (:am | :pm, map() -> String.t())
+      code = ~S'''
+      (:am | :pm -> String.t()) | (:am | :pm, map() -> String.t())
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "keyword list with union function type values" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/calendar.ex line 168
+      code = ~S'''
+      @type t :: [
+        am_pm_names: (:am | :pm -> String.t()) | (:am | :pm, map() -> String.t())
+      ]
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "dual_op after EOE" do
+    test "dual_op (-) after newlines is unary, not binary" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/calendar/date.ex line 120
+      # When -1 appears on a separate line after a call, it should be unary minus
+      # on a new expression, not binary subtraction
+      code = ~S'''
+      if a do
+        1
+      else
+        x()
+
+        -1
+      end
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "dual_op (+) after newlines is unary, not binary" do
+      # Similar to above but with + operator
+      code = ~S'''
+      if true do
+        1
+      else
+        foo()
+
+        +42
+      end
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "bracket_identifier handling" do
+    test "bracket access preserves variable AST" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/code.ex line 501
+      # opts[:cache] should have opts as {:opts, [line: L, column: C], nil}
+      # not just the atom :opts
+      code = ~S'''
+      opts[:cache]
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "bracket access in conditional" do
+      # Full context from code.ex
+      code = ~S'''
+      if opts[:cache], do: [:cache], else: [:nocache]
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
   # Helper functions
 
   defp assert_conforms(code) do
@@ -119,6 +209,154 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     case result.diagnostics do
       [%{reason: reason} | _] -> reason
       _ -> :unknown_error
+    end
+  end
+
+  describe "paren call vs parenthesized expression" do
+    test "if with space before paren is not a paren call" do
+      # `if (a)` with space - the ( is a parenthesized expression, not a paren call
+      code = ~S'''
+      if (a) do 1 end
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "if with space in condition with or" do
+      # `if (a) or (b)` - neither are paren calls
+      code = ~S'''
+      if (a) or (b) do 1 end
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "paren call without space" do
+      # `if(a)` without space IS a paren call
+      code = ~S'''
+      if(a) do 1 end
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "cond with multiline or conditions" do
+    test "cond clause with parenthesized or condition" do
+      # The parenthesized (e and f) is part of the condition, not stab_parens_many
+      code = ~S'''
+      cond do
+        a and b and c ->
+          d
+
+        (e and f) or
+          (g and h) or i or
+            (j and k) ->
+          {l, m} =
+            n(o, p, q, r, s, t, u, v)
+
+          {wrap(l), m}
+
+        true ->
+          x(y, z)
+      end
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "map update newlines" do
+    test "pipe operator in map update should have newlines metadata" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/dynamic_supervisor.ex
+      # Map update with | on separate line should have newlines metadata on |
+      code = ~S'''
+      %{
+        state
+        | extra: val
+      }
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "capture operator is unary only" do
+    test "capture operator after newline starts new expression" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/inspect.ex
+      # When & appears on a new line after an expression, it should
+      # start a new expression (unary), NOT be a binary operator
+      code = ~S'''
+      a = 1
+      &b(1)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "capture in stab body with multiple statements" do
+      # & in else block with preceding statement should be separate expressions
+      code = ~S'''
+      if true do
+        &a/1
+      else
+        sep = 1
+        &b(&1, sep)
+      end
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "dot call with list literal and trailing keywords" do
+    test "list literal followed by keyword args in dot call" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/io/ansi/docs.ex
+      # String.split(["\r\n", "\n"], trim: false) should have two args:
+      # 1. ["\r\n", "\n"] (list literal)
+      # 2. [trim: false] (keyword list)
+      # NOT: [["\r\n", "\n", {:trim, false}]] (merged)
+      code = ~S'''
+      String.split(["\r\n", "\n"], trim: false)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "tuple literal followed by keyword args in dot call" do
+      # Similar case with tuple
+      code = ~S'''
+      Foo.bar({1, 2}, key: value)
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "quoted atom in when guard" do
+    test "quoted string atom dot call in case when clause" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex
+      # When guard contains :"Elixir.Kernel".in(x, ...), the -> should not
+      # be consumed by the when expression but be the stab at the top level
+      code = ~S'''
+      case x do
+        y when :"foo".bar(y) -> true
+      end
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "quoted atom dot call with multiple args" do
+      # Similar case with more complex call
+      code = ~S'''
+      case value do
+        x when :"Elixir.Kernel".in(x, [false, nil]) -> false
+        _ -> true
+      end
+      '''
+
+      assert_conforms(code)
     end
   end
 end

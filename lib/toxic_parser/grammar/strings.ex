@@ -476,7 +476,7 @@ defmodule ToxicParser.Grammar.Strings do
     {trimmed, final_at_line_start, final_spaces_left}
   end
 
-  defp trim_chars([?\\ , ?\n | rest], indent, _at_line_start, _spaces_left, acc) do
+  defp trim_chars([?\\, ?\n | rest], indent, _at_line_start, _spaces_left, acc) do
     # Line continuation (backslash-newline): remove both and strip following indentation
     # The \\\n escape becomes empty after unescaping, so we don't add anything
     trim_chars(rest, indent, true, indent, acc)
