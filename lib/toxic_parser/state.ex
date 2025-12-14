@@ -59,7 +59,8 @@ defmodule ToxicParser.State do
       Toxic.new(source, 1, 1,
         error_mode: if(mode == :tolerant, do: :tolerant, else: :strict),
         preserve_comments: Keyword.get(opts, :preserve_comments, false),
-        existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false)
+        existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false),
+        max_batch: 8
       )
 
     {terminators, stream} = Toxic.current_terminators(stream)
