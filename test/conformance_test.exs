@@ -2355,6 +2355,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo.bar do\n:ok\nend")
     end
 
+    test "dot dangling operator errors" do
+      assert_conforms("foo.")
+    end
+
     test "dot with tuple" do
       # dot_alias -> matched_expr dot_op open_curly container_args close_curly
       assert_conforms("foo.{A, B}")

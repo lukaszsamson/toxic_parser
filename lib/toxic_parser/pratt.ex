@@ -436,6 +436,12 @@ defmodule ToxicParser.Pratt do
                     _ ->
                       {:ok, Enum.reverse([arg | acc]), state, log}
                   end
+                else
+                  {:error, :unexpected_eof, state, log} ->
+                    {:error, :unexpected_eof, state, log}
+
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
                 end
             end
         end
@@ -1096,6 +1102,12 @@ defmodule ToxicParser.Pratt do
                     _ ->
                       led(combined, state, log, min_bp, context, opts)
                   end
+                else
+                  {:error, :unexpected_eof, state, log} ->
+                    {:error, syntax_error_before(dot_meta), state, log}
+
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
                 end
             end
 
@@ -1712,6 +1724,12 @@ defmodule ToxicParser.Pratt do
   end
 
   defp build_meta(_), do: []
+
+  defp syntax_error_before(meta) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", ""}
+  end
 
   # Extract line/column metadata from an AST node (for nested calls)
   defp extract_meta({_name, meta, _args}) when is_list(meta) do

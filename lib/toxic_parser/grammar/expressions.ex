@@ -23,22 +23,31 @@ defmodule ToxicParser.Grammar.Expressions do
   """
   @spec expr_list(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr_list(%State{} = state, ctx, %EventLog{} = log) do
-    # Track if we consumed any leading EOE tokens for metadata
+    # If input is empty (or only EOE), return empty block early
     {state, leading_eoe_meta} = skip_eoe_with_meta(state)
 
-    case expr(state, ctx, log) do
-      {:ok, first, state, log} ->
-        # Check for trailing EOE and annotate expression
-        {first, state} = maybe_annotate_eoe(first, state)
-        collect_exprs([first], state, ctx, log)
-
-      {:error, :unexpected_eof, state, log} ->
-        # No expressions found - return empty block with appropriate metadata
+    case TokenAdapter.peek(state) do
+      {:eof, state} ->
         ast = build_empty_block(leading_eoe_meta)
         {:ok, ast, state, log}
 
-      {:error, reason, state, log} ->
-        recover_expr_error([], reason, state, ctx, log)
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+
+      _ ->
+        # Proceed with expression parsing
+        case expr(state, ctx, log) do
+          {:ok, first, state, log} ->
+            # Check for trailing EOE and annotate expression
+            {first, state} = maybe_annotate_eoe(first, state)
+            collect_exprs([first], state, ctx, log)
+
+          {:error, :unexpected_eof, state, log} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, reason, state, log} ->
+            recover_expr_error([], reason, state, ctx, log)
+        end
     end
   end
 
