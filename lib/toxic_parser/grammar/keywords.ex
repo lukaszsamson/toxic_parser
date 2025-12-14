@@ -64,7 +64,12 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   @doc "Parses no-parens call keyword list with a minimum binding power constraint."
-  @spec parse_kw_no_parens_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
+  @spec parse_kw_no_parens_call_with_min_bp(
+          State.t(),
+          Pratt.context(),
+          EventLog.t(),
+          non_neg_integer()
+        ) ::
           result()
   def parse_kw_no_parens_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
     parse_kw_list([], state, ctx, log, min_bp, :matched)

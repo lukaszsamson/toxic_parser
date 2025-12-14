@@ -26,7 +26,11 @@ defmodule ToxicParser.TupleKeywordMergeRegressionTest do
     {:ok, _comma, st3} = ToxicParser.TokenAdapter.next(st2)
 
     assert {:ok, [foo: 1, bar: 2], _st4, _log} =
-             ToxicParser.Grammar.Keywords.parse_kw_data(st3, :unmatched, ToxicParser.EventLog.new())
+             ToxicParser.Grammar.Keywords.parse_kw_data(
+               st3,
+               :unmatched,
+               ToxicParser.EventLog.new()
+             )
 
     assert toxic_parse(code) == s2q(code)
 

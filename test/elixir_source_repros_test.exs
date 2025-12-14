@@ -240,7 +240,9 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     test "capture of case with &1 inside parens call" do
       # From: /Users/lukaszsamson/elixir/lib/mix/lib/mix/tasks/compile.ex
       # This form relies on `&1` being a valid no-parens argument.
-      code = "Enum.map([:noop], &case &1 do\n  :noop -> {:noop, []}\n  {status, diagnostics} -> {status, diagnostics}\nend)"
+      code =
+        "Enum.map([:noop], &case &1 do\n  :noop -> {:noop, []}\n  {status, diagnostics} -> {status, diagnostics}\nend)"
+
       assert_conforms(code)
     end
   end
@@ -438,6 +440,22 @@ defmodule ToxicParser.ElixirSourceReprosTest do
         _ -> true
       end
       '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "tuple with keyword tail" do
+    test "tuple with 3+ elements followed by keyword list" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/test/elixir/code_normalizer/quoted_ast_test.exs
+      # A tuple like {1, 2, 3, foo: :bar} should be {:{}, meta, [1, 2, 3, [foo: :bar]]}
+      code = ~S'{1, 2, 3, foo: :bar}'
+
+      assert_conforms(code)
+    end
+
+    test "tuple with 4 elements and multiple keyword pairs" do
+      code = ~S'{1, 2, 3, 4, foo: 1, bar: 2}'
 
       assert_conforms(code)
     end

@@ -420,7 +420,8 @@ defmodule ToxicParser.Pratt do
             cond do
               Keywords.starts_kw?(tok) ->
                 # kw_list is already [x: 1], we need to wrap it once for args: [[x: 1]]
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                with {:ok, kw_list, state, log} <-
+                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
                   {:ok, Enum.reverse([kw_list | acc]), state, log}
                 end
 

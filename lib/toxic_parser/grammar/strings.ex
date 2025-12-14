@@ -462,9 +462,16 @@ defmodule ToxicParser.Grammar.Strings do
     {trimmed, new_at_line_start, new_spaces_left} =
       trim_fragment(content, indent, at_line_start, spaces_left, line_continuation?)
 
-    trim_parts_loop(rest, indent, new_at_line_start, new_spaces_left, [
-      {:fragment, trimmed} | acc
-    ], line_continuation?)
+    trim_parts_loop(
+      rest,
+      indent,
+      new_at_line_start,
+      new_spaces_left,
+      [
+        {:fragment, trimmed} | acc
+      ],
+      line_continuation?
+    )
   end
 
   defp trim_parts_loop(
