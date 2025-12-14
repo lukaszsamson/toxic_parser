@@ -90,7 +90,7 @@ defmodule ToxicParser.Grammar.Strings do
       indentation = get_heredoc_indentation(end_tok)
 
       # Trim indentation from parts
-      trimmed_parts = trim_heredoc_parts(parts, indentation)
+      trimmed_parts = trim_heredoc_parts(parts, indentation, line_continuation?: true)
 
       build_heredoc_ast(trimmed_parts, kind, start_meta, indentation, state, ctx, log, min_bp)
     end
@@ -121,7 +121,9 @@ defmodule ToxicParser.Grammar.Strings do
       # If heredoc sigil, trim parts by indentation
       parts =
         if indentation != nil do
-          trim_heredoc_parts(parts, indentation)
+          # Sigil heredocs do NOT treat backslash-newline (\\\n) as a line continuation.
+          # It must be preserved in the resulting string to match Elixir's AST.
+          trim_heredoc_parts(parts, indentation, line_continuation?: false)
         else
           parts
         end
@@ -438,67 +440,88 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Trim heredoc parts based on indentation
-  defp trim_heredoc_parts(parts, indentation) when indentation <= 0, do: parts
+  defp trim_heredoc_parts(parts, indentation, _opts) when indentation <= 0, do: parts
 
-  defp trim_heredoc_parts(parts, indentation) do
+  defp trim_heredoc_parts(parts, indentation, opts) do
+    line_continuation? = Keyword.get(opts, :line_continuation?, true)
+
     {trimmed, _at_line_start, _spaces_left} =
-      trim_parts_loop(parts, indentation, true, indentation, [])
+      trim_parts_loop(parts, indentation, true, indentation, [], line_continuation?)
 
     Enum.reverse(trimmed)
   end
 
-  defp trim_parts_loop([{:fragment, content} | rest], indent, at_line_start, spaces_left, acc) do
+  defp trim_parts_loop(
+         [{:fragment, content} | rest],
+         indent,
+         at_line_start,
+         spaces_left,
+         acc,
+         line_continuation?
+       ) do
     {trimmed, new_at_line_start, new_spaces_left} =
-      trim_fragment(content, indent, at_line_start, spaces_left)
+      trim_fragment(content, indent, at_line_start, spaces_left, line_continuation?)
 
     trim_parts_loop(rest, indent, new_at_line_start, new_spaces_left, [
       {:fragment, trimmed} | acc
-    ])
+    ], line_continuation?)
   end
 
-  defp trim_parts_loop([{:interpolation, ast} | rest], indent, _at_line_start, _spaces_left, acc) do
+  defp trim_parts_loop(
+         [{:interpolation, ast} | rest],
+         indent,
+         _at_line_start,
+         _spaces_left,
+         acc,
+         line_continuation?
+       ) do
     # Interpolation counts as content on this line; no more trimming after it
-    trim_parts_loop(rest, indent, false, 0, [{:interpolation, ast} | acc])
+    trim_parts_loop(rest, indent, false, 0, [{:interpolation, ast} | acc], line_continuation?)
   end
 
-  defp trim_parts_loop([], _indent, at_line_start, spaces_left, acc) do
+  defp trim_parts_loop([], _indent, at_line_start, spaces_left, acc, _line_continuation?) do
     {acc, at_line_start, spaces_left}
   end
 
   # Trim indentation from a fragment
-  defp trim_fragment(content, indent, at_line_start, spaces_left) do
+  defp trim_fragment(content, indent, at_line_start, spaces_left, line_continuation?) do
     chars = :binary.bin_to_list(content)
 
     {rev_chars, final_at_line_start, final_spaces_left} =
-      trim_chars(chars, indent, at_line_start, spaces_left, [])
+      trim_chars(chars, indent, at_line_start, spaces_left, [], line_continuation?)
 
     trimmed = rev_chars |> Enum.reverse() |> :erlang.list_to_binary()
     {trimmed, final_at_line_start, final_spaces_left}
   end
 
-  defp trim_chars([?\\, ?\n | rest], indent, _at_line_start, _spaces_left, acc) do
+  defp trim_chars([?\\, ?\n | rest], indent, _at_line_start, _spaces_left, acc, true) do
     # Line continuation (backslash-newline): remove both and strip following indentation
     # The \\\n escape becomes empty after unescaping, so we don't add anything
-    trim_chars(rest, indent, true, indent, acc)
+    trim_chars(rest, indent, true, indent, acc, true)
   end
 
-  defp trim_chars([?\n | rest], indent, _at_line_start, _spaces_left, acc) do
+  defp trim_chars([?\\, ?\n | rest], indent, at_line_start, spaces_left, acc, false) do
+    # In sigil heredocs, backslash-newline is preserved.
+    trim_chars([?\n | rest], indent, at_line_start, spaces_left, [?\\ | acc], false)
+  end
+
+  defp trim_chars([?\n | rest], indent, _at_line_start, _spaces_left, acc, line_continuation?) do
     # Newline resets indentation trimming
-    trim_chars(rest, indent, true, indent, [?\n | acc])
+    trim_chars(rest, indent, true, indent, [?\n | acc], line_continuation?)
   end
 
-  defp trim_chars([ch | rest], indent, true, spaces_left, acc)
+  defp trim_chars([ch | rest], indent, true, spaces_left, acc, line_continuation?)
        when spaces_left > 0 and (ch == ?\s or ch == ?\t) do
     # Trim spaces/tabs at start of line
-    trim_chars(rest, indent, true, spaces_left - 1, acc)
+    trim_chars(rest, indent, true, spaces_left - 1, acc, line_continuation?)
   end
 
-  defp trim_chars([ch | rest], indent, _at_line_start, spaces_left, acc) do
+  defp trim_chars([ch | rest], indent, _at_line_start, spaces_left, acc, line_continuation?) do
     # Regular character - keep and mark no longer at line start
-    trim_chars(rest, indent, false, spaces_left, [ch | acc])
+    trim_chars(rest, indent, false, spaces_left, [ch | acc], line_continuation?)
   end
 
-  defp trim_chars([], _indent, at_line_start, spaces_left, acc) do
+  defp trim_chars([], _indent, at_line_start, spaces_left, acc, _line_continuation?) do
     {acc, at_line_start, spaces_left}
   end
 
