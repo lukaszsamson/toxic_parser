@@ -1440,12 +1440,10 @@ defmodule ToxicParser.ConformanceTest do
 
       assert_conforms("Foo.{a}")
       assert_conforms("Foo.{A}")
-      # Reference parser bug: newlines metadata missing for non-empty containers
-      assert_conforms("Foo.{A\n}", normalize_container_newlines: true)
+      assert_conforms("Foo.{A\n}")
 
       assert_conforms("Foo.{A,}")
-      # Reference parser bug: newlines metadata missing for non-empty containers
-      assert_conforms("Foo.{A,\n}", normalize_container_newlines: true)
+      assert_conforms("Foo.{A,\n}")
 
       assert_conforms("Foo.{A, b.C}")
 
@@ -1498,7 +1496,7 @@ defmodule ToxicParser.ConformanceTest do
     test "parens_call kw_call" do
       assert_conforms("foo(bar: 1)")
       assert_conforms("foo(\nbar: 1)")
-      assert_conforms("foo(bar: 1\n)", normalize_container_newlines: true)
+      assert_conforms("foo(bar: 1\n)")
       assert_conforms("foo(bar: 1,)")
       assert_conforms("foo(bar: 1, baz: :ok)")
 
@@ -2538,21 +2536,13 @@ defmodule ToxicParser.ConformanceTest do
   # Helper function
   # =============================================================================
 
-  defp assert_conforms(code, opts \\ []) do
+  defp assert_conforms(code, _opts \\ []) do
     reference = s2q(code)
     actual = toxic_parse(code)
 
-    # Apply optional normalization for known reference parser bugs
-    {reference, actual} =
-      if opts[:normalize_container_newlines] do
-        {normalize_container_newlines(reference), normalize_container_newlines(actual)}
-      else
-        {reference, actual}
-      end
-
     assert actual == reference,
            """
-           AST mismatch for: #{inspect(code)}
+            AST mismatch for: #{inspect(code)}
 
            Reference:
            #{inspect(reference, pretty: true)}
@@ -2584,73 +2574,4 @@ defmodule ToxicParser.ConformanceTest do
       _ -> :unknown_error
     end
   end
-
-  # Normalize newlines metadata in container expressions.
-  # The reference parser has a bug where empty containers get :newlines metadata
-  # but non-empty containers don't. We normalize by stripping :newlines from
-  # the call_meta of dot_containers so both sides match.
-  defp normalize_container_newlines({:ok, ast}), do: {:ok, normalize_container_newlines(ast)}
-  defp normalize_container_newlines({:error, _} = err), do: err
-
-  # dot_container: {{:., dot_meta, [base, :{}]}, call_meta, args}
-  defp normalize_container_newlines({{:., dot_meta, [base, :{}]}, call_meta, args}) do
-    # Strip :newlines from call_meta to normalize the bug
-    normalized_call_meta = Keyword.delete(call_meta, :newlines)
-    normalized_args = Enum.map(args, &normalize_container_newlines/1)
-
-    {{:., normalize_container_newlines(dot_meta), [normalize_container_newlines(base), :{}]},
-     normalized_call_meta, normalized_args}
-  end
-
-  # bitstring: {:<<>>, meta, args}
-  defp normalize_container_newlines({:<<>>, meta, args}) do
-    normalized_meta = Keyword.delete(meta, :newlines)
-    normalized_args = Enum.map(args, &normalize_container_newlines/1)
-    {:<<>>, normalized_meta, normalized_args}
-  end
-
-  # map: {:%{}, meta, args}
-  defp normalize_container_newlines({:%{}, meta, args}) do
-    normalized_meta = Keyword.delete(meta, :newlines)
-    normalized_args = Enum.map(args, &normalize_container_newlines/1)
-    {:%{}, normalized_meta, normalized_args}
-  end
-
-  # Regular function calls with non-empty args - strip :newlines if args present
-  # Reference parser bug: empty calls get newlines but non-empty don't
-  defp normalize_container_newlines({name, meta, args})
-       when is_atom(name) and is_list(meta) and is_list(args) and args != [] do
-    if Keyword.has_key?(meta, :closing) do
-      normalized_meta = Keyword.delete(meta, :newlines)
-      normalized_args = Enum.map(args, &normalize_container_newlines/1)
-      {name, normalized_meta, normalized_args}
-    else
-      normalized_args = Enum.map(args, &normalize_container_newlines/1)
-      {name, normalize_container_newlines(meta), normalized_args}
-    end
-  end
-
-  # Generic 3-tuple (most AST nodes)
-  defp normalize_container_newlines({name, meta, args}) when is_list(args) do
-    {normalize_container_newlines(name), normalize_container_newlines(meta),
-     Enum.map(args, &normalize_container_newlines/1)}
-  end
-
-  defp normalize_container_newlines({name, meta, args}) do
-    {normalize_container_newlines(name), normalize_container_newlines(meta),
-     normalize_container_newlines(args)}
-  end
-
-  # 2-tuple (keyword pairs, etc)
-  defp normalize_container_newlines({a, b}) do
-    {normalize_container_newlines(a), normalize_container_newlines(b)}
-  end
-
-  # List
-  defp normalize_container_newlines(list) when is_list(list) do
-    Enum.map(list, &normalize_container_newlines/1)
-  end
-
-  # Atoms, numbers, strings, etc - pass through
-  defp normalize_container_newlines(other), do: other
 end
