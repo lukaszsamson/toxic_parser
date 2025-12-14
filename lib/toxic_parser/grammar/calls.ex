@@ -259,6 +259,7 @@ defmodule ToxicParser.Grammar.Calls do
       :"<<",
       :unary_op,
       :at_op,
+      :capture_int,
       :capture_op,
       :dual_op,
       # Maps and structs
@@ -285,29 +286,35 @@ defmodule ToxicParser.Grammar.Calls do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
-         # Skip trailing EOE before close paren
-         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
-         {:ok, close_tok, state} <- expect_token(state, :")") do
-      # For non-empty calls, only count leading newlines
-      # For empty calls, count all newlines
-      total_newlines =
-        if args == [] do
-          leading_newlines + trailing_newlines
-        else
-          leading_newlines
-        end
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
+      # Skip trailing EOE before close paren
+      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
-      callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
-      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+      case expect_token(state, :")") do
+        {:ok, close_tok, state} ->
+          # For non-empty calls, only count leading newlines
+          # For empty calls, count all newlines
+          total_newlines =
+            if args == [] do
+              leading_newlines + trailing_newlines
+            else
+              leading_newlines
+            end
 
-      # Build metadata: [newlines: N, closing: [...], line: L, column: C]
-      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+          callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
 
-      ast = {callee_tok.value, meta, Enum.reverse(args)}
-      # Check for nested call: foo()() - another paren call on the result
-      maybe_nested_call(ast, state, ctx, log)
+          # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+          ast = {callee_tok.value, meta, Enum.reverse(args)}
+          # Check for nested call: foo()() - another paren call on the result
+          maybe_nested_call(ast, state, ctx, log)
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
     end
   end
 
@@ -329,29 +336,35 @@ defmodule ToxicParser.Grammar.Calls do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
-         # Skip trailing EOE before close paren
-         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
-         {:ok, close_tok, state} <- expect_token(state, :")") do
-      # For non-empty calls, only count leading newlines
-      # For empty calls, count all newlines
-      total_newlines =
-        if args == [] do
-          leading_newlines + trailing_newlines
-        else
-          leading_newlines
-        end
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
+      # Skip trailing EOE before close paren
+      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
-      # Get line/column from callee AST
-      callee_meta = extract_meta(callee_ast)
-      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+      case expect_token(state, :")") do
+        {:ok, close_tok, state} ->
+          # For non-empty calls, only count leading newlines
+          # For empty calls, count all newlines
+          total_newlines =
+            if args == [] do
+              leading_newlines + trailing_newlines
+            else
+              leading_newlines
+            end
 
-      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+          # Get line/column from callee AST
+          callee_meta = extract_meta(callee_ast)
+          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
 
-      ast = {callee_ast, meta, Enum.reverse(args)}
-      # Recurse for chained calls like foo()()()
-      maybe_nested_call(ast, state, ctx, log)
+          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+          ast = {callee_ast, meta, Enum.reverse(args)}
+          # Recurse for chained calls like foo()()()
+          maybe_nested_call(ast, state, ctx, log)
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
     end
   end
 
@@ -394,7 +407,7 @@ defmodule ToxicParser.Grammar.Calls do
         cond do
           Keywords.starts_kw?(tok) ->
             # kw_list is already [x: 1], wrap once for args: [[x: 1]]
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+            with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
               {:ok, Enum.reverse([kw_list | acc]), state, log}
             end
 
@@ -412,7 +425,7 @@ defmodule ToxicParser.Grammar.Calls do
                       if Keywords.starts_kw?(next_tok) do
                         # Continue collecting keywords into this list
                         with {:ok, more_kw, state, log} <-
-                               Keywords.parse_kw_call(state, ctx, log) do
+                               Keywords.parse_kw_no_parens_call(state, ctx, log) do
                           merged_kw = arg ++ more_kw
                           {:ok, Enum.reverse([merged_kw | acc]), state, log}
                         end
@@ -500,7 +513,7 @@ defmodule ToxicParser.Grammar.Calls do
   # Parse identifier without calling led at the end
   defp parse_identifier_no_led(kind, tok, state, ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} ->
+      {:ok, %{kind: :"("}, _} when kind == :paren_identifier ->
         parse_paren_call_no_led(tok, state, ctx, log)
 
       {:ok, %{kind: :"["} = open_tok, _} when kind == :bracket_identifier ->
@@ -540,19 +553,25 @@ defmodule ToxicParser.Grammar.Calls do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
     {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
-         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
-         {:ok, close_tok, state} <- expect_token(state, :")") do
-      total_newlines =
-        if args == [], do: leading_newlines + trailing_newlines, else: leading_newlines
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
+      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
-      callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
-      close_meta = Builder.Helpers.token_meta(close_tok.metadata)
-      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-      ast = {callee_tok.value, meta, Enum.reverse(args)}
-      # Return without calling led
-      {:ok, ast, state, log}
+      case expect_token(state, :")") do
+        {:ok, close_tok, state} ->
+          total_newlines =
+            if args == [], do: leading_newlines + trailing_newlines, else: leading_newlines
+
+          callee_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+          ast = {callee_tok.value, meta, Enum.reverse(args)}
+          # Return without calling led
+          {:ok, ast, state, log}
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
     end
   end
 

@@ -61,6 +61,20 @@ defmodule ToxicParser.ElixirSourceReprosTest do
 
       assert_conforms(code)
     end
+
+    test "escaped backslash at EOL in heredoc is preserved" do
+      # From: /Users/lukaszsamson/elixir/lib/iex/test/iex/interaction_test.exs
+      # In heredocs, a trailing backslash (\) escapes the newline (line continuation),
+      # but an escaped backslash (\\) should produce a literal backslash and KEEP the newline.
+      code = ~S'''
+      code = """
+      1 \\
+      + 2
+      """
+      '''
+
+      assert_conforms(code)
+    end
   end
 
   describe "bitstring stab patterns" do
@@ -167,6 +181,75 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       if opts[:cache], do: [:cache], else: [:nocache]
       '''
 
+      assert_conforms(code)
+    end
+  end
+
+  describe "keyword lists with do/else keys" do
+    test "keyword list can continue after do:" do
+      # Regression fixed: `do` must not be treated as a terminator after a comma
+      # when parsing keyword lists.
+      code = ~S'''
+      foo(do: 1, else: 2)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "keyword list literal with do/else" do
+      code = ~S'''
+      [do: 1, else: 2]
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "map assoc keys in no-parens call args" do
+    test "map key can be try-do-end block inside no-parens call arg" do
+      # Repro for Elixir's MapTest: a map key can be a block expression.
+      # This must work even when the map appears in no-parens call args
+      # (our args parse in :matched context).
+      code = ~S'''
+      f %{
+        try do
+          raise "error"
+        rescue
+          _ -> 1
+        end => 1
+      }
+      '''
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "struct base expressions" do
+    test "struct base can be a dotted paren call (URI.t())" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/test/elixir/typespec_test.exs
+      # Repro: ensure `URI.t()` parses as a call on the dotted target:
+      #   {{:., ..., [__aliases__(URI), :t]}, meta, []}
+      # not as a dot whose member is a call:
+      #   {:., ..., [__aliases__(URI), {:t, meta, []}]}
+      code = "test_module do\n  @type my_type :: %URI.t(){}\nend\n"
+      assert_conforms(code)
+    end
+  end
+
+  describe "capture expressions" do
+    test "capture of case with &1 inside parens call" do
+      # From: /Users/lukaszsamson/elixir/lib/mix/lib/mix/tasks/compile.ex
+      # This form relies on `&1` being a valid no-parens argument.
+      code = "Enum.map([:noop], &case &1 do\n  :noop -> {:noop, []}\n  {status, diagnostics} -> {status, diagnostics}\nend)"
+      assert_conforms(code)
+    end
+  end
+
+  describe "regressions" do
+    test "defmodule name is an alias, not a 0-arity call" do
+      # Ensure `EEx` is represented as {:__aliases__, ..., [:EEx]} (like s2q)
+      # and not as {:EEx, meta, []}.
+      code = "defmodule EEx do\nend"
       assert_conforms(code)
     end
   end

@@ -489,9 +489,16 @@ defmodule ToxicParser.Grammar.Maps do
   # consume => and parse the value. This ensures => is not consumed as part
   # of the key expression.
   defp parse_assoc_expr(state, ctx, log) do
+    # Even when the surrounding context is :matched (e.g. inside no-parens call
+    # args), map keys/values must still allow full container expressions,
+    # including block expressions like `try do ... end` used as a key.
+    #
+    # This matches Elixir's behavior: you can write `%{try do ... end => 1}`.
+    _ctx = ctx
+
     # Parse the full expression - this will include => as a binary operator
     # Then extract the key/value from the rightmost => in the expression tree
-    case Pratt.parse(state, ctx, log) do
+    case Pratt.parse(state, :unmatched, log) do
       {:ok, expr, state, log} ->
         # Check if the result has => at top level or nested
         case extract_assoc(expr) do
@@ -512,7 +519,7 @@ defmodule ToxicParser.Grammar.Maps do
         # Skip EOE (newlines) after the colon before parsing value
         state = skip_eoe(state)
 
-        with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
+        with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
           {:ok, {key_atom, value_ast}, state, log}
         end
 
@@ -521,7 +528,7 @@ defmodule ToxicParser.Grammar.Maps do
         # Skip EOE (newlines) after the colon before parsing value
         state = skip_eoe(state)
 
-        with {:ok, value_ast, state, log} <- Expressions.expr(state, :matched, log) do
+        with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           {:ok, {key_ast, value_ast}, state, log}
         end

@@ -420,7 +420,7 @@ defmodule ToxicParser.Pratt do
             cond do
               Keywords.starts_kw?(tok) ->
                 # kw_list is already [x: 1], we need to wrap it once for args: [[x: 1]]
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
                   {:ok, Enum.reverse([kw_list | acc]), state, log}
                 end
 
@@ -659,12 +659,24 @@ defmodule ToxicParser.Pratt do
     unary_operand = Keyword.get(opts, :unary_operand, false)
 
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} ->
-        # Paren call - parse directly to preserve min_bp
-        # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp
-        # Pass opts through so do-blocks after paren call know the context
+      {:ok, %{kind: :"("}, _} when token.kind == :paren_identifier ->
+        # Paren call (no space before '(') - parse directly to preserve min_bp.
+        # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp.
+        # Pass opts through so do-blocks after paren call know the context.
         with {:ok, ast, state, log} <- parse_paren_call_base(token, state, context, log) do
           maybe_nested_call_or_do_block(ast, state, log, min_bp, context, opts)
+        end
+
+      {:ok, %{kind: :"("}, _} ->
+        # `foo (expr)` is a no-parens call where the `(` begins a parenthesized
+        # expression argument (it is NOT a paren-call like `foo(expr)`).
+        # This matters because trailing operators (e.g. `foo (1 <<< 7) - 1`)
+        # belong to the argument expression in Elixir.
+        state = TokenAdapter.pushback(state, token)
+
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+          led_min_bp = if has_do_block?(right) and unary_operand, do: 0, else: min_bp
+          led(right, state, log, led_min_bp, context, opts)
         end
 
       {:ok, %{kind: :do}, _} ->
@@ -733,28 +745,34 @@ defmodule ToxicParser.Pratt do
     {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
 
     with {:ok, args, state, log} <-
-           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
-         # Skip trailing EOE before close paren
-         {state, trailing_newlines} = skip_eoe_count_newlines(state, 0),
-         {:ok, close_tok, state} <- expect_close_paren(state) do
-      # For non-empty calls, only count leading newlines
-      # For empty calls, count all newlines
-      total_newlines =
-        if args == [] do
-          leading_newlines + trailing_newlines
-        else
-          leading_newlines
-        end
+           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+      # Skip trailing EOE before close paren
+      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
 
-      callee_meta = build_meta(callee_tok.metadata)
-      close_meta = build_meta(close_tok.metadata)
+      case expect_close_paren(state) do
+        {:ok, close_tok, state} ->
+          # For non-empty calls, only count leading newlines
+          # For empty calls, count all newlines
+          total_newlines =
+            if args == [] do
+              leading_newlines + trailing_newlines
+            else
+              leading_newlines
+            end
 
-      # Build metadata: [newlines: N, closing: [...], line: L, column: C]
-      newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-      meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+          callee_meta = build_meta(callee_tok.metadata)
+          close_meta = build_meta(close_tok.metadata)
 
-      ast = {callee_tok.value, meta, Enum.reverse(args)}
-      {:ok, ast, state, log}
+          # Build metadata: [newlines: N, closing: [...], line: L, column: C]
+          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+          ast = {callee_tok.value, meta, Enum.reverse(args)}
+          {:ok, ast, state, log}
+
+        {:error, reason, state} ->
+          {:error, reason, state, log}
+      end
     end
   end
 
@@ -796,6 +814,7 @@ defmodule ToxicParser.Pratt do
       :"<<",
       :unary_op,
       :at_op,
+      :capture_int,
       :capture_op,
       :dual_op,
       # Maps and structs
@@ -1155,7 +1174,8 @@ defmodule ToxicParser.Pratt do
               # This applies regardless of context (not just :no_parens)
               {:ok, rhs_tok, _} when op_token.kind == :when_op ->
                 if Keywords.starts_kw?(rhs_tok) do
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, context, log) do
+                  with {:ok, kw_list, state, log} <-
+                         Keywords.parse_kw_no_parens_call(state, context, log) do
                     op = op_token.value
                     meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
                     combined = Builder.Helpers.binary(op, left, kw_list, meta)
@@ -1903,6 +1923,11 @@ defmodule ToxicParser.Pratt do
               {:__aliases__, rhs_meta, [rhs_alias]} ->
                 build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
 
+              # Paren call on RHS (tokenized as dot_paren_identifier)
+              # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
+              {name, meta, args} when is_atom(name) and is_list(args) ->
+                {{:., dot_meta, [left, name]}, meta, args}
+
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->
                 {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
@@ -1937,6 +1962,11 @@ defmodule ToxicParser.Pratt do
               # Alias on RHS - build combined __aliases__ (dot_alias rule)
               {:__aliases__, rhs_meta, [rhs_alias]} ->
                 build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
+              # Paren call on RHS (tokenized as dot_paren_identifier)
+              # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
+              {name, meta, args} when is_atom(name) and is_list(args) ->
+                {{:., dot_meta, [left, name]}, meta, args}
 
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->

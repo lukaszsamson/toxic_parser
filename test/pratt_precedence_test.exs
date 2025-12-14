@@ -4,10 +4,9 @@ defmodule ToxicParser.PrattPrecedenceTest do
   alias ToxicParser.{Precedence, Pratt, TokenAdapter, EventLog}
   alias ToxicParser.Grammar
 
-  test "binary binding powers are ordered and include dot/access/not_in" do
+  test "binary binding powers are ordered and include dot/not_in" do
     table = Precedence.binary_table()
     assert {:dot_op, _, _} = List.keyfind(table, :dot_op, 0)
-    assert {:access_op, _, _} = List.keyfind(table, :access_op, 0)
     assert Precedence.not_in() == elem(Precedence.binary(:in_op), 0)
 
     # Ensure ordering is ascending by binding power

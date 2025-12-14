@@ -495,9 +495,26 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   defp trim_chars([?\\, ?\n | rest], indent, _at_line_start, _spaces_left, acc, true) do
-    # Line continuation (backslash-newline): remove both and strip following indentation
-    # The \\\n escape becomes empty after unescaping, so we don't add anything
-    trim_chars(rest, indent, true, indent, acc, true)
+    # Line continuation (backslash-newline) should only trigger when the backslash is not itself
+    # escaped by a preceding backslash. For example:
+    # - "\\\n"   => continuation (newline removed)
+    # - "\\\\\n" => escaped backslash + newline preserved
+    if escaped_by_preceding_backslash?(acc) do
+      # Preserve the backslash + newline; newline resets indentation trimming.
+      trim_chars(rest, indent, true, indent, [?\n, ?\\ | acc], true)
+    else
+      # Continuation: remove both and strip following indentation.
+      trim_chars(rest, indent, true, indent, acc, true)
+    end
+  end
+
+  defp trim_chars([?\\, ?\r, ?\n | rest], indent, _at_line_start, _spaces_left, acc, true) do
+    # Same as above but for CRLF.
+    if escaped_by_preceding_backslash?(acc) do
+      trim_chars(rest, indent, true, indent, [?\n, ?\r, ?\\ | acc], true)
+    else
+      trim_chars(rest, indent, true, indent, acc, true)
+    end
   end
 
   defp trim_chars([?\\, ?\n | rest], indent, at_line_start, spaces_left, acc, false) do
@@ -524,6 +541,15 @@ defmodule ToxicParser.Grammar.Strings do
   defp trim_chars([], _indent, at_line_start, spaces_left, acc, _line_continuation?) do
     {acc, at_line_start, spaces_left}
   end
+
+  defp escaped_by_preceding_backslash?(acc) when is_list(acc) do
+    # `acc` is reversed; leading backslashes in `acc` correspond to immediately-preceding backslashes.
+    # If we have an odd number of preceding backslashes, the current backslash is escaped.
+    rem(count_leading_backslashes(acc), 2) == 1
+  end
+
+  defp count_leading_backslashes([?\\ | rest]), do: 1 + count_leading_backslashes(rest)
+  defp count_leading_backslashes(_), do: 0
 
   # Unescape string escape sequences like \n, \t, etc.
   defp unescape(string), do: Macro.unescape_string(string)
