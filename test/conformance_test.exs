@@ -2412,6 +2412,119 @@ defmodule ToxicParser.ConformanceTest do
     end
   end
 
+  describe "additional valid edge combinations" do
+    test "stab_parens_many with guards and nesting" do
+      assert_conforms("fn (a, b, c: 1) when guard -> body end")
+      assert_conforms("fn ((nested)) -> body end")
+      assert_conforms("fn ({:ok, x}, {:error, y}) when x > y -> x end")
+    end
+
+    test "nested no-parens keyword values" do
+      assert_conforms("foo a: bar 1, 2")
+      assert_conforms("foo a: bar 1, 2, b: baz 3")
+      assert_conforms("if a: bar 1, 2 do\nend")
+    end
+
+    test "arrow ops with no-parens rhs" do
+      assert_conforms("a ~> foo 1")
+      assert_conforms("a <~ foo 1")
+      assert_conforms("a <<< foo 1")
+      assert_conforms("a >>> foo 1")
+      assert_conforms("a <~> foo 1")
+    end
+
+    test "map update bases and operators" do
+      assert_conforms("%{foo() | a => b}")
+      assert_conforms("%{Mod.func() | a => b}")
+      assert_conforms("%{@attr | a: 1}")
+      assert_conforms("%{x.y.z | a: 1}")
+      assert_conforms("%{if foo do bar end | a: 1}")
+    end
+
+    test "dot_container variants" do
+      assert_conforms("Foo.{A, b: 1}")
+      assert_conforms("Foo.{if a do b end}")
+      assert_conforms("Foo.{A, B, c: 1, d: 2}")
+      assert_conforms("foo.bar.{A, B, C}")
+      assert_conforms("1.{A}")
+      assert_conforms("(a + b).{C}")
+    end
+
+    test "expanded quoted identifiers" do
+      assert_conforms(~S[foo."bar baz"()])
+      assert_conforms("foo.\"bar\\nbaz\" 1, 2")
+      assert_conforms(~S(foo."bar"[:key]))
+      assert_conforms("foo.\"bar\" do\nend")
+      assert_conforms(~S[&"func"/1])
+    end
+
+    test "bitstring modifiers" do
+      assert_conforms("<<x::size(if a do 8 else 16 end)>>")
+      assert_conforms("<<x::size(foo 1, 2)>>")
+      assert_conforms("<<x::(if a do binary else integer end)>>")
+      assert_conforms("<<@attr::binary>>")
+      assert_conforms("<<foo()::8-unit(4)>>")
+    end
+
+    test "containers with unmatched expressions" do
+      assert_conforms("[if a do 1 end, if b do 2 end]")
+      assert_conforms("{if a do 1 end, if b do 2 end, if c do 3 end}")
+      assert_conforms("%{if a do :key end => if b do :val end}")
+      assert_conforms("<<if a do 1 end>>")
+    end
+
+    test "keyword block forms" do
+      assert_conforms("if true, do: :ok")
+      assert_conforms("if true, do: :ok, else: :error")
+      assert_conforms("with {:ok, x} <- foo(), do: x, else: (_ -> :error)")
+    end
+
+    test "block list combinations" do
+      assert_conforms(
+        "try do\n:ok\nrescue e -> e\ncatch :throw, x -> x\nelse _ -> :default\nafter :cleanup\nend"
+      )
+
+      assert_conforms("receive do\n:msg -> :ok\nafter 100 -> :timeout\nend")
+
+      assert_conforms(
+        "with {:ok, a} <- foo(), {:ok, b} <- bar() do\n{a, b}\nelse {:error, e} -> e\nend"
+      )
+    end
+
+    test "stab_eoe annotations" do
+      assert_conforms("fn x -> x; y -> y end")
+      assert_conforms("(fn x -> x; y -> y end)")
+    end
+
+    test "dot_call newline boundaries" do
+      assert_conforms("foo.\n()")
+      assert_conforms("foo.\n(1, 2)")
+    end
+
+    test "sigil delimiters" do
+      assert_conforms("~s(foo)")
+      assert_conforms("~s[foo]")
+      assert_conforms("~s{foo}")
+      assert_conforms("~s<foo>")
+      assert_conforms("~s/foo/")
+      assert_conforms("~s|foo|")
+      assert_conforms("~s'foo'")
+    end
+
+    test "unicode identifiers and atoms" do
+      assert_conforms("fóó()")
+      assert_conforms(":bår")
+      assert_conforms("fn fóó -> fóó end")
+    end
+
+    test "operator edge cases" do
+      assert_conforms("& &1 + &2")
+      assert_conforms("x <- y")
+      assert_conforms("x \\\\ y")
+      assert_conforms("1..10//2 + 3")
+    end
+  end
+
   # =============================================================================
   # Helper function
   # =============================================================================
