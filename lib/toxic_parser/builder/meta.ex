@@ -38,6 +38,10 @@ defmodule ToxicParser.Builder.Meta do
     end
   end
 
+  @doc "Builds a `[newlines: n]` keyword when n > 0, otherwise []."
+  @spec newlines_meta(non_neg_integer()) :: keyword()
+  def newlines_meta(n) when is_integer(n) and n >= 0, do: newlines_kv(n)
+
   @spec total_newlines(non_neg_integer(), non_neg_integer(), boolean()) :: non_neg_integer()
   def total_newlines(leading, trailing, include_trailing?) do
     leading + if(include_trailing?, do: trailing, else: 0)

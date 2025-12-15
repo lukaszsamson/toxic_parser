@@ -150,7 +150,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
     # Skip EOE after stab and count newlines
     {state, newlines} = EOE.skip_count_newlines(state, 0)
-    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    newlines_meta = Meta.newlines_meta(newlines)
 
     # Parse body (or empty if just ->)
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -183,7 +183,7 @@ defmodule ToxicParser.Grammar.Stabs do
           stab_base_meta = token_meta(stab_tok.metadata)
           # Skip EOE after stab and count newlines
           {state, newlines} = EOE.skip_count_newlines(state, 0)
-          newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+          newlines_meta = Meta.newlines_meta(newlines)
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
             # Build guarded stab clause
@@ -287,7 +287,7 @@ defmodule ToxicParser.Grammar.Stabs do
     stab_base_meta = token_meta(stab_tok.metadata)
     # Skip EOE after stab and count newlines
     {state, newlines} = EOE.skip_count_newlines(state, 0)
-    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+    newlines_meta = Meta.newlines_meta(newlines)
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
       parens_meta =
@@ -325,7 +325,7 @@ defmodule ToxicParser.Grammar.Stabs do
           stab_base_meta = token_meta(stab_tok.metadata)
           # Skip EOE after stab and count newlines
           {state, newlines} = EOE.skip_count_newlines(state, 0)
-          newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+          newlines_meta = Meta.newlines_meta(newlines)
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
             parens_meta =
