@@ -23,9 +23,7 @@ defmodule ToxicParser.Pratt do
 
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Blocks, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
-
-  # Check if an expression result is a keyword list (from quoted keyword parsing)
-  defguardp is_keyword_list_result(arg) when is_list(arg) and length(arg) > 0
+  import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type context :: :matched | :unmatched | :no_parens
 

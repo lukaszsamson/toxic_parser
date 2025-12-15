@@ -4,10 +4,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
-
-  # Check if an expression result is a keyword list (from quoted keyword parsing)
-  defguardp is_keyword_list_result(arg)
-            when is_list(arg) and length(arg) > 0
+  import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @spec expect(State.t(), atom()) :: {:ok, atom(), State.t()} | {:error, term(), State.t()}
   def expect(state, kind) do

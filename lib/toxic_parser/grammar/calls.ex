@@ -10,10 +10,7 @@ defmodule ToxicParser.Grammar.Calls do
   alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{DoBlocks, EOE, Expressions, Keywords}
-
-  # Check if an expression result is a keyword list (from quoted keyword parsing)
-  defguardp is_keyword_list_result(arg)
-            when is_list(arg) and length(arg) > 0
+  import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}

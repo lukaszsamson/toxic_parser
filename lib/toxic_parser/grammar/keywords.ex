@@ -19,6 +19,9 @@ defmodule ToxicParser.Grammar.Keywords do
   # String start tokens that could be quoted keyword keys like "foo": or 'bar':
   @quoted_kw_start [:bin_string_start, :list_string_start]
 
+  @doc "Checks if an expression result is a keyword list (from quoted keyword parsing)"
+  defguard is_keyword_list_result(arg) when is_list(arg) and arg != []
+
   @doc "Returns true if the token kind starts a keyword pair."
   @spec starts_kw?(map()) :: boolean()
   def starts_kw?(%{kind: kind}) do
