@@ -893,10 +893,11 @@ defmodule ToxicParser.Pratt do
 
               case TokenAdapter.next(state) do
                 {:ok, %{kind: :")"} = close_tok, state} ->
-                  total_newlines = leading_newlines + trailing_newlines
+                  # newlines represents leading newlines after (, not trailing before )
+                  _ = trailing_newlines
                   close_meta = build_meta(close_tok.metadata)
 
-                  newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
+                  newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
                   call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
 
                   combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}
