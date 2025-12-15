@@ -36,6 +36,48 @@ defmodule ToxicParser.Grammar.Dots do
   end
 
   @doc """
+  Parse a dot call `expr.(...)` when the current token is `:dot_call_op`.
+  """
+  @spec parse_dot_call(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse_dot_call(left, %State{} = state, ctx, %EventLog{} = log) do
+    {:ok, dot_tok, state} = TokenAdapter.next(state)
+    dot_meta = Builder.Helpers.token_meta(dot_tok.metadata)
+
+    # dot_call_op is immediately followed by (
+    {:ok, _open, state} = TokenAdapter.next(state)
+
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
+      # Skip trailing EOE before close paren
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+      _ = trailing_newlines
+
+      case TokenAdapter.next(state) do
+        {:ok, %{kind: :")"} = close_tok, state} ->
+          # newlines represents leading newlines after (, not trailing before )
+          _ = trailing_newlines
+          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
+
+          newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+          call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
+
+          {:ok, {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}, state, log}
+
+        {:ok, other, state} ->
+          {:error, {:expected, :")", got: other.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state, log}
+
+        {:error, diag, state} ->
+          {:error, diag, state, log}
+      end
+    end
+  end
+
+  @doc """
   Parses the RHS of a dot: identifier/alias/call/bracket/paren call.
   Returns `{:ok, {member_value, member_meta}, state, log}` for simple identifiers,
   or `{:ok, call_ast, state, log}` for calls.

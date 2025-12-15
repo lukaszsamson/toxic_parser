@@ -1030,46 +1030,10 @@ defmodule ToxicParser.Pratt do
 
           # dot_call_op: expr.(args) - anonymous function call
           {:dot_call_op, _} ->
-            {:ok, dot_tok, state} = TokenAdapter.next(state)
-            dot_meta = build_meta(dot_tok.metadata)
-
-            # The dot_call_op is followed by (args)
-            # Build: {{:., dot_meta, [left]}, call_meta, args}
-            # consume (
-            {:ok, _open_tok, state} = TokenAdapter.next(state)
-
-            # Skip leading EOE and count newlines
-            {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
-
-            with {:ok, args, state, log} <-
-                   ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-              # Skip trailing EOE before close paren
-              {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
-
-              case TokenAdapter.next(state) do
-                {:ok, %{kind: :")"} = close_tok, state} ->
-                  # newlines represents leading newlines after (, not trailing before )
-                  _ = trailing_newlines
-                  close_meta = build_meta(close_tok.metadata)
-
-                  newlines_meta =
-                    if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-
-                  call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
-
-                  combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}
-                  # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
-                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-
-                {:ok, other, state} ->
-                  {:error, {:expected, :")", got: other.kind}, state, log}
-
-                {:eof, state} ->
-                  {:error, :unexpected_eof, state, log}
-
-                {:error, diag, state} ->
-                  {:error, diag, state, log}
-              end
+            with {:ok, combined, state, log} <-
+                   Dots.parse_dot_call(left, state, context, log) do
+              # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
+              maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
             end
 
           {:dot_op, {bp, _}} when bp >= min_bp ->
