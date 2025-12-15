@@ -60,7 +60,12 @@ defmodule ToxicParser.Pratt do
   @spec parse_base(State.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, context, %EventLog{} = log) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
+         {:ok, ast, state, log} <-
+           nud(token, state, context, log,
+             min_bp: 10000,
+             allow_containers: false,
+             allow_do_blocks: false
+           ) do
       {:ok, ast, state, log}
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -82,7 +87,12 @@ defmodule ToxicParser.Pratt do
   @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots(%State{} = state, context, %EventLog{} = log) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
+         {:ok, ast, state, log} <-
+           nud(token, state, context, log,
+             min_bp: 10000,
+             allow_containers: false,
+             allow_do_blocks: false
+           ) do
       led_dot_only(ast, state, log, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -97,7 +107,12 @@ defmodule ToxicParser.Pratt do
   @spec parse_base_with_dots_and_calls(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots_and_calls(%State{} = state, context, %EventLog{} = log) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, ast, state, log} <- nud_base(token, state, context, log) do
+         {:ok, ast, state, log} <-
+           nud(token, state, context, log,
+             min_bp: 10000,
+             allow_containers: false,
+             allow_do_blocks: false
+           ) do
       led_dots_and_calls(ast, state, log, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -113,7 +128,7 @@ defmodule ToxicParser.Pratt do
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer()) :: result()
   def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp) do
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, left, state, log} <- nud_with_min_bp(token, state, context, log, min_bp) do
+         {:ok, left, state, log} <- nud(token, state, context, log, min_bp: min_bp) do
       led(left, state, log, min_bp, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -144,138 +159,116 @@ defmodule ToxicParser.Pratt do
 
   # Handle unary operators in nud (null denotation)
   defp nud(token, state, context, log) do
-    nud_with_min_bp(token, state, context, log, 0)
+    nud(token, state, context, log, [])
   end
 
-  # Handle nud for base expressions only - no do-blocks or no-parens calls
-  # This is used by parse_base for struct names like %Foo{} where we want
-  # just the identifier, not trying to parse { as a no-parens call argument
-  defp nud_base(token, state, context, log) do
+  defp nud(token, state, context, log, opts) do
+    min_bp = Keyword.get(opts, :min_bp, 0)
+    allow_containers = Keyword.get(opts, :allow_containers, true)
+    allow_do_blocks = Keyword.get(opts, :allow_do_blocks, true)
+    string_min_bp = Keyword.get(opts, :string_min_bp, min_bp)
+
     case token.kind do
       :error_token ->
         meta = build_meta(token.metadata)
         ast = Builder.Helpers.error(token.value, meta)
         {:ok, ast, state, log}
 
-      :capture_int ->
-        parse_capture_int(token, state, log)
-
-      # Quoted atoms need to be handled by Strings.parse
-      kind when kind in [:atom_unsafe_start, :atom_safe_start] ->
-        state = TokenAdapter.pushback(state, token)
-        alias ToxicParser.Grammar.Strings
-        # Use very high min_bp to prevent led from consuming any operators
-        # since nud_base is for base expressions without trailing operators
-        case Strings.parse(state, context, log, 10000) do
-          {:ok, ast, state, log} -> {:ok, ast, state, log}
-          other -> other
-        end
-
-      _ ->
-        case Precedence.unary(token.kind) do
-          {bp, _assoc} ->
-            parse_unary(token, state, context, log, bp)
-
-          nil ->
-            cond do
-              token.kind == :dual_op ->
-                parse_unary(token, state, context, log, 300)
-
-              # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
-              token.kind == :ternary_op and token.value == :"//" ->
-                parse_ternary_unary(token, state, context, log)
-
-              true ->
-                # Just convert to literal AST, no do-block or no-parens call check
-                ast = literal_to_ast(token)
-                {:ok, ast, state, log}
-            end
-        end
-    end
-  end
-
-  # Handle unary operators in nud with a minimum binding power constraint
-  # The min_bp is passed through to argument parsing for no-parens calls
-  defp nud_with_min_bp(token, state, context, log, min_bp) do
-    case token.kind do
-      :error_token ->
-        meta = build_meta(token.metadata)
-        ast = Builder.Helpers.error(token.value, meta)
-        {:ok, ast, state, log}
-
-      # capture_int (&) followed by int - special form like &1, &2
       :capture_int ->
         parse_capture_int(token, state, log)
 
       # Container tokens need to be handled by Containers.parse
-      kind when kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
-        state = TokenAdapter.pushback(state, token)
-        alias ToxicParser.Grammar.Containers
-        # Containers.parse will call led after parsing the container
-        # Pass min_bp to preserve operator precedence constraints
-        Containers.parse(state, context, log, min_bp)
+      kind
+      when kind in [
+             :"[",
+             :"{",
+             :"(",
+             :"<<",
+             :%,
+             :%{},
+             :"%]"
+           ] ->
+        if allow_containers do
+          state = TokenAdapter.pushback(state, token)
+          alias ToxicParser.Grammar.Containers
+          Containers.parse(state, context, log, min_bp)
+        else
+          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+        end
 
-      # String tokens need to be handled by Strings.parse
+      # Quoted atoms need to be handled by Strings.parse even in restricted mode
+      kind when kind in [:atom_unsafe_start, :atom_safe_start] ->
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Strings
+        Strings.parse(state, context, log, string_min_bp)
+
+      # Other string/sigil tokens - only when containers are allowed
       kind
       when kind in [
              :bin_string_start,
              :list_string_start,
              :bin_heredoc_start,
              :list_heredoc_start,
-             :sigil_start,
-             :atom_unsafe_start,
-             :atom_safe_start
+             :sigil_start
            ] ->
-        state = TokenAdapter.pushback(state, token)
-        alias ToxicParser.Grammar.Strings
-        # Strings.parse will call led after parsing the string
-        # Pass min_bp to preserve operator precedence constraints
-        Strings.parse(state, context, log, min_bp)
+        if allow_containers do
+          state = TokenAdapter.pushback(state, token)
+          alias ToxicParser.Grammar.Strings
+          Strings.parse(state, context, log, min_bp)
+        else
+          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+        end
 
-      # fn tokens need to be handled by Blocks.parse
-      # This is needed when fn appears as operand of unary operators like &fn -> a end
-      # Note: We don't call led() here - let the caller handle trailing operators
-      # with the appropriate min_bp. This ensures + fn -> a end ** a parses as
-      # (+ fn) ** a, not + (fn ** a).
+      # fn tokens need to be handled by Blocks.parse unless restricted
       :fn ->
-        state = TokenAdapter.pushback(state, token)
-        alias ToxicParser.Grammar.Blocks
-        Blocks.parse(state, context, log)
+        if allow_containers do
+          state = TokenAdapter.pushback(state, token)
+          alias ToxicParser.Grammar.Blocks
+          Blocks.parse(state, context, log)
+        else
+          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+        end
 
       # kw_identifier at expression position is a syntax error
-      # Keywords are only valid in argument positions, not as standalone expressions
       :kw_identifier ->
         {:error, syntax_error_before(build_meta(token.metadata), token.value), state, log}
 
       _ ->
-        case Precedence.unary(token.kind) do
-          {bp, _assoc} ->
-            # This is a unary operator - parse operand
-            parse_unary(token, state, context, log, bp)
+        nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+    end
+  end
 
-          nil ->
-            cond do
-              # dual_op used as unary (e.g., -1, +1)
-              token.kind == :dual_op ->
-                # dual_op as unary has fixed precedence
-                parse_unary(token, state, context, log, 300)
+  defp nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks) do
+    case Precedence.unary(token.kind) do
+      {bp, _assoc} ->
+        parse_unary(token, state, context, log, bp)
 
-              # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
-              token.kind == :ternary_op and token.value == :"//" ->
-                parse_ternary_unary(token, state, context, log)
+      nil ->
+        cond do
+          token.kind == :dual_op ->
+            parse_unary(token, state, context, log, 300)
 
-              true ->
-                # Not a unary operator - convert to literal AST
-                ast = literal_to_ast(token)
-                # Check if identifier followed by do/end block or no-parens call
-                DoBlocks.maybe_do_block(ast, state, context, log,
-                  token: token,
-                  min_bp: min_bp,
-                  parse_no_parens: &parse_no_parens_call_nud_with_min_bp/5
-                )
-            end
+          # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
+          token.kind == :ternary_op and token.value == :"//" ->
+            parse_ternary_unary(token, state, context, log)
+
+          true ->
+            ast = literal_to_ast(token)
+            maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
         end
     end
+  end
+
+  defp maybe_attach_do_block(ast, token, state, context, log, min_bp, true) do
+    DoBlocks.maybe_do_block(ast, state, context, log,
+      token: token,
+      min_bp: min_bp,
+      parse_no_parens: &parse_no_parens_call_nud_with_min_bp/5
+    )
+  end
+
+  defp maybe_attach_do_block(ast, _token, state, _context, log, _min_bp, false) do
+    {:ok, ast, state, log}
   end
 
   # Parse capture_int followed by int (e.g., &1, &2)
@@ -684,7 +677,7 @@ defmodule ToxicParser.Pratt do
         parse_rhs_identifier(token, state, context, log, min_bp, opts)
 
       # Container tokens need special handling to preserve min_bp
-      token.kind in [:"[", :"{", :"(", :"<<", :%{}, :%] ->
+      token.kind in [:"[", :"{", :"(", :"<<", :%, :%{}, :%] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Containers
 
