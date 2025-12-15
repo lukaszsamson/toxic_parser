@@ -7,7 +7,7 @@ defmodule ToxicParser.Grammar.Calls do
   subsequent iterations.
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Blocks, EOE, Expressions, Keywords}
 
@@ -150,8 +150,8 @@ defmodule ToxicParser.Grammar.Calls do
           # Continue with led() to handle chained access like foo[:a][:b]
           Pratt.led(ast, state, log, 0, ctx)
 
-        {:error, reason, state} ->
-          {:error, reason, state, log}
+        other ->
+          Result.normalize_error(other, log)
       end
     end
   end
@@ -256,7 +256,7 @@ defmodule ToxicParser.Grammar.Calls do
       # Check for nested call: foo()() - another paren call on the result
       maybe_nested_call(ast, state, ctx, log)
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -288,7 +288,7 @@ defmodule ToxicParser.Grammar.Calls do
       # Recurse for chained calls like foo()()()
       maybe_nested_call(ast, state, ctx, log)
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -482,7 +482,7 @@ defmodule ToxicParser.Grammar.Calls do
       # Return without calling led
       {:ok, ast, state, log}
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -501,8 +501,8 @@ defmodule ToxicParser.Grammar.Calls do
           # Return without calling led
           {:ok, ast, state, log}
 
-        {:error, reason, state} ->
-          {:error, reason, state, log}
+        other ->
+          Result.normalize_error(other, log)
       end
     end
   end

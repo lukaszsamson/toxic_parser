@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Dots do
   Dot expression parsing helpers (`foo.bar`, `Foo.Bar`, `foo.(...)`, `foo.()`).
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
@@ -57,7 +57,7 @@ defmodule ToxicParser.Grammar.Dots do
 
       {:ok, {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}, state, log}
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -136,7 +136,7 @@ defmodule ToxicParser.Grammar.Dots do
       callee = Builder.Helpers.from_token(tok)
       {:ok, {callee, meta, Enum.reverse(args)}, state, log}
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -192,7 +192,7 @@ defmodule ToxicParser.Grammar.Dots do
             # Return as call AST: {atom, call_meta, args}
             {:ok, {atom, call_meta, Enum.reverse(args)}, state, log}
           else
-            {:error, reason, state} -> {:error, reason, state, log}
+            other -> Result.normalize_error(other, log)
           end
 
         true ->

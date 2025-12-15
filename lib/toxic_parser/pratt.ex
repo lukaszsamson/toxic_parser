@@ -10,7 +10,17 @@ defmodule ToxicParser.Pratt do
   metadata.
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Precedence, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    EventLog,
+    Identifiers,
+    NoParens,
+    Precedence,
+    Result,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Expressions, Keywords}
 
@@ -35,10 +45,10 @@ defmodule ToxicParser.Pratt do
       led(left, state, log, 0, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
       {:keyword_key, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -54,7 +64,7 @@ defmodule ToxicParser.Pratt do
       {:ok, ast, state, log}
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -76,7 +86,7 @@ defmodule ToxicParser.Pratt do
       led_dot_only(ast, state, log, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -91,7 +101,7 @@ defmodule ToxicParser.Pratt do
       led_dots_and_calls(ast, state, log, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -107,12 +117,10 @@ defmodule ToxicParser.Pratt do
       led(left, state, log, min_bp, context)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
-      # Handle 4-tuple errors from nested calls (e.g., Maps.parse_map)
-      {:error, diag, state, log} -> {:error, diag, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
       {:keyword_key, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -916,7 +924,7 @@ defmodule ToxicParser.Pratt do
       ast = {callee_tok.value, meta, Enum.reverse(args)}
       {:ok, ast, state, log}
     else
-      {:error, reason, state} -> {:error, reason, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
@@ -1024,7 +1032,7 @@ defmodule ToxicParser.Pratt do
         # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
         maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
       else
-        {:error, reason, state} -> {:error, reason, state, log}
+        other -> Result.normalize_error(other, log)
       end
     else
       # Not a valid paren call (e.g., `if (a)` with space - `if` is :identifier, not :paren_identifier)
@@ -1316,7 +1324,7 @@ defmodule ToxicParser.Pratt do
           # Recurse for chained calls like foo()()()
           maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
         else
-          {:error, reason, state} -> {:error, reason, state, log}
+          other -> Result.normalize_error(other, log)
         end
 
       {:ok, %{kind: :do}, _} ->
@@ -2191,7 +2199,7 @@ defmodule ToxicParser.Pratt do
             # Continue to handle more dots and calls
             led_dots_and_calls(combined, state, log, context)
           else
-            {:error, reason, state} -> {:error, reason, state, log}
+            other -> Result.normalize_error(other, log)
           end
         end
 

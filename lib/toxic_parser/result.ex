@@ -3,7 +3,7 @@ defmodule ToxicParser.Result do
   Structured output for parser entry points.
   """
 
-  alias ToxicParser.{Error, EventLog}
+  alias ToxicParser.{Error, EventLog, State}
 
   @type mode :: :strict | :tolerant
 
@@ -31,4 +31,14 @@ defmodule ToxicParser.Result do
     diagnostics: [],
     metadata: %{}
   ]
+
+  @type error_tuple ::
+          {:error, term(), State.t()}
+          | {:error, term(), State.t(), EventLog.t()}
+
+  @spec normalize_error(error_tuple | term(), EventLog.t()) ::
+          {:error, term(), State.t(), EventLog.t()} | term()
+  def normalize_error({:error, diag, state, %EventLog{} = log}, _), do: {:error, diag, state, log}
+  def normalize_error({:error, diag, state}, %EventLog{} = log), do: {:error, diag, state, log}
+  def normalize_error(other, _), do: other
 end

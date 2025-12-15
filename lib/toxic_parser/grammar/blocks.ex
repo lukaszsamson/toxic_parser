@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Stabs}
 
@@ -105,7 +105,7 @@ defmodule ToxicParser.Grammar.Blocks do
       {:ok, %{kind: ^kind, metadata: meta}, state} -> {:ok, meta, state, log}
       {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state, log}
       {:eof, state} -> {:error, :unexpected_eof, state, log}
-      {:error, diag, state} -> {:error, diag, state, log}
+      other -> Result.normalize_error(other, log)
     end
   end
 
