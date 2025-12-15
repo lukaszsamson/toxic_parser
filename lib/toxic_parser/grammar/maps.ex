@@ -188,139 +188,153 @@ defmodule ToxicParser.Grammar.Maps do
   # then check if | follows. This prevents consuming | as part of assoc value.
   # Important: If the base_expr contains =>, it's an assoc expr not an update base.
   defp try_parse_map_update(state, ctx, log) do
-    # Quick check: if the first token is a keyword (kw_identifier), this can't be
-    # a map update. Keywords like `a: value` must be parsed as keyword data.
-    # NOTE: no need to check for begin
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _}
-      when kind in [:kw_identifier, :bin_string_start, :list_string_start] ->
-        {:not_update, state}
+    if starts_with_kw_or_string?(state) do
+      {:not_update, state}
+    else
+      {checkpoint_id, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-      _ ->
-        try_parse_map_update_internal(state, ctx, log)
+      case parse_map_update_candidate(checkpoint_state, ctx, log) do
+        {:ok, update_ast, close_meta, state, log} ->
+          {:ok, update_ast, close_meta, discard_checkpoint(state, checkpoint_id), log}
+
+        {:not_update, state} ->
+          {:not_update, TokenAdapter.rewind(state, checkpoint_id)}
+
+        {:error, diag, state, log} ->
+          {:error, diag, TokenAdapter.rewind(state, checkpoint_id), log}
+      end
     end
   end
 
-  defp try_parse_map_update_internal(state, ctx, log) do
-    # Checkpoint before attempting to parse as map update
-    {checkpoint_id, state} = TokenAdapter.checkpoint(state)
+  defp parse_map_update_candidate(state, ctx, log) do
+    with {:ok, base_expr, state, log} <- parse_map_update_base(state, ctx, log),
+         :ok <- validate_map_update_base(base_expr),
+         {:ok, pipe_meta, state} <- parse_map_update_pipe(state, log),
+         {:ok, update_ast, close_meta, state, log} <-
+           parse_map_update_rhs(base_expr, pipe_meta, state, ctx, log) do
+      {:ok, update_ast, close_meta, state, log}
+    else
+      :not_update -> {:not_update, state}
+      {:error, _, _, _} = err -> err
+    end
+  end
 
-    # Parse potential base expression, stopping at | (bp=pipe_op_bp)
-    # Use min_bp one higher to stop before |
-    # Use :unmatched context to allow do-blocks in the base expression
-    # The grammar has: assoc_update -> unmatched_expr pipe_op_eol assoc_expr
+  defp parse_map_update_base(state, _ctx, log) do
     case Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.pipe_op_bp() + 1) do
-      # keyword_key means we saw "string": which is a keyword entry, not a map update base
-      {:keyword_key, _, _, _} ->
-        state = TokenAdapter.rewind(state, checkpoint_id)
-        {:not_update, state}
-
-      {:keyword_key_interpolated, _, _, _, _, _, _} ->
-        state = TokenAdapter.rewind(state, checkpoint_id)
-        {:not_update, state}
-
       {:ok, base_expr, state, log} ->
-        # Check if base_expr is an assoc expression - if so, this is NOT a map update
-        # because %{a => b | c} is a single entry with value (b | c), not an update
-        cond do
-          is_assoc_expr?(base_expr) ->
-            state = TokenAdapter.rewind(state, checkpoint_id)
-            {:not_update, state}
+        {:ok, base_expr, state, log}
 
-          # Check if base_expr is a unary operator with an unmatched operand (has do-block)
-          # In that case, the | after it should NOT be a map update separator.
-          # Grammar rule: unmatched_expr -> unary_op_eol expr
-          # The unary consumes the full `expr` which includes |
-          is_unary_with_unmatched_operand?(base_expr) ->
-            state = TokenAdapter.rewind(state, checkpoint_id)
-            {:not_update, state}
+      {:keyword_key, _, state, _} ->
+        {:not_update, state}
 
-          true ->
-            # Skip any EOE before checking for |
-            state = EOE.skip(state)
+      {:keyword_key_interpolated, _, _, _, _, state, _} ->
+        {:not_update, state}
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
-                # This is a map update!
-                {:ok, _pipe, state} = TokenAdapter.next(state)
-                # Skip EOE after | and count newlines
-                {state, newlines_after_pipe} = EOE.skip_count_newlines(state, 0)
-                # Newlines can come from BEFORE the | (in token metadata) or AFTER (in EOE)
-                # Take the max of both
-                token_newlines = Map.get(pipe_tok.metadata, :newlines, 0)
-                effective_newlines = max(token_newlines, newlines_after_pipe)
-                # Build pipe metadata with combined newlines
-                pipe_meta = token_meta_with_newlines(pipe_tok.metadata, effective_newlines)
+      {:error, diag, state, log} ->
+        {:error, diag, state, log}
+    end
+  end
 
-                # Parse entries after |
-                case TokenAdapter.peek(state) do
-                  {:ok, tok, _} ->
-                    # TODO: no coverage?
-                    if Keywords.starts_kw?(tok) do
-                      # Keyword entries: %{base | a: 1, b: 2}
-                      with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                        state = EOE.skip(state)
+  defp validate_map_update_base(base_expr) do
+    cond do
+      is_assoc_expr?(base_expr) ->
+        :not_update
 
-                        case TokenAdapter.next(state) do
-                          {:ok, %{kind: :"}"} = close_tok, state} ->
-                            close_meta = token_meta(close_tok.metadata)
-                            update_ast = {:|, pipe_meta, [base_expr, kw_list]}
-                            {:ok, update_ast, close_meta, state, log}
+      # Grammar rule: unmatched_expr -> unary_op_eol expr
+      # A unary operator with an unmatched operand consumes the following expr, including |.
+      is_unary_with_unmatched_operand?(base_expr) ->
+        :not_update
 
-                          {:ok, tok, state} ->
-                            {:error, {:expected, :"}", got: tok.kind}, state, log}
+      true ->
+        :ok
+    end
+  end
 
-                          {:eof, state} ->
-                            {:error, :unexpected_eof, state, log}
+  defp parse_map_update_pipe(state, log) do
+    state = EOE.skip(state)
 
-                          {:error, diag, state} ->
-                            {:error, diag, state, log}
-                        end
-                      end
-                    else
-                      # Assoc entries: %{base | a => b, c => d}
-                      # BUT we need to verify this is actually a map update, not a single entry
-                      # where | is part of the key. For example, %{a | b :: c => d} should be
-                      # a single entry with key (a | b) :: c, not a map update.
-                      #
-                      # The rule: if the first entry's KEY contains operators with precedence
-                      # lower than | (70), then | should have been part of the key.
-                      with {:ok, entries, close_meta, state, log} <-
-                             parse_map_close(state, ctx, log) do
-                        # Check if first entry's key has low-precedence operators
-                        first_key = get_first_entry_key(entries)
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
+        {:ok, _pipe, state} = TokenAdapter.next(state)
+        {state, newlines_after_pipe} = EOE.skip_count_newlines(state, 0)
+        {:ok, build_pipe_meta(pipe_tok, newlines_after_pipe), state}
 
-                        if first_key != nil and key_has_lower_precedence_op?(first_key) do
-                          # The | should be part of the key, not map update separator
-                          # Rewind and parse as regular entries
-                          state = TokenAdapter.rewind(state, checkpoint_id)
-                          {:not_update, state}
-                        else
-                          update_ast = {:|, pipe_meta, [base_expr, entries]}
-                          {:ok, update_ast, close_meta, state, log}
-                        end
-                      end
-                    end
+      {:ok, _tok, _} ->
+        :not_update
 
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
 
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
-                end
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
 
-              _ ->
-                # No | operator - not a map update
-                state = TokenAdapter.rewind(state, checkpoint_id)
-                {:not_update, state}
-            end
+  defp parse_map_update_rhs(base_expr, pipe_meta, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          parse_map_update_keyword_rhs(base_expr, pipe_meta, state, ctx, log)
+        else
+          parse_map_update_assoc_rhs(base_expr, pipe_meta, state, ctx, log)
         end
 
-      {:error, _, state, _} ->
-        # Parse failed, restore checkpoint
-        state = TokenAdapter.rewind(state, checkpoint_id)
-        {:not_update, state}
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
     end
+  end
+
+  defp parse_map_update_keyword_rhs(base_expr, pipe_meta, state, ctx, log) do
+    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+      state = EOE.skip(state)
+
+      case TokenAdapter.next(state) do
+        {:ok, %{kind: :"}"} = close_tok, state} ->
+          close_meta = token_meta(close_tok.metadata)
+          {:ok, {:|, pipe_meta, [base_expr, kw_list]}, close_meta, state, log}
+
+        {:ok, tok, state} ->
+          {:error, {:expected, :"}", got: tok.kind}, state, log}
+
+        {:eof, state} ->
+          {:error, :unexpected_eof, state, log}
+
+        {:error, diag, state} ->
+          {:error, diag, state, log}
+      end
+    end
+  end
+
+  defp parse_map_update_assoc_rhs(base_expr, pipe_meta, state, ctx, log) do
+    with {:ok, entries, close_meta, state, log} <- parse_map_close(state, ctx, log) do
+      first_key = get_first_entry_key(entries)
+
+      if first_key != nil and key_has_lower_precedence_op?(first_key) do
+        :not_update
+      else
+        {:ok, {:|, pipe_meta, [base_expr, entries]}, close_meta, state, log}
+      end
+    end
+  end
+
+  defp starts_with_kw_or_string?(state) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: kind}, _}
+      when kind in [:kw_identifier, :bin_string_start, :list_string_start] ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp build_pipe_meta(pipe_tok, newlines_after_pipe) do
+    token_newlines = Map.get(pipe_tok.metadata, :newlines, 0)
+    effective_newlines = max(token_newlines, newlines_after_pipe)
+    token_meta_with_newlines(pipe_tok.metadata, effective_newlines)
   end
 
   # Check if an expression is an assoc expression (has => at top level)
@@ -613,6 +627,10 @@ defmodule ToxicParser.Grammar.Maps do
   defp annotate_assoc(other, _assoc_meta), do: other
 
   # Build token metadata with explicit newlines count
+  defp discard_checkpoint(state, checkpoint_id) do
+    %{state | checkpoints: Map.delete(state.checkpoints, checkpoint_id)}
+  end
+
   defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
 
   defp token_meta_with_newlines(meta, newlines) when is_integer(newlines) and newlines > 0 do
