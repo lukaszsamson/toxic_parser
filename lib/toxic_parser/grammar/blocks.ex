@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Grammar.{Containers, EOE}
 
   @type result ::
@@ -161,7 +161,8 @@ defmodule ToxicParser.Grammar.Blocks do
       {:no_clause, state, log} ->
         # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
         # as a binary operator. The -> belongs to the clause parser.
-        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
+        with {:ok, expr, state, log} <-
+               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
           # Annotate with end_of_expression if followed by EOE
           {transformed, state} = maybe_annotate_and_consume_eoe(expr, state)
 

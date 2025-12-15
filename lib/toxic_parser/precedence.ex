@@ -68,6 +68,18 @@ defmodule ToxicParser.Precedence do
     end
   end
 
+  @doc "Returns binding power for stab operator."
+  @spec stab_op_bp() :: bp() | nil
+  def stab_op_bp, do: bp_from_binary(:stab_op)
+
+  @doc "Returns binding power for when operator."
+  @spec when_op_bp() :: bp() | nil
+  def when_op_bp, do: bp_from_binary(:when_op)
+
+  @doc "Returns binding power for pipe operator."
+  @spec pipe_op_bp() :: bp() | nil
+  def pipe_op_bp, do: bp_from_binary(:pipe_op)
+
   @doc "Returns the binding power for dot vs dot-call handling."
   @spec dot() :: {bp(), assoc()} | nil
   def dot, do: binary(:dot_op)
@@ -79,4 +91,11 @@ defmodule ToxicParser.Precedence do
   @doc "Returns the full unary precedence list."
   @spec unary_table() :: [{atom(), bp(), assoc()}]
   def unary_table, do: @unary_bp
+
+  defp bp_from_binary(kind) do
+    case binary(kind) do
+      {bp, _} -> bp
+      _ -> nil
+    end
+  end
 end

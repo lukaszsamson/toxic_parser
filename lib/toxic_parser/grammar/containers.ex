@@ -3,13 +3,13 @@ defmodule ToxicParser.Grammar.Containers do
   Container parsing for lists and tuples (Phase 6 scaffolding).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Grammar.{Bitstrings, EOE, Expressions, Keywords, Maps}
 
-  # Stab pattern parsing uses min_bp=11 to stop before `->` (bp=10) but allow all other
-  # operators including `when` (bp=50) and `<-`/`\\` (bp=40). The `when` at the TOP LEVEL
-  # of patterns is handled specially after parsing (to extract guards).
-  @stab_pattern_min_bp 11
+  # Stab pattern parsing uses min_bp one higher than stab_op (bp=10) to stop before `->`
+  # but allow all other operators including `when` (bp=50) and `<-`/`\\` (bp=40).
+  # The `when` at the TOP LEVEL of patterns is handled specially after parsing (to extract guards).
+  @stab_pattern_min_bp Precedence.stab_op_bp() + 1
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -282,7 +282,8 @@ defmodule ToxicParser.Grammar.Containers do
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
     # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
-    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
+    with {:ok, guard, state, log} <-
+           Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
       # Expect stab
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
@@ -417,7 +418,8 @@ defmodule ToxicParser.Grammar.Containers do
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
     # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
-    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
+    with {:ok, guard, state, log} <-
+           Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
@@ -537,7 +539,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Parse a single expression for stab parens, handling quoted keywords
   defp parse_stab_parens_single_expr(state, log) do
-    case Pratt.parse_with_min_bp(state, :matched, log, 51) do
+    case Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
       {:ok, ast, state, log} ->
         {:ok, ast, state, log}
 
@@ -546,7 +548,7 @@ defmodule ToxicParser.Grammar.Containers do
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, 51) do
+               Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
           {:ok, [{key_atom, value_ast}], state, log}
         end
 
@@ -554,7 +556,7 @@ defmodule ToxicParser.Grammar.Containers do
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, 51) do
+               Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           {:ok, [{key_ast, value_ast}], state, log}
         end
@@ -713,7 +715,8 @@ defmodule ToxicParser.Grammar.Containers do
 
         # Parse guard expression with min_bp > stab_op (10) to stop before ->
         # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
-        with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
+        with {:ok, guard, state, log} <-
+               Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
           case TokenAdapter.next(state) do
             {:ok, %{kind: :stab_op} = stab_tok, state} ->
               stab_base_meta = token_meta(stab_tok.metadata)
@@ -865,7 +868,12 @@ defmodule ToxicParser.Grammar.Containers do
             # Use min_bp > stab_op (10) to stop keyword values before ->
             # The kw_list is already [x: 1], and we need to wrap it in a list to get [[x: 1]]
             with {:ok, kw_list, state, log} <-
-                   Keywords.parse_kw_call_with_min_bp(state, ctx, log, 11) do
+                   Keywords.parse_kw_call_with_min_bp(
+                     state,
+                     ctx,
+                     log,
+                     Precedence.stab_op_bp() + 1
+                   ) do
               {:ok, [kw_list], state, log}
             end
 
@@ -1077,7 +1085,12 @@ defmodule ToxicParser.Grammar.Containers do
                   # call_args_no_parens_many: exprs followed by kw
                   # Use min_bp > stab_op (10) to stop keyword values before ->
                   with {:ok, kw_list, state, log} <-
-                         Keywords.parse_kw_no_parens_call_with_min_bp(state, :matched, log, 11) do
+                         Keywords.parse_kw_no_parens_call_with_min_bp(
+                           state,
+                           :matched,
+                           log,
+                           Precedence.stab_op_bp() + 1
+                         ) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
                       {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -1128,7 +1141,12 @@ defmodule ToxicParser.Grammar.Containers do
                 cond do
                   Keywords.starts_kw?(tok) ->
                     with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_no_parens_call_with_min_bp(state, :matched, log, 11) do
+                           Keywords.parse_kw_no_parens_call_with_min_bp(
+                             state,
+                             :matched,
+                             log,
+                             Precedence.stab_op_bp() + 1
+                           ) do
                       {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
                     end
 
@@ -1165,7 +1183,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Parse a single stab pattern expression.
   # Handles containers ({}, [], <<>>) specially, then delegates to Pratt.
-  # Uses @stab_pattern_min_bp (11) to stop before -> only, allowing when and <-/\\.
+  # Uses @stab_pattern_min_bp to stop before -> only, allowing when and <-/\\.
   defp parse_stab_pattern_expr(state, log) do
     case TokenAdapter.peek(state) do
       # Container tokens - parse container base then continue with led at min_bp
@@ -1327,7 +1345,8 @@ defmodule ToxicParser.Grammar.Containers do
         # as a binary operator. The -> belongs to the clause parser.
         state = TokenAdapter.rewind(checkpoint_state, ref)
 
-        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
+        with {:ok, expr, state, log} <-
+               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
           collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
         end
 
@@ -1337,7 +1356,8 @@ defmodule ToxicParser.Grammar.Containers do
         # as a binary operator. The -> belongs to the clause parser.
         state = TokenAdapter.rewind(checkpoint_state, ref)
 
-        with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, ctx, log, 11) do
+        with {:ok, expr, state, log} <-
+               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
           collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
         end
     end

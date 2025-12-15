@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Grammar.{EOE, Keywords}
 
   @type result ::
@@ -205,11 +205,11 @@ defmodule ToxicParser.Grammar.Maps do
     # Checkpoint before attempting to parse as map update
     {checkpoint_id, state} = TokenAdapter.checkpoint(state)
 
-    # Parse potential base expression, stopping at | (bp=70)
-    # Use min_bp=71 to stop before |
+    # Parse potential base expression, stopping at | (bp=pipe_op_bp)
+    # Use min_bp one higher to stop before |
     # Use :unmatched context to allow do-blocks in the base expression
     # The grammar has: assoc_update -> unmatched_expr pipe_op_eol assoc_expr
-    case Pratt.parse_with_min_bp(state, :unmatched, log, 71) do
+    case Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.pipe_op_bp() + 1) do
       # keyword_key means we saw "string": which is a keyword entry, not a map update base
       {:keyword_key, _, _, _} ->
         state = TokenAdapter.rewind(state, checkpoint_id)
