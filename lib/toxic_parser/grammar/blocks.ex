@@ -10,7 +10,7 @@ defmodule ToxicParser.Grammar.Blocks do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Containers, EOE}
+  alias ToxicParser.Grammar.{EOE, Stabs}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -50,7 +50,7 @@ defmodule ToxicParser.Grammar.Blocks do
     {state, newlines} = EOE.skip_count_newlines(state, 0)
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
-    with {:ok, clauses, state, log} <- Containers.parse_stab_eoe_until([], state, ctx, log, :end),
+    with {:ok, clauses, state, log} <- Stabs.parse_stab_eoe_until([], state, ctx, log, :end),
          {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
       log = exit_scope(log, :fn, fn_tok.metadata)
       end_location = Builder.Helpers.token_meta(end_meta)
@@ -178,7 +178,7 @@ defmodule ToxicParser.Grammar.Blocks do
   end
 
   defp try_parse_clause(state, ctx, log, _stop_kinds) do
-    # Use Containers.try_parse_stab_clause which properly handles:
+    # Use Stabs.try_parse_stab_clause which properly handles:
     # - stab_parens_many: (a) -> body, (a, b) -> body, () -> body
     # - stab pattern expressions: a -> body, a, b -> body
     # - guards: a when g -> body
@@ -186,7 +186,7 @@ defmodule ToxicParser.Grammar.Blocks do
     # Checkpoint so we can rewind if not a stab clause
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-    case Containers.try_parse_stab_clause(checkpoint_state, ctx, log, :end) do
+    case Stabs.try_parse_stab_clause(checkpoint_state, ctx, log, :end) do
       {:ok, clause, state, log} ->
         {:ok, clause, state, log}
 
