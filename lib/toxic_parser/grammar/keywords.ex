@@ -14,7 +14,7 @@ defmodule ToxicParser.Grammar.Keywords do
   #
   # Note: `do:`/`else:` keyword keys are tokenized as `:kw_identifier` with value
   # `:do`/`:else` (not as the bare `:do`/`:else` block tokens).
-  @kw_kinds [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe]
+  @kw_kinds [:kw_identifier]
 
   # String start tokens that could be quoted keyword keys like "foo": or 'bar':
   @quoted_kw_start [:bin_string_start, :list_string_start]

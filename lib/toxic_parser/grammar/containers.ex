@@ -281,7 +281,8 @@ defmodule ToxicParser.Grammar.Containers do
     state = EOE.skip(state)
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
-    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
+    # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
+    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
       # Expect stab
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
@@ -415,7 +416,8 @@ defmodule ToxicParser.Grammar.Containers do
     state = EOE.skip(state)
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
-    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
+    # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
+    with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
@@ -597,7 +599,8 @@ defmodule ToxicParser.Grammar.Containers do
         state = EOE.skip(state)
 
         # Parse guard expression with min_bp > stab_op (10) to stop before ->
-        with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
+        # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
+        with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :unmatched, log, 11) do
           case TokenAdapter.next(state) do
             {:ok, %{kind: :stab_op} = stab_tok, state} ->
               stab_base_meta = token_meta(stab_tok.metadata)

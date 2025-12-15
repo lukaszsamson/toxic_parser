@@ -460,4 +460,176 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "dot paren call newlines" do
+    test "newlines only counts leading newlines after open paren" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/livebook
+      # The newlines metadata on a dot paren call should only count
+      # newlines after the opening paren, not trailing before closing
+      code = """
+      error =
+        error_cons.(
+          file: 1
+        )
+      """
+
+      assert_conforms(code)
+    end
+
+    test "no newlines when no newline after open paren" do
+      # Newline only before ) should NOT set newlines metadata
+      code = "foo.(1\n)"
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "bracket access vs no-parens call" do
+    test "dot member with space before [ is no-parens call, not bracket access" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/phoenix/installer/test/
+      # Mix.Tasks.Foo.run [1] - the [1] is a list argument, NOT bracket access
+      code = ~S'Mix.Tasks.Foo.run ["a"]'
+
+      assert_conforms(code)
+    end
+
+    test "dot member without space before [ is bracket access" do
+      # Mix.Tasks.Foo.run[1] - the [1] is bracket access
+      code = ~S'Mix.Tasks.Foo.run[1]'
+
+      assert_conforms(code)
+    end
+
+    test "dot paren call followed by bracket access" do
+      # Application.spec(:pythonx)[:vsn] - bracket access on call result
+      code = ~S'Application.spec(:pythonx)[:vsn]'
+
+      assert_conforms(code)
+    end
+
+    test "quoted identifier bracket access" do
+      # D."foo"[1] - bracket access on quoted identifier
+      code = ~S'D."foo"[1]'
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "ellipsis operator as standalone" do
+    test "ellipsis followed by comma in list is standalone" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/ecto/integration_test/
+      # [p, ..., c] - the ... should be standalone, not try to parse c as operand
+      code = ~S'[p, ..., c]'
+
+      assert_conforms(code)
+    end
+
+    test "ellipsis in dynamic query pattern" do
+      # dynamic([p, ..., c], expr) - common pattern in Ecto
+      code = ~S'dynamic([p, ..., c], x)'
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "nested no-parens calls with do-blocks in matched context" do
+    test "check all inside property block - do-block belongs to outer call" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/oban/test/oban/backoff_test.exs
+      # When parsing `foo all x <- y do ... end` inside a do-block (matched context):
+      # - `all` should be parsed as call with args `x <- y`
+      # - The `do ... end` should attach to `foo`, NOT to `all`
+      # Current behavior: do-block attaches to `all` instead of `foo`
+      code = """
+      foo do
+        bar all x <- y do
+          :ok
+        end
+      end
+      """
+
+      assert_conforms(code)
+    end
+
+    test "check all with multiple generators inside property block" do
+      # Same issue with multiple generators separated by comma
+      code = """
+      property "test" do
+        check all mult <- integer(1..10),
+                  attempt <- integer(1..20) do
+          :ok
+        end
+      end
+      """
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "ambiguous_op metadata" do
+    test "op_identifier with single arg should have ambiguous_op: nil" do
+      # When an op_identifier (like `assert`) is called with a single argument
+      # that is an operator expression (like `-1`), it should have ambiguous_op: nil
+      code = "assert -1 == x"
+
+      assert_conforms(code)
+    end
+
+    test "op_identifier with do-block should NOT have ambiguous_op: nil" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex line 1557
+      # `def +value do ... end` - the def has a do-block, so no ambiguity
+      code = """
+      defmodule Foo do
+        def +value do
+          :ok
+        end
+      end
+      """
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "guard expressions with do-blocks" do
+    test "if do-block inside fn guard clause with empty parens" do
+      # Guard expressions use `expr` not `matched_expr` in elixir_parser.yrl
+      # So do-blocks should be allowed in guard expressions
+      # Note: this only works with empty parens (), NOT with (x)
+      code = ~S'fn () when if a do :ok end -> foo() end'
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "keyword entry with pipe value in maps" do
+    test "keyword with list | type should not parse as map update" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/phoenix_live_view/lib/phoenix_live_view/engine.ex line 64
+      # `static: [String.t()] | non_neg_integer()` inside a struct definition
+      # The `static:` should be a keyword entry with value `[String.t()] | non_neg_integer()`
+      # NOT a map update with base `:static[String.t()]` (bracket access)
+      code = ~S'%{static: [String.t()] | non_neg_integer()}'
+
+      assert_conforms(code)
+    end
+
+    test "keyword with list | simple value" do
+      # Simpler version of the same issue
+      code = ~S'%{a: [1] | 2}'
+
+      assert_conforms(code)
+    end
+
+    test "quoted list keyword with list | simple value" do
+      # Simpler version of the same issue
+      code = ~S/%{'a': [1] | 2}/
+
+      assert_conforms(code)
+    end
+
+    test "keyword string with list | simple value" do
+      # Simpler version of the same issue
+      code = ~S'%{"a": [1] | 2}'
+
+      assert_conforms(code)
+    end
+  end
 end

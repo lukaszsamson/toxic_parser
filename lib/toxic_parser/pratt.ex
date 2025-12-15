@@ -372,7 +372,22 @@ defmodule ToxicParser.Pratt do
     with {:ok, args, state, log} <-
            parse_no_parens_args_with_min_bp([], state, context, log, min_bp) do
       callee = callee_tok.value
-      meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      base_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+
+      # Check if there's a do-block following (but don't consume it yet)
+      has_do_block =
+        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and context != :matched
+
+      # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
+      # This matches elixir_parser.yrl behavior for no_parens_one_ambig
+      # Don't add it when there's a do-block because then there's no ambiguity
+      meta =
+        if callee_tok.kind == :op_identifier and length(args) == 1 and not has_do_block do
+          [ambiguous_op: nil] ++ base_meta
+        else
+          base_meta
+        end
+
       ast = {callee, meta, args}
       # Check for do-block ONLY, don't call led (caller will do that)
       maybe_do_block_no_led(ast, state, context, log)
@@ -380,9 +395,10 @@ defmodule ToxicParser.Pratt do
   end
 
   # Check for do-block after call, but don't call led
+  # In :matched context, do NOT attach do-blocks - they belong to an outer call
   defp maybe_do_block_no_led(ast, state, context, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} ->
+      {:ok, %{kind: :do}, _} when context != :matched ->
         with {:ok, {block_meta, sections}, state, log} <-
                Blocks.parse_do_block(state, context, log) do
           ast =

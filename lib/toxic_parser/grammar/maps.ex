@@ -188,6 +188,20 @@ defmodule ToxicParser.Grammar.Maps do
   # then check if | follows. This prevents consuming | as part of assoc value.
   # Important: If the base_expr contains =>, it's an assoc expr not an update base.
   defp try_parse_map_update(state, ctx, log) do
+    # Quick check: if the first token is a keyword (kw_identifier), this can't be
+    # a map update. Keywords like `a: value` must be parsed as keyword data.
+    # NOTE: no need to check for begin
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: kind}, _}
+      when kind in [:kw_identifier, :bin_string_start, :list_string_start] ->
+        {:not_update, state}
+
+      _ ->
+        try_parse_map_update_internal(state, ctx, log)
+    end
+  end
+
+  defp try_parse_map_update_internal(state, ctx, log) do
     # Checkpoint before attempting to parse as map update
     {checkpoint_id, state} = TokenAdapter.checkpoint(state)
 
