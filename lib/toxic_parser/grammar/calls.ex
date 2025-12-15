@@ -7,7 +7,7 @@ defmodule ToxicParser.Grammar.Calls do
   subsequent iterations.
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
@@ -71,7 +71,7 @@ defmodule ToxicParser.Grammar.Calls do
           # Could be no-parens call argument - parse the call
           # This must come BEFORE the do_identifier check below, because
           # `if a do :ok end` should parse `if` with arg `a` and do-block
-          can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
+          NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call(tok, state, ctx, log)
 
           # do_identifier in matched context with no arguments: this identifier
@@ -228,46 +228,6 @@ defmodule ToxicParser.Grammar.Calls do
   # Build Access.get call AST
   defp build_access(subject, key, meta) do
     {{:., meta, [Access, :get]}, meta, [subject, key]}
-  end
-
-  # Check if a token can be the start of a no-parens call argument
-  defp can_be_no_parens_arg?(%{kind: kind}) do
-    kind in [
-      :int,
-      :flt,
-      :char,
-      :atom,
-      :string,
-      :identifier,
-      :do_identifier,
-      :paren_identifier,
-      :bracket_identifier,
-      :alias,
-      :bin_string_start,
-      :list_string_start,
-      :bin_heredoc_start,
-      :list_heredoc_start,
-      :sigil_start,
-      :atom_safe_start,
-      :atom_unsafe_start,
-      true,
-      false,
-      nil,
-      :"{",
-      :"[",
-      :"(",
-      :"<<",
-      :unary_op,
-      :at_op,
-      :capture_int,
-      :capture_op,
-      :dual_op,
-      # Maps and structs
-      :%,
-      :%{},
-      # fn starts block expressions that can be no-parens args
-      :fn
-    ]
   end
 
   # Parse a no-parens call like `foo 1`, `foo 1, 2`, or `foo a: 1`.
@@ -520,7 +480,7 @@ defmodule ToxicParser.Grammar.Calls do
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
-          can_be_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
+          NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call_no_led(tok, state, ctx, log)
 
           kind == :do_identifier and ctx == :matched ->

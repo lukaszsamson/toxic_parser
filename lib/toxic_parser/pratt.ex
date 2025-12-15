@@ -10,7 +10,7 @@ defmodule ToxicParser.Pratt do
   metadata.
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Precedence, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Keywords}
 
   @type context :: :matched | :unmatched | :no_parens
@@ -306,7 +306,7 @@ defmodule ToxicParser.Pratt do
 
           {:ok, next_tok, _} ->
             # do_identifier can also have no-parens args before do-block
-            if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+            if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
               {:ok, ast, state, log}
@@ -321,7 +321,7 @@ defmodule ToxicParser.Pratt do
       :op_identifier ->
         case TokenAdapter.peek(state) do
           {:ok, next_tok, _} ->
-            if is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
+            if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
               {:ok, ast, state, log}
@@ -349,7 +349,7 @@ defmodule ToxicParser.Pratt do
             # For plain identifiers, only parse no-parens call if next token is NOT dual_op
             # (dual_op after identifier with spaces is binary operator, not unary argument)
             if next_tok.kind != :dual_op and
-                 (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
+                 (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
               {:ok, ast, state, log}
@@ -702,7 +702,7 @@ defmodule ToxicParser.Pratt do
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
           token.kind == :op_identifier and
-              (is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
+              (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
@@ -716,7 +716,7 @@ defmodule ToxicParser.Pratt do
             led(ast, state, log, min_bp, context, opts)
 
           # Could be no-parens call argument - delegate to Calls
-          is_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
+          NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
@@ -789,46 +789,6 @@ defmodule ToxicParser.Pratt do
       {:eof, state} -> {:error, :unexpected_eof, state}
       {:error, diag, state} -> {:error, diag, state}
     end
-  end
-
-  # Check if a token can be the start of a no-parens call argument
-  defp is_no_parens_arg?(%{kind: kind}) do
-    kind in [
-      :int,
-      :flt,
-      :char,
-      :atom,
-      :string,
-      :identifier,
-      :do_identifier,
-      :paren_identifier,
-      :bracket_identifier,
-      :alias,
-      :bin_string_start,
-      :list_string_start,
-      :bin_heredoc_start,
-      :list_heredoc_start,
-      :sigil_start,
-      :atom_safe_start,
-      :atom_unsafe_start,
-      true,
-      false,
-      nil,
-      :"{",
-      :"[",
-      :"(",
-      :"<<",
-      :unary_op,
-      :at_op,
-      :capture_int,
-      :capture_op,
-      :dual_op,
-      # Maps and structs
-      :%,
-      :%{},
-      # fn starts block expressions that can be no-parens args
-      :fn
-    ]
   end
 
   @doc """
@@ -1078,7 +1038,8 @@ defmodule ToxicParser.Pratt do
                       # 3. OR next token starts a keyword list
                       should_parse_no_parens =
                         expects_no_parens_call or Keywords.starts_kw?(next_tok) or
-                          (can_be_no_parens_arg?(next_tok) and next_tok.kind != :dual_op)
+                          (NoParens.can_start_no_parens_arg?(next_tok) and
+                             next_tok.kind != :dual_op)
 
                       if should_parse_no_parens do
                         with {:ok, args, state, log} <-
@@ -1404,48 +1365,6 @@ defmodule ToxicParser.Pratt do
 
   defp dot_to_no_parens_call(other, args) do
     Builder.Helpers.call(other, args)
-  end
-
-  # Check if a token can be the start of a no-parens call argument
-  defp can_be_no_parens_arg?(%{kind: kind}) do
-    kind in [
-      :int,
-      :flt,
-      :char,
-      :atom,
-      :string,
-      :identifier,
-      :do_identifier,
-      :paren_identifier,
-      :bracket_identifier,
-      :alias,
-      # String start tokens - can be string args OR quoted keyword keys like "foo": or 'bar':
-      :bin_string_start,
-      :list_string_start,
-      :bin_heredoc_start,
-      :list_heredoc_start,
-      :sigil_start,
-      :atom_safe_start,
-      :atom_unsafe_start,
-      true,
-      false,
-      nil,
-      :"{",
-      :"[",
-      :"<<",
-      :unary_op,
-      :at_op,
-      :capture_op,
-      :dual_op,
-      # Maps and structs
-      :%,
-      :%{},
-      # fn starts block expressions that can be no-parens args
-      :fn,
-      # ... can start no-parens args: foo ... (where ... is the arg)
-      # Note: .. (range_op) cannot be standalone, so it's NOT in this list
-      :ellipsis_op
-    ]
   end
 
   # Build combined __aliases__ for dot_alias rule (Foo.Bar -> {:__aliases__, meta, [:Foo, :Bar]})
