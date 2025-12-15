@@ -22,7 +22,7 @@ defmodule ToxicParser.Pratt do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Blocks, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
   defguardp is_keyword_list_result(arg) when is_list(arg) and length(arg) > 0
@@ -268,7 +268,11 @@ defmodule ToxicParser.Pratt do
                 # Not a unary operator - convert to literal AST
                 ast = literal_to_ast(token)
                 # Check if identifier followed by do/end block or no-parens call
-                maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp)
+                DoBlocks.maybe_do_block(ast, state, context, log,
+                  token: token,
+                  min_bp: min_bp,
+                  parse_no_parens: &parse_no_parens_call_nud_with_min_bp/5
+                )
             end
         end
     end
@@ -293,95 +297,6 @@ defmodule ToxicParser.Pratt do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  # Check for do/end block after an identifier (for RHS of binary ops)
-  # Handles both :identifier and :do_identifier (e.g., `if`, `unless`, `case`, etc.)
-  # Note: This function returns JUST the AST without calling led, so the caller
-  # can call led with the appropriate min_bp.
-  # This version threads min_bp through to argument parsing so that operators
-  # like -> in guard expressions are not consumed as binary operators.
-  defp maybe_do_block_with_min_bp(ast, token, state, context, log, min_bp) do
-    case token.kind do
-      # do_identifier can attach do-blocks (e.g., `if cond do ... end`)
-      :do_identifier ->
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :do}, _} ->
-            # In matched context, do_identifier tokens should NOT consume the do-block
-            # The do-block belongs to an outer call, not to this argument
-            if context == :matched do
-              {:ok, ast, state, log}
-            else
-              with {:ok, {block_meta, sections}, state, log} <-
-                     Blocks.parse_do_block(state, context, log) do
-                token_meta = Builder.Helpers.token_meta(token.metadata)
-                call_ast = {token.value, block_meta ++ token_meta, [sections]}
-                {:ok, call_ast, state, log}
-              end
-            end
-
-          {:ok, next_tok, _} ->
-            # do_identifier can also have no-parens args before do-block
-            # TODO: no coverage?
-            if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
-              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
-            else
-              {:ok, ast, state, log}
-            end
-
-          _ ->
-            {:ok, ast, state, log}
-        end
-
-      # op_identifier indicates no-parens call (tokenizer detected arg-like token follows)
-      # e.g., `foo -1` tokenizes foo as :op_identifier
-      :op_identifier ->
-        case TokenAdapter.peek(state) do
-          {:ok, next_tok, _} ->
-            # TODO: no coverage?
-            if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
-              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
-            else
-              {:ok, ast, state, log}
-            end
-
-          _ ->
-            {:ok, ast, state, log}
-        end
-
-      # Plain :identifier - can start no-parens calls but NOT when followed by dual_op
-      # e.g., `x + y` - x is :identifier, + is dual_op with spaces, so it's binary op
-      # e.g., `if a do :ok end` - if is :identifier, a is do_identifier, so it's no-parens call
-      :identifier ->
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :do}, _} ->
-            # identifier followed by do - parse as call with do-block
-            with {:ok, {block_meta, sections}, state, log} <-
-                   Blocks.parse_do_block(state, context, log) do
-              token_meta = Builder.Helpers.token_meta(token.metadata)
-              call_ast = {token.value, block_meta ++ token_meta, [sections]}
-              {:ok, call_ast, state, log}
-            end
-
-          {:ok, next_tok, _} ->
-            # For plain identifiers, only parse no-parens call if next token is NOT dual_op
-            # (dual_op after identifier with spaces is binary operator, not unary argument)
-            # TODO: no coverage? only failing corpus
-            if next_tok.kind != :dual_op and
-                 (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
-              parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
-            else
-              {:ok, ast, state, log}
-            end
-
-          _ ->
-            {:ok, ast, state, log}
-        end
-
-      # Other tokens (literals, etc.) - just return AST
-      _ ->
-        {:ok, ast, state, log}
     end
   end
 
@@ -410,29 +325,7 @@ defmodule ToxicParser.Pratt do
 
       ast = {callee, meta, args}
       # Check for do-block ONLY, don't call led (caller will do that)
-      maybe_do_block_no_led(ast, state, context, log)
-    end
-  end
-
-  # Check for do-block after call, but don't call led
-  # In :matched context, do NOT attach do-blocks - they belong to an outer call
-  defp maybe_do_block_no_led(ast, state, context, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} when context != :matched ->
-        with {:ok, {block_meta, sections}, state, log} <-
-               Blocks.parse_do_block(state, context, log) do
-          ast =
-            case ast do
-              {name, meta, args} when is_list(args) ->
-                # Prepend do/end metadata to the call's existing metadata
-                {name, block_meta ++ meta, args ++ [sections]}
-            end
-
-          {:ok, ast, state, log}
-        end
-
-      _ ->
-        {:ok, ast, state, log}
+      DoBlocks.maybe_do_block(ast, state, context, log)
     end
   end
 

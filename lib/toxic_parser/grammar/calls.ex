@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Calls do
 
   alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Blocks, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{DoBlocks, EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
   defguardp is_keyword_list_result(arg)
@@ -85,13 +85,23 @@ defmodule ToxicParser.Grammar.Calls do
           # Just a bare identifier - may have trailing do-block
           true ->
             ast = Builder.Helpers.from_token(tok)
-            maybe_do_block(ast, state, ctx, log)
+
+            DoBlocks.maybe_do_block(ast, state, ctx, log,
+              after: fn ast, state, log ->
+                Pratt.led(ast, state, log, 0, ctx)
+              end
+            )
         end
 
       # No next token or at terminator - check for do-block
       _ ->
         ast = Builder.Helpers.from_token(tok)
-        maybe_do_block(ast, state, ctx, log)
+
+        DoBlocks.maybe_do_block(ast, state, ctx, log,
+          after: fn ast, state, log ->
+            Pratt.led(ast, state, log, 0, ctx)
+          end
+        )
     end
   end
 
@@ -113,7 +123,12 @@ defmodule ToxicParser.Grammar.Calls do
             # No ambiguous_op metadata when multiple args
             meta = Builder.Helpers.token_meta(callee_tok.metadata)
             ast = {callee, meta, args}
-            maybe_do_block(ast, state, ctx, log)
+
+            DoBlocks.maybe_do_block(ast, state, ctx, log,
+              after: fn ast, state, log ->
+                Pratt.led(ast, state, log, 0, ctx)
+              end
+            )
           end
 
         _ ->
@@ -121,7 +136,12 @@ defmodule ToxicParser.Grammar.Calls do
           callee = callee_tok.value
           meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
           ast = {callee, meta, [first_arg]}
-          maybe_do_block(ast, state, ctx, log)
+
+          DoBlocks.maybe_do_block(ast, state, ctx, log,
+            after: fn ast, state, log ->
+              Pratt.led(ast, state, log, 0, ctx)
+            end
+          )
       end
     end
   end
@@ -236,7 +256,12 @@ defmodule ToxicParser.Grammar.Calls do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}
-      maybe_do_block(ast, state, ctx, log)
+
+      DoBlocks.maybe_do_block(ast, state, ctx, log,
+        after: fn ast, state, log ->
+          Pratt.led(ast, state, log, 0, ctx)
+        end
+      )
     end
   end
 
@@ -268,7 +293,11 @@ defmodule ToxicParser.Grammar.Calls do
         parse_nested_paren_call(ast, state, ctx, log)
 
       _ ->
-        maybe_do_block(ast, state, ctx, log)
+        DoBlocks.maybe_do_block(ast, state, ctx, log,
+          after: fn ast, state, log ->
+            Pratt.led(ast, state, log, 0, ctx)
+          end
+        )
     end
   end
 
@@ -370,39 +399,6 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp maybe_do_block(ast, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} when ctx != :matched ->
-        # Only attach do-blocks in non-matched contexts
-        # In :matched context, the do-block belongs to an outer call
-        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
-          ast =
-            case ast do
-              {name, meta, args} when is_list(args) ->
-                # Prepend do/end metadata to the call's existing metadata
-                # Remove ambiguous_op: nil and no_parens: true as they don't apply with do-blocks
-                clean_meta = meta |> Keyword.delete(:ambiguous_op) |> Keyword.delete(:no_parens)
-                {name, block_meta ++ clean_meta, args ++ [sections]}
-
-              # Bare identifier: {name, meta, nil} - convert to call with do-block
-              # Grammar: block_expr -> dot_do_identifier do_block
-              {name, meta, nil} when is_atom(name) ->
-                {name, block_meta ++ meta, [sections]}
-
-              other ->
-                Builder.Helpers.call(other, [sections], block_meta)
-            end
-
-          # Continue with Pratt's led() to handle trailing operators like =>
-          Pratt.led(ast, state, log, 0, ctx)
-        end
-
-      _ ->
-        # Continue with Pratt's led() to handle trailing operators
-        Pratt.led(ast, state, log, 0, ctx)
-    end
-  end
-
   @doc """
   Parse a call without calling led() at the end.
   Used by Pratt parser when it needs to preserve min_bp for proper associativity.
@@ -460,12 +456,12 @@ defmodule ToxicParser.Grammar.Calls do
 
           true ->
             ast = Builder.Helpers.from_token(tok)
-            maybe_do_block_no_led(ast, state, ctx, log)
+            DoBlocks.maybe_do_block(ast, state, ctx, log)
         end
 
       _ ->
         ast = Builder.Helpers.from_token(tok)
-        maybe_do_block_no_led(ast, state, ctx, log)
+        DoBlocks.maybe_do_block(ast, state, ctx, log)
     end
   end
 
@@ -517,14 +513,14 @@ defmodule ToxicParser.Grammar.Calls do
             callee = callee_tok.value
             meta = Builder.Helpers.token_meta(callee_tok.metadata)
             ast = {callee, meta, args}
-            maybe_do_block_no_led(ast, state, ctx, log)
+            DoBlocks.maybe_do_block(ast, state, ctx, log)
           end
 
         _ ->
           callee = callee_tok.value
           meta = [ambiguous_op: nil] ++ Builder.Helpers.token_meta(callee_tok.metadata)
           ast = {callee, meta, [first_arg]}
-          maybe_do_block_no_led(ast, state, ctx, log)
+          DoBlocks.maybe_do_block(ast, state, ctx, log)
       end
     end
   end
@@ -534,34 +530,7 @@ defmodule ToxicParser.Grammar.Calls do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}
-      maybe_do_block_no_led(ast, state, ctx, log)
-    end
-  end
-
-  defp maybe_do_block_no_led(ast, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :do}, _} when ctx != :matched ->
-        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
-          ast =
-            case ast do
-              {name, meta, args} when is_list(args) ->
-                clean_meta = meta |> Keyword.delete(:ambiguous_op) |> Keyword.delete(:no_parens)
-                {name, block_meta ++ clean_meta, args ++ [sections]}
-
-              {name, meta, nil} when is_atom(name) ->
-                {name, block_meta ++ meta, [sections]}
-
-              other ->
-                Builder.Helpers.call(other, [sections], block_meta)
-            end
-
-          # Return without calling led
-          {:ok, ast, state, log}
-        end
-
-      _ ->
-        # Return without calling led
-        {:ok, ast, state, log}
+      DoBlocks.maybe_do_block(ast, state, ctx, log)
     end
   end
 
