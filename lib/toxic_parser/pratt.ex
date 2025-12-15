@@ -959,17 +959,204 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
-        case {next_token.kind, Precedence.binary(next_token.kind)} do
-          # Parens call: identifier(args) or expr()(args) (nested call)
-          # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
-          # NOTE: Only treat as call if there's NO EOE between left and (
-          # `foo()` is a call, but `foo\n()` is not (the newline separates them)
-          # Also, for bare identifiers like `if (a)`, only treat as call if
-          # the identifier came from a :paren_identifier token (no space before `(`)
-          {:"(", _} when eoe_tokens == [] ->
-            if is_paren_call_valid(left) do
-              {:ok, _open_tok, state} = TokenAdapter.next(state)
+        led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens)
 
+      {:eof, state} ->
+        # At EOF, push back EOE tokens so they're available for expr_list
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens) do
+    precedence = Precedence.binary(next_token.kind)
+
+    case {next_token.kind, precedence} do
+      # Parens call: identifier(args) or expr()(args) (nested call)
+      # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
+      # NOTE: Only treat as call if there's NO EOE between left and (
+      # `foo()` is a call, but `foo\n()` is not (the newline separates them)
+      # Also, for bare identifiers like `if (a)`, only treat as call if
+      # the identifier came from a :paren_identifier token (no space before `(`)
+      {:"(", _} when eoe_tokens == [] ->
+        led_call(left, state, log, min_bp, context, opts)
+
+      # dot_call_op: expr.(args) - anonymous function call
+      {:dot_call_op, _} ->
+        led_dot_call(left, state, log, min_bp, context, opts)
+
+      {:dot_op, {bp, _}} when bp >= min_bp ->
+        led_dot(left, state, log, min_bp, context, opts)
+
+      # Bracket access: expr[key]
+      # NOTE: Only treat as bracket access if:
+      # 1. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
+      # 2. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
+      {:"[", _} when eoe_tokens == [] ->
+        led_bracket(left, state, log, min_bp, context, opts)
+
+      # Special case: ternary_op :"//" following range_op :".."
+      # Combines into {:..//, meta, [start, stop, step]}
+      {:ternary_op, {bp, _assoc}} when bp >= min_bp ->
+        parse_ternary_op(left, state, min_bp, context, log)
+
+      # dual_op (+/-) after EOE is NOT a binary operator - it starts a new expression
+      # e.g., "x()\n\n-1" should be two expressions: x() and -1 (unary minus)
+      # This matches Elixir's behavior where dual_op after newlines is unary
+      {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
+        # Push back EOE tokens and return left - dual_op after EOE is not continuation
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
+
+      {_, {bp, assoc}} when bp >= min_bp ->
+        led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+
+      _ ->
+        # No continuation operator found - push back EOE tokens
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
+    end
+  end
+
+  defp led_call(left, state, log, min_bp, context, opts) do
+    if is_paren_call_valid(left) do
+      {:ok, _open_tok, state} = TokenAdapter.next(state)
+
+      # Skip leading EOE and count newlines
+      {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
+      with {:ok, args, state, log} <-
+             ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
+        # Skip trailing EOE before close paren
+        {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.next(state) do
+          {:ok, %{kind: :")"} = close_tok, state} ->
+            # For non-empty calls, only count leading newlines
+            # For empty calls, count all newlines
+            total_newlines =
+              if args == [] do
+                leading_newlines + trailing_newlines
+              else
+                leading_newlines
+              end
+
+            close_meta = build_meta(close_tok.metadata)
+            # Get line/column from left AST (the callee)
+            callee_meta = extract_meta(left)
+
+            newlines_meta =
+              if total_newlines > 0, do: [newlines: total_newlines], else: []
+
+            call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+
+            # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
+            # Otherwise it's a nested call: {left, call_meta, args}
+            combined =
+              case left do
+                {name, _meta, nil} when is_atom(name) ->
+                  {name, call_meta, Enum.reverse(args)}
+
+                _ ->
+                  {left, call_meta, Enum.reverse(args)}
+              end
+
+            # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
+            maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+
+          {:ok, other, state} ->
+            {:error, {:expected, :")", got: other.kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+      end
+    else
+      # Not a valid paren call (e.g., `if (a)` with space - `if` is :identifier, not :paren_identifier)
+      # Return left as-is, the `(` will be handled as a separate parenthesized expression
+      {:ok, left, state, log}
+    end
+  end
+
+  defp led_dot_call(left, state, log, min_bp, context, opts) do
+    with {:ok, combined, state, log} <-
+           Dots.parse_dot_call(left, state, context, log) do
+      # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
+      maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+    end
+  end
+
+  defp led_dot(left, state, log, min_bp, context, opts) do
+    {:ok, dot_tok, state} = TokenAdapter.next(state)
+    dot_meta = build_meta(dot_tok.metadata)
+
+    # Check for dot_container: expr.{...}
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"{"}, _} ->
+        {:ok, _open, state} = TokenAdapter.next(state)
+
+        with {:ok, args, newlines, close_meta, state, log} <-
+               parse_dot_container_args(state, context, log) do
+          # Build: {{:., dot_meta, [left, :{}]}, [newlines: n, closing: close_meta] ++ dot_meta, args}
+          # Only add newlines to metadata if > 0
+          newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
+
+          combined =
+            {{:., dot_meta, [left, :{}]}, newlines_meta ++ [closing: close_meta] ++ dot_meta,
+             args}
+
+          led(combined, state, log, min_bp, context, opts)
+        end
+
+      _ ->
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+          # Check if rhs indicates a no-parens call (from op_identifier/dot_op_identifier)
+          # or bracket access (from bracket_identifier)
+          {combined, expects_no_parens_call, allows_bracket} =
+            case rhs do
+              # Simple identifier with :no_parens_call flag: {member_atom, member_meta, :no_parens_call}
+              # This indicates a no-parens call is expected (from op_identifier/dot_op_identifier)
+              {member, member_meta, :no_parens_call} when is_atom(member) ->
+                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, true,
+                 false}
+
+              # Bracket identifier with :allows_bracket flag: {member_atom, member_meta, :allows_bracket}
+              # This indicates bracket access is allowed (no whitespace before [)
+              {member, member_meta, :allows_bracket} when is_atom(member) ->
+                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                 true}
+
+              # Simple identifier: {member_atom, member_meta}
+              # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
+              # Bracket access NOT allowed (whitespace before [)
+              {member, member_meta} when is_atom(member) ->
+                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                 false}
+
+              # Alias on RHS - build combined __aliases__ (dot_alias rule)
+              # Must come before the general {name, meta, args} pattern
+              {:__aliases__, rhs_meta, [rhs_alias]} ->
+                {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, false}
+
+              # Call with args: {name, meta, args}
+              # Bracket access is always allowed after a call result (no whitespace check needed)
+              {name, meta, args} when is_list(args) ->
+                {{{:., dot_meta, [left, name]}, meta, args}, false, true}
+
+              # Other AST node
+              other ->
+                {{:., dot_meta, [left, other]}, false, false}
+            end
+
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"("}, _} ->
+              {:ok, _open, state} = TokenAdapter.next(state)
               # Skip leading EOE and count newlines
               {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
@@ -980,8 +1167,8 @@ defmodule ToxicParser.Pratt do
 
                 case TokenAdapter.next(state) do
                   {:ok, %{kind: :")"} = close_tok, state} ->
-                    # For non-empty calls, only count leading newlines
-                    # For empty calls, count all newlines
+                    # Only count trailing newlines for empty args
+                    # (matches behavior in maybe_nested_call_or_do_block)
                     total_newlines =
                       if args == [] do
                         leading_newlines + trailing_newlines
@@ -990,26 +1177,12 @@ defmodule ToxicParser.Pratt do
                       end
 
                     close_meta = build_meta(close_tok.metadata)
-                    # Get line/column from left AST (the callee)
-                    callee_meta = extract_meta(left)
 
-                    newlines_meta =
-                      if total_newlines > 0, do: [newlines: total_newlines], else: []
-
-                    call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-                    # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
-                    # Otherwise it's a nested call: {left, call_meta, args}
+                    # When followed by parens, convert to call form with proper metadata
                     combined =
-                      case left do
-                        {name, _meta, nil} when is_atom(name) ->
-                          {name, call_meta, Enum.reverse(args)}
+                      dot_to_call_with_meta(combined, args, total_newlines, close_meta)
 
-                        _ ->
-                          {left, call_meta, Enum.reverse(args)}
-                      end
-
-                    # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
+                    # Check for nested calls and do-blocks (foo.bar() do...end)
                     maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                   {:ok, other, state} ->
@@ -1022,320 +1195,151 @@ defmodule ToxicParser.Pratt do
                     {:error, diag, state, log}
                 end
               end
-            else
-              # Not a valid paren call (e.g., `if (a)` with space - `if` is :identifier, not :paren_identifier)
-              # Return left as-is, the `(` will be handled as a separate parenthesized expression
-              {:ok, left, state, log}
-            end
 
-          # dot_call_op: expr.(args) - anonymous function call
-          {:dot_call_op, _} ->
-            with {:ok, combined, state, log} <-
-                   Dots.parse_dot_call(left, state, context, log) do
-              # Check for nested calls (foo.()()) and do-blocks (foo.() do ... end)
+            {:ok, %{kind: :"["}, _} when allows_bracket ->
+              # Bracket access: foo.bar[:key] - only when bracket access is allowed
+              # (no whitespace before [)
+              led(combined, state, log, min_bp, context, opts)
+
+            {:ok, %{kind: :do}, _} ->
+              # Do-block after dot call: foo.bar() do...end
+              # Only handle when rhs was a call (combined has args list)
               maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-            end
 
-          {:dot_op, {bp, _}} when bp >= min_bp ->
-            {:ok, dot_tok, state} = TokenAdapter.next(state)
-            dot_meta = build_meta(dot_tok.metadata)
+            {:ok, next_tok, _} ->
+              # Check for no-parens call argument after dot expression
+              # Only parse as no-parens call if:
+              # 1. The member was tokenized as op_identifier/dot_op_identifier (expects_no_parens_call)
+              # 2. OR next token can start a no-parens arg (excluding dual_op when expects_no_parens_call is false)
+              # 3. OR next token starts a keyword list
+              should_parse_no_parens =
+                expects_no_parens_call or Keywords.starts_kw?(next_tok) or
+                  (NoParens.can_start_no_parens_arg?(next_tok) and next_tok.kind != :dual_op)
 
-            # Check for dot_container: expr.{...}
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"{"}, _} ->
-                {:ok, _open, state} = TokenAdapter.next(state)
-
-                with {:ok, args, newlines, close_meta, state, log} <-
-                       parse_dot_container_args(state, context, log) do
-                  # Build: {{:., dot_meta, [left, :{}]}, [newlines: n, closing: close_meta] ++ dot_meta, args}
-                  # Only add newlines to metadata if > 0
-                  newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-
-                  combined =
-                    {{:., dot_meta, [left, :{}]},
-                     newlines_meta ++ [closing: close_meta] ++ dot_meta, args}
-
-                  led(combined, state, log, min_bp, context, opts)
+              if should_parse_no_parens do
+                with {:ok, args, state, log} <-
+                       Calls.parse_no_parens_args([], state, context, log) do
+                  combined = dot_to_no_parens_call(combined, args)
+                  # Check for do-blocks after no-parens call: foo.bar arg do...end
+                  maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
                 end
-
-              _ ->
-                with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
-                  # Check if rhs indicates a no-parens call (from op_identifier/dot_op_identifier)
-                  # or bracket access (from bracket_identifier)
-                  {combined, expects_no_parens_call, allows_bracket} =
-                    case rhs do
-                      # Simple identifier with :no_parens_call flag: {member_atom, member_meta, :no_parens_call}
-                      # This indicates a no-parens call is expected (from op_identifier/dot_op_identifier)
-                      {member, member_meta, :no_parens_call} when is_atom(member) ->
-                        {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
-                         true, false}
-
-                      # Bracket identifier with :allows_bracket flag: {member_atom, member_meta, :allows_bracket}
-                      # This indicates bracket access is allowed (no whitespace before [)
-                      {member, member_meta, :allows_bracket} when is_atom(member) ->
-                        {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
-                         false, true}
-
-                      # Simple identifier: {member_atom, member_meta}
-                      # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
-                      # Bracket access NOT allowed (whitespace before [)
-                      {member, member_meta} when is_atom(member) ->
-                        {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
-                         false, false}
-
-                      # Alias on RHS - build combined __aliases__ (dot_alias rule)
-                      # Must come before the general {name, meta, args} pattern
-                      {:__aliases__, rhs_meta, [rhs_alias]} ->
-                        {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, false}
-
-                      # Call with args: {name, meta, args}
-                      # Bracket access is always allowed after a call result (no whitespace check needed)
-                      {name, meta, args} when is_list(args) ->
-                        {{{:., dot_meta, [left, name]}, meta, args}, false, true}
-
-                      # Other AST node
-                      other ->
-                        {{:., dot_meta, [left, other]}, false, false}
-                    end
-
-                  case TokenAdapter.peek(state) do
-                    {:ok, %{kind: :"("}, _} ->
-                      {:ok, _open, state} = TokenAdapter.next(state)
-                      # Skip leading EOE and count newlines
-                      {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
-
-                      with {:ok, args, state, log} <-
-                             ToxicParser.Grammar.CallsPrivate.parse_paren_args(
-                               [],
-                               state,
-                               context,
-                               log
-                             ) do
-                        # Skip trailing EOE before close paren
-                        {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
-
-                        case TokenAdapter.next(state) do
-                          {:ok, %{kind: :")"} = close_tok, state} ->
-                            # Only count trailing newlines for empty args
-                            # (matches behavior in maybe_nested_call_or_do_block)
-                            total_newlines =
-                              if args == [] do
-                                leading_newlines + trailing_newlines
-                              else
-                                leading_newlines
-                              end
-
-                            close_meta = build_meta(close_tok.metadata)
-
-                            # When followed by parens, convert to call form with proper metadata
-                            combined =
-                              dot_to_call_with_meta(combined, args, total_newlines, close_meta)
-
-                            # Check for nested calls and do-blocks (foo.bar() do...end)
-                            maybe_nested_call_or_do_block(
-                              combined,
-                              state,
-                              log,
-                              min_bp,
-                              context,
-                              opts
-                            )
-
-                          {:ok, other, state} ->
-                            {:error, {:expected, :")", got: other.kind}, state, log}
-
-                          {:eof, state} ->
-                            {:error, :unexpected_eof, state, log}
-
-                          {:error, diag, state} ->
-                            {:error, diag, state, log}
-                        end
-                      end
-
-                    {:ok, %{kind: :"["}, _} when allows_bracket ->
-                      # Bracket access: foo.bar[:key] - only when bracket access is allowed
-                      # (no whitespace before [)
-                      led(combined, state, log, min_bp, context, opts)
-
-                    {:ok, %{kind: :do}, _} ->
-                      # Do-block after dot call: foo.bar() do...end
-                      # Only handle when rhs was a call (combined has args list)
-                      maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-
-                    {:ok, next_tok, _} ->
-                      # Check for no-parens call argument after dot expression
-                      # Only parse as no-parens call if:
-                      # 1. The member was tokenized as op_identifier/dot_op_identifier (expects_no_parens_call)
-                      # 2. OR next token can start a no-parens arg (excluding dual_op when expects_no_parens_call is false)
-                      # 3. OR next token starts a keyword list
-                      should_parse_no_parens =
-                        expects_no_parens_call or Keywords.starts_kw?(next_tok) or
-                          (NoParens.can_start_no_parens_arg?(next_tok) and
-                             next_tok.kind != :dual_op)
-
-                      if should_parse_no_parens do
-                        with {:ok, args, state, log} <-
-                               Calls.parse_no_parens_args([], state, context, log) do
-                          combined = dot_to_no_parens_call(combined, args)
-                          # Check for do-blocks after no-parens call: foo.bar arg do...end
-                          maybe_nested_call_or_do_block(
-                            combined,
-                            state,
-                            log,
-                            min_bp,
-                            context,
-                            opts
-                          )
-                        end
-                      else
-                        led(combined, state, log, min_bp, context, opts)
-                      end
-
-                    _ ->
-                      led(combined, state, log, min_bp, context, opts)
-                  end
-                else
-                  {:error, :unexpected_eof, state, log} ->
-                    {:error, syntax_error_before(dot_meta), state, log}
-
-                  {:error, reason, state, log} ->
-                    {:error, reason, state, log}
-                end
-            end
-
-          # Bracket access: expr[key]
-          # NOTE: Only treat as bracket access if:
-          # 1. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
-          # 2. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
-          {:"[", _} when eoe_tokens == [] ->
-            # Check allows_bracket flag (defaults to true for backward compatibility)
-            allows_bracket = Keyword.get(opts, :allows_bracket, true)
-
-            if not allows_bracket do
-              # Space before [ means this is NOT bracket access, but a no-parens call with list arg
-              # Return left as-is (no-parens call parsing will be handled by caller)
-              {:ok, left, state, log}
-            else
-              {:ok, open_tok, state} = TokenAdapter.next(state)
-
-              # Skip leading EOE and count newlines (only leading newlines matter for metadata)
-              {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
-
-              with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
-                # Skip trailing EOE before close bracket (don't count these)
-                {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
-
-                case TokenAdapter.next(state) do
-                  {:ok, %{kind: :"]"} = close_tok, state} ->
-                    # Build metadata with from_brackets, newlines, closing, line, column
-                    open_meta = build_meta(open_tok.metadata)
-                    close_meta = build_meta(close_tok.metadata)
-
-                    newlines_meta =
-                      if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-
-                    bracket_meta =
-                      [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
-
-                    combined =
-                      {{:., bracket_meta, [Access, :get]}, bracket_meta,
-                       [left | Enum.reverse(indices)]}
-
-                    led(combined, state, log, min_bp, context, opts)
-
-                  {:ok, other, state} ->
-                    {:error, {:expected, :"]", got: other.kind}, state, log}
-
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
-
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
-                end
+              else
+                led(combined, state, log, min_bp, context, opts)
               end
-            end
 
-          # Special case: ternary_op :"//" following range_op :".."
-          # Combines into {:..//, meta, [start, stop, step]}
-          {:ternary_op, {bp, _assoc}} when bp >= min_bp ->
-            parse_ternary_op(left, state, min_bp, context, log)
+            _ ->
+              led(combined, state, log, min_bp, context, opts)
+          end
+        else
+          {:error, :unexpected_eof, state, log} ->
+            {:error, syntax_error_before(dot_meta), state, log}
 
-          # dual_op (+/-) after EOE is NOT a binary operator - it starts a new expression
-          # e.g., "x()\n\n-1" should be two expressions: x() and -1 (unary minus)
-          # This matches Elixir's behavior where dual_op after newlines is unary
-          {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
-            # Push back EOE tokens and return left - dual_op after EOE is not continuation
-            state = pushback_eoe_tokens(state, eoe_tokens)
-            {:ok, left, state, log}
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
+        end
+    end
+  end
 
-          {_, {bp, assoc}} when bp >= min_bp ->
-            {:ok, op_token, state} = TokenAdapter.next(state)
-            # For right associativity, use same bp to allow chaining at same level
-            # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
-            rhs_min_bp = if assoc == :right, do: bp, else: bp + 1
+  defp led_bracket(left, state, log, min_bp, context, opts) do
+    # Check allows_bracket flag (defaults to true for backward compatibility)
+    allows_bracket = Keyword.get(opts, :allows_bracket, true)
 
-            # Skip EOE tokens after operator (allows "1 +\n2")
-            # Newlines can come from:
-            # 1. EOE after the operator (continuation: "1 +\n2")
-            # 2. The operator token itself (continuation operator: "a\n|> b")
-            # We take the max of both
-            {state, newlines_after_op} = EOE.skip_count_newlines(state, 0)
-            token_newlines = Map.get(op_token.metadata, :newlines, 0)
-            effective_newlines = max(newlines_after_op, token_newlines)
+    if not allows_bracket do
+      # Space before [ means this is NOT bracket access, but a no-parens call with list arg
+      # Return left as-is (no-parens call parsing will be handled by caller)
+      {:ok, left, state, log}
+    else
+      {:ok, open_tok, state} = TokenAdapter.next(state)
 
-            case TokenAdapter.peek(state) do
-              # Special case: when operator followed by keyword list
-              # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
-              # This applies regardless of context (not just :no_parens)
-              {:ok, rhs_tok, _} when op_token.kind == :when_op ->
-                if Keywords.starts_kw?(rhs_tok) do
-                  with {:ok, kw_list, state, log} <-
-                         Keywords.parse_kw_no_parens_call(state, context, log) do
-                    op = op_token.value
-                    meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
-                    combined = Builder.Helpers.binary(op, left, kw_list, meta)
-                    led(combined, state, log, min_bp, context, opts)
-                  end
-                else
-                  # Parse RHS normally - handle keyword_key from quoted keywords
-                  parse_when_binary_rhs(
-                    state,
-                    left,
-                    op_token,
-                    rhs_min_bp,
-                    min_bp,
-                    effective_newlines,
-                    context,
-                    log
-                  )
-                end
+      # Skip leading EOE and count newlines (only leading newlines matter for metadata)
+      {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-              _ ->
-                parse_binary_rhs(
-                  state,
-                  left,
-                  op_token,
-                  rhs_min_bp,
-                  min_bp,
-                  effective_newlines,
-                  context,
-                  log
-                )
-            end
+      with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
+        # Skip trailing EOE before close bracket (don't count these)
+        {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
-          _ ->
-            # No continuation operator found - push back EOE tokens
-            state = pushback_eoe_tokens(state, eoe_tokens)
-            {:ok, left, state, log}
+        case TokenAdapter.next(state) do
+          {:ok, %{kind: :"]"} = close_tok, state} ->
+            # Build metadata with from_brackets, newlines, closing, line, column
+            open_meta = build_meta(open_tok.metadata)
+            close_meta = build_meta(close_tok.metadata)
+
+            newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+
+            bracket_meta =
+              [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+
+            combined =
+              {{:., bracket_meta, [Access, :get]}, bracket_meta, [left | Enum.reverse(indices)]}
+
+            led(combined, state, log, min_bp, context, opts)
+
+          {:ok, other, state} ->
+            {:error, {:expected, :"]", got: other.kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+      end
+    end
+  end
+
+  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc) do
+    {:ok, op_token, state} = TokenAdapter.next(state)
+    # For right associativity, use same bp to allow chaining at same level
+    # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
+    rhs_min_bp = if assoc == :right, do: bp, else: bp + 1
+
+    # Skip EOE tokens after operator (allows "1 +\n2")
+    # Newlines can come from:
+    # 1. EOE after the operator (continuation: "1 +\n2")
+    # 2. The operator token itself (continuation operator: "a\n|> b")
+    # We take the max of both
+    {state, newlines_after_op} = EOE.skip_count_newlines(state, 0)
+    token_newlines = Map.get(op_token.metadata, :newlines, 0)
+    effective_newlines = max(newlines_after_op, token_newlines)
+
+    case TokenAdapter.peek(state) do
+      # Special case: when operator followed by keyword list
+      # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
+      # This applies regardless of context (not just :no_parens)
+      {:ok, rhs_tok, _} when op_token.kind == :when_op ->
+        if Keywords.starts_kw?(rhs_tok) do
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_no_parens_call(state, context, log) do
+            op = op_token.value
+            meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
+            combined = Builder.Helpers.binary(op, left, kw_list, meta)
+            led(combined, state, log, min_bp, context, opts)
+          end
+        else
+          # Parse RHS normally - handle keyword_key from quoted keywords
+          parse_when_binary_rhs(
+            state,
+            left,
+            op_token,
+            rhs_min_bp,
+            min_bp,
+            effective_newlines,
+            context,
+            log
+          )
         end
 
-      {:eof, state} ->
-        # At EOF, push back EOE tokens so they're available for expr_list
-        state = pushback_eoe_tokens(state, eoe_tokens)
-        {:ok, left, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      _ ->
+        parse_binary_rhs(
+          state,
+          left,
+          op_token,
+          rhs_min_bp,
+          min_bp,
+          effective_newlines,
+          context,
+          log
+        )
     end
   end
 
