@@ -92,6 +92,10 @@ defmodule ToxicParser.Grammar.Bitstrings do
     end
   end
 
+  # Check if result is a keyword list (from quoted keyword parsing)
+  defp is_keyword_list(list) when is_list(list) and length(list) > 0, do: true
+  defp is_keyword_list(_), do: false
+
   defp parse_segment(acc, state, ctx, log) do
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
       # Skip EOE after expression
@@ -109,8 +113,37 @@ defmodule ToxicParser.Grammar.Bitstrings do
               close_meta = token_meta(close_tok.metadata)
               {:ok, Enum.reverse([expr | acc]), close_meta, state, log}
 
-            _ ->
-              parse_segments([expr | acc], state, ctx, log)
+            {:ok, tok, _} ->
+              # If expr was a keyword list and next is also keyword, merge them
+              cond do
+                is_keyword_list(expr) and Keywords.starts_kw?(tok) ->
+                  # Merge with following keywords
+                  with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                    {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+                    case TokenAdapter.next(state) do
+                      {:ok, %{kind: :">>"} = close_tok, state} ->
+                        close_meta = token_meta(close_tok.metadata)
+                        {:ok, Enum.reverse(acc) ++ [expr ++ more_kw], close_meta, state, log}
+
+                      {:ok, tok, state} ->
+                        {:error, {:expected, :">>", got: tok.kind}, state, log}
+
+                      {:eof, state} ->
+                        {:error, :unexpected_eof, state, log}
+
+                      {:error, diag, state} ->
+                        {:error, diag, state, log}
+                    end
+                  end
+
+                is_keyword_list(expr) and tok.kind in [:list_string_start, :bin_string_start] ->
+                  # Another quoted keyword - parse via expression and merge
+                  parse_bitstring_quoted_kw_continuation(expr, acc, state, ctx, log)
+
+                true ->
+                  parse_segments([expr | acc], state, ctx, log)
+              end
           end
 
         {:ok, %{kind: :">>"} = close_tok, _} ->
@@ -127,6 +160,81 @@ defmodule ToxicParser.Grammar.Bitstrings do
         {:error, diag, state} ->
           {:error, diag, state, log}
       end
+    end
+  end
+
+  # Parse continuation of keyword list in bitstring context
+  defp parse_bitstring_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
+    case Expressions.expr(state, ctx, log) do
+      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
+        {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+            {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :">>"} = close_tok, _} ->
+                {:ok, _close, state} = TokenAdapter.next(state)
+                close_meta = token_meta(close_tok.metadata)
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], close_meta, state, log}
+
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                      {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+                      case TokenAdapter.next(state) do
+                        {:ok, %{kind: :">>"} = close_tok, state} ->
+                          close_meta = token_meta(close_tok.metadata)
+
+                          {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], close_meta,
+                           state, log}
+
+                        {:ok, tok, state} ->
+                          {:error, {:expected, :">>", got: tok.kind}, state, log}
+
+                        {:eof, state} ->
+                          {:error, :unexpected_eof, state, log}
+
+                        {:error, diag, state} ->
+                          {:error, diag, state, log}
+                      end
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_bitstring_quoted_kw_continuation(acc_kw ++ expr, acc, state, ctx, log)
+
+                  true ->
+                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+            end
+
+          {:ok, %{kind: :">>"} = close_tok, _} ->
+            {:ok, _close, state} = TokenAdapter.next(state)
+            close_meta = token_meta(close_tok.metadata)
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], close_meta, state, log}
+
+          {:ok, tok, state} ->
+            {:error, {:expected_comma_or, :">>", got: tok.kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 end

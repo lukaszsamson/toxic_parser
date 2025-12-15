@@ -1256,7 +1256,7 @@ defmodule ToxicParser.ConformanceLargeTest do
       code = """
       defmodule Foo do
         use AnotherMod.Nested,
-          foo: bar
+          foo: bar,
           'some': :option
 
         def run(arg) do
@@ -1266,10 +1266,12 @@ defmodule ToxicParser.ConformanceLargeTest do
       end
       """
 
+      assert toxic_parse(code) == s2q(code)
+
       code = """
       defmodule Foo do
         use AnotherMod.Nested,
-          'foo': bar
+          'foo': bar,
           some: :option
 
         def run(arg) do
@@ -1281,12 +1283,10 @@ defmodule ToxicParser.ConformanceLargeTest do
 
       assert toxic_parse(code) == s2q(code)
 
-      assert toxic_parse(code) == s2q(code)
-
       code = """
       defmodule Foo do
         use AnotherMod.Nested,
-          'foo': bar
+          'foo': bar,
           'some': :option
 
         def run(arg) do

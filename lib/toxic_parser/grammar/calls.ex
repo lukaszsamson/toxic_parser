@@ -368,18 +368,24 @@ defmodule ToxicParser.Grammar.Calls do
                 {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
                   # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
-                  # If so, and next is also a keyword, merge them
+                  # If so, and next is also a keyword (regular or quoted), merge them
                   case TokenAdapter.peek(state) do
                     {:ok, next_tok, _} when is_keyword_list_result(arg) ->
-                      if Keywords.starts_kw?(next_tok) do
-                        # Continue collecting keywords into this list
-                        with {:ok, more_kw, state, log} <-
-                               Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                          merged_kw = arg ++ more_kw
-                          {:ok, Enum.reverse([merged_kw | acc]), state, log}
-                        end
-                      else
-                        parse_no_parens_args([arg | acc], state, ctx, log)
+                      cond do
+                        Keywords.starts_kw?(next_tok) ->
+                          # Continue collecting keywords into this list
+                          with {:ok, more_kw, state, log} <-
+                                 Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                            merged_kw = arg ++ more_kw
+                            {:ok, Enum.reverse([merged_kw | acc]), state, log}
+                          end
+
+                        next_tok.kind in [:list_string_start, :bin_string_start] ->
+                          # Another quoted keyword - parse via expression and merge
+                          parse_no_parens_quoted_kw_continuation(arg, acc, state, ctx, log)
+
+                        true ->
+                          parse_no_parens_args([arg | acc], state, ctx, log)
                       end
 
                     _ ->
@@ -601,6 +607,54 @@ defmodule ToxicParser.Grammar.Calls do
       _ ->
         # Return without calling led
         {:ok, ast, state, log}
+    end
+  end
+
+  # Parse continuation of keyword list in no-parens context when we encounter another quoted keyword
+  # Used when we have foo 'a': 0, 'b': bar 1, 2
+  defp parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
+    # Parse the quoted keyword via expression - should return keyword list
+    case Expressions.expr(state, :matched, log) do
+      {:ok, expr, state, log} when is_keyword_list_result(expr) ->
+        # Got another keyword pair, check for more
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+                # Trailing comma or terminator
+                {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+
+              {:ok, kw_tok, _} ->
+                cond do
+                  Keywords.starts_kw?(kw_tok) ->
+                    with {:ok, more_kw, state, log} <-
+                           Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                      {:ok, Enum.reverse([acc_kw ++ expr ++ more_kw | acc]), state, log}
+                    end
+
+                  kw_tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_no_parens_quoted_kw_continuation(acc_kw ++ expr, acc, state, ctx, log)
+
+                  true ->
+                    {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+            end
+
+          _ ->
+            {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        # Not a keyword - error
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 

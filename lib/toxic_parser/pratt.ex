@@ -11,7 +11,10 @@ defmodule ToxicParser.Pratt do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Precedence, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Keywords}
+  alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Expressions, Keywords}
+
+  # Check if an expression result is a keyword list (from quoted keyword parsing)
+  defguardp is_keyword_list_result(arg) when is_list(arg) and length(arg) > 0
 
   @type context :: :matched | :unmatched | :no_parens
 
@@ -230,6 +233,11 @@ defmodule ToxicParser.Pratt do
         alias ToxicParser.Grammar.Blocks
         Blocks.parse(state, context, log)
 
+      # kw_identifier at expression position is a syntax error
+      # Keywords are only valid in argument positions, not as standalone expressions
+      :kw_identifier ->
+        {:error, syntax_error_before(build_meta(token.metadata), token.value), state, log}
+
       _ ->
         case Precedence.unary(token.kind) do
           {bp, _assoc} ->
@@ -443,8 +451,59 @@ defmodule ToxicParser.Pratt do
                   {:ok, Enum.reverse([kw_list | acc]), state, log}
                 end
 
+              tok.kind in [:list_string_start, :bin_string_start] ->
+                # Potentially a quoted keyword - parse and handle
+                case parse_no_parens_arg_with_min_bp(state, :matched, log, min_bp) do
+                  {:ok, arg, state, log} ->
+                    case TokenAdapter.peek(state) do
+                      {:ok, %{kind: :","}, _} ->
+                        {:ok, _comma, state} = TokenAdapter.next(state)
+                        # Check if arg is a keyword list and next is also keyword
+                        case TokenAdapter.peek(state) do
+                          {:ok, next_tok, _} ->
+                            cond do
+                              is_keyword_list_result(arg) and Keywords.starts_kw?(next_tok) ->
+                                with {:ok, kw_list, state, log} <-
+                                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                                  {:ok, Enum.reverse(acc) ++ [arg ++ kw_list], state, log}
+                                end
+
+                              is_keyword_list_result(arg) and
+                                  next_tok.kind in [:list_string_start, :bin_string_start] ->
+                                parse_no_parens_args_quoted_kw_continuation_with_min_bp(
+                                  arg,
+                                  acc,
+                                  state,
+                                  ctx,
+                                  log,
+                                  min_bp
+                                )
+
+                              true ->
+                                parse_no_parens_args_with_min_bp(
+                                  [arg | acc],
+                                  state,
+                                  ctx,
+                                  log,
+                                  min_bp
+                                )
+                            end
+
+                          _ ->
+                            parse_no_parens_args_with_min_bp([arg | acc], state, ctx, log, min_bp)
+                        end
+
+                      _ ->
+                        {:ok, Enum.reverse([arg | acc]), state, log}
+                    end
+
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
+                end
+
               true ->
                 # Parse arg with min_bp constraint
+                # Use parse_with_min_bp directly - keyword_key bubbles up as error
                 with {:ok, arg, state, log} <- parse_with_min_bp(state, :matched, log, min_bp) do
                   case TokenAdapter.peek(state) do
                     {:ok, %{kind: :","}, _} ->
@@ -454,12 +513,6 @@ defmodule ToxicParser.Pratt do
                     _ ->
                       {:ok, Enum.reverse([arg | acc]), state, log}
                   end
-                else
-                  {:error, :unexpected_eof, state, log} ->
-                    {:error, :unexpected_eof, state, log}
-
-                  {:error, reason, state, log} ->
-                    {:error, reason, state, log}
                 end
             end
         end
@@ -469,6 +522,86 @@ defmodule ToxicParser.Pratt do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
+    end
+  end
+
+  # Parse a single argument with min_bp, handling keyword_key from quoted keywords
+  defp parse_no_parens_arg_with_min_bp(state, context, log, min_bp) do
+    case parse_with_min_bp(state, context, log, min_bp) do
+      {:ok, ast, state, log} ->
+        {:ok, ast, state, log}
+
+      {:keyword_key, key_atom, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <- parse_with_min_bp(state, context, log, min_bp) do
+          {:ok, [{key_atom, value_ast}], state, log}
+        end
+
+      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <- parse_with_min_bp(state, context, log, min_bp) do
+          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+          {:ok, [{key_ast, value_ast}], state, log}
+        end
+
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
+    end
+  end
+
+  # Continue parsing keyword list in no_parens args context with min_bp
+  defp parse_no_parens_args_quoted_kw_continuation_with_min_bp(
+         acc_kw,
+         acc,
+         state,
+         ctx,
+         log,
+         min_bp
+       ) do
+    case parse_no_parens_arg_with_min_bp(state, :matched, log, min_bp) do
+      {:ok, kw_list, state, log} when is_list(kw_list) and length(kw_list) > 0 ->
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <-
+                           Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list ++ more_kw], state, log}
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_no_parens_args_quoted_kw_continuation_with_min_bp(
+                      acc_kw ++ kw_list,
+                      acc,
+                      state,
+                      ctx,
+                      log,
+                      min_bp
+                    )
+
+                  true ->
+                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
+            end
+
+          _ ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
+        end
+
+      {:ok, _ast, state, log} ->
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
     end
   end
 
@@ -1200,7 +1333,8 @@ defmodule ToxicParser.Pratt do
                     led(combined, state, log, min_bp, context, opts)
                   end
                 else
-                  parse_binary_rhs(
+                  # Parse RHS normally - handle keyword_key from quoted keywords
+                  parse_when_binary_rhs(
                     state,
                     left,
                     op_token,
@@ -1489,13 +1623,27 @@ defmodule ToxicParser.Pratt do
               {:ok, acc ++ [expr], state, log}
 
             {:ok, tok, _} ->
-              # Check if this is keyword data (e.g., foo: x)
-              if Keywords.starts_kw?(tok) do
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                  {:ok, acc ++ [expr, kw_list], state, log}
-                end
-              else
-                parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
+              # Check if expr was a keyword list and next is also a keyword
+              cond do
+                is_keyword_list_result(expr) and Keywords.starts_kw?(tok) ->
+                  # Merge quoted keyword with following regular keywords
+                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                    {:ok, acc ++ [expr ++ kw_list], state, log}
+                  end
+
+                is_keyword_list_result(expr) and
+                    tok.kind in [:list_string_start, :bin_string_start] ->
+                  # Another quoted keyword - parse via expression and merge
+                  parse_dot_container_quoted_kw_continuation(expr, acc, state, ctx, log)
+
+                Keywords.starts_kw?(tok) ->
+                  # Regular keyword data after non-keyword expr
+                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                    {:ok, acc ++ [expr, kw_list], state, log}
+                  end
+
+                true ->
+                  parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
               end
 
             _ ->
@@ -1505,6 +1653,60 @@ defmodule ToxicParser.Pratt do
         _ ->
           {:ok, acc ++ [expr], state, log}
       end
+    end
+  end
+
+  # Parse continuation of keyword list in dot_container context
+  defp parse_dot_container_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
+    alias ToxicParser.Grammar.Expressions
+
+    case Expressions.expr(state, :unmatched, log) do
+      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
+        {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+            {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"}, _} ->
+                # Trailing comma
+                {:ok, acc ++ [acc_kw ++ expr], state, log}
+
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                      {:ok, acc ++ [acc_kw ++ expr ++ more_kw], state, log}
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_dot_container_quoted_kw_continuation(
+                      acc_kw ++ expr,
+                      acc,
+                      state,
+                      ctx,
+                      log
+                    )
+
+                  true ->
+                    {:ok, acc ++ [acc_kw ++ expr], state, log}
+                end
+
+              _ ->
+                {:ok, acc ++ [acc_kw ++ expr], state, log}
+            end
+
+          _ ->
+            {:ok, acc ++ [acc_kw ++ expr], state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 
@@ -1528,6 +1730,135 @@ defmodule ToxicParser.Pratt do
   defp pushback_eoe_tokens(state, [eoe_tok | rest]) do
     state = TokenAdapter.pushback(state, eoe_tok)
     pushback_eoe_tokens(state, rest)
+  end
+
+  # Helper to parse RHS of `when` binary operator
+  # Handles both regular RHS and keyword_key returns from quoted keywords
+  defp parse_when_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log) do
+    case TokenAdapter.next(state) do
+      {:ok, rhs_token, state} ->
+        case parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
+          {:ok, right, state, log} ->
+            combined = build_binary_op(op_token, left, right, newlines)
+            led(combined, state, log, min_bp, context)
+
+          # String was a quoted keyword key - parse value and handle as keyword list RHS
+          {:keyword_key, key_atom, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <-
+                   parse_with_min_bp(state, context, log, rhs_min_bp) do
+              kw_list = [{key_atom, value_ast}]
+              # Check for more keywords after comma
+              handle_when_keyword_continuation(
+                kw_list,
+                left,
+                op_token,
+                min_bp,
+                newlines,
+                state,
+                context,
+                log
+              )
+            end
+
+          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <-
+                   parse_with_min_bp(state, context, log, rhs_min_bp) do
+              key_ast =
+                Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+
+              kw_list = [{key_ast, value_ast}]
+
+              handle_when_keyword_continuation(
+                kw_list,
+                left,
+                op_token,
+                min_bp,
+                newlines,
+                state,
+                context,
+                log
+              )
+            end
+
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Handle keyword continuation for `when` RHS - check for more keywords after comma
+  defp handle_when_keyword_continuation(
+         kw_list,
+         left,
+         op_token,
+         min_bp,
+         newlines,
+         state,
+         context,
+         log
+       ) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :","}, _} ->
+        {:ok, _comma, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, tok, _} ->
+            cond do
+              Keywords.starts_kw?(tok) ->
+                with {:ok, more_kw, state, log} <-
+                       Keywords.parse_kw_no_parens_call(state, context, log) do
+                  combined = build_binary_op(op_token, left, kw_list ++ more_kw, newlines)
+                  led(combined, state, log, min_bp, context)
+                end
+
+              tok.kind in [:list_string_start, :bin_string_start] ->
+                # Potentially another quoted keyword - parse via expression
+                with {:ok, expr, state, log} <- Expressions.expr(state, context, log) do
+                  if is_keyword_list_result(expr) do
+                    # It was a keyword list - merge and continue
+                    handle_when_keyword_continuation(
+                      kw_list ++ expr,
+                      left,
+                      op_token,
+                      min_bp,
+                      newlines,
+                      state,
+                      context,
+                      log
+                    )
+                  else
+                    # Not a keyword - finalize current kw_list
+                    combined = build_binary_op(op_token, left, kw_list, newlines)
+                    led(combined, state, log, min_bp, context)
+                  end
+                end
+
+              true ->
+                # Not a keyword - finalize
+                combined = build_binary_op(op_token, left, kw_list, newlines)
+                led(combined, state, log, min_bp, context)
+            end
+
+          _ ->
+            combined = build_binary_op(op_token, left, kw_list, newlines)
+            led(combined, state, log, min_bp, context)
+        end
+
+      _ ->
+        combined = build_binary_op(op_token, left, kw_list, newlines)
+        led(combined, state, log, min_bp, context)
+    end
   end
 
   # Helper to parse RHS of binary operator
@@ -1681,6 +2012,12 @@ defmodule ToxicParser.Pratt do
     line = Keyword.get(meta, :line, 1)
     column = Keyword.get(meta, :column, 1)
     {[line: line, column: column], "syntax error before: ", ""}
+  end
+
+  defp syntax_error_before(meta, token_value) when is_atom(token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", to_string(token_value)}
   end
 
   # Extract line/column metadata from an AST node (for nested calls)

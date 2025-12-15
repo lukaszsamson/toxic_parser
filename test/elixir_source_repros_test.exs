@@ -688,4 +688,14 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "interpolated strings in guards" do
+    test "fn with interpolated string in when guard" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/test/elixir/kernel/expansion_test.exs line 828
+      # fn with interpolated string in when guard context
+      code = ~S'fn arg when "#{arg}foo" == "argfoo" -> arg end'
+
+      assert_conforms(code)
+    end
+  end
 end

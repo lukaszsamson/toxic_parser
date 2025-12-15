@@ -452,14 +452,29 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_stab_parens_args(state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # call_args_no_parens_kw
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
-            {:ok, [kw_list], state, log}
-          end
-        else
-          # Parse matched expressions
-          parse_stab_parens_exprs([], state, ctx, log)
+        cond do
+          Keywords.starts_kw?(tok) ->
+            # call_args_no_parens_kw
+            with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
+              {:ok, [kw_list], state, log}
+            end
+
+          tok.kind in [:list_string_start, :bin_string_start] ->
+            # Potentially a quoted keyword - parse as expression and check
+            case parse_stab_parens_exprs([], state, ctx, log) do
+              {:ok, [kw_list], state, log} when is_list(kw_list) and length(kw_list) > 0 ->
+                {:ok, [kw_list], state, log}
+
+              {:ok, exprs, state, log} ->
+                {:ok, exprs, state, log}
+
+              {:error, _, _, _} = error ->
+                error
+            end
+
+          true ->
+            # Parse matched expressions
+            parse_stab_parens_exprs([], state, ctx, log)
         end
 
       {:eof, state} ->
@@ -472,37 +487,134 @@ defmodule ToxicParser.Grammar.Containers do
 
   defp parse_stab_parens_exprs(acc, state, _ctx, log) do
     # Parse expression with min_bp > when_op (50) to stop before -> and when
-    with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 51) do
-      state_after_eoe = EOE.skip(state)
+    case parse_stab_parens_single_expr(state, log) do
+      {:ok, expr, state, log} ->
+        state_after_eoe = EOE.skip(state)
 
-      case TokenAdapter.peek(state_after_eoe) do
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
-          state = EOE.skip(state)
-          # Check for keyword after comma
-          case TokenAdapter.peek(state) do
-            {:ok, tok, _} ->
-              # TODO: no coverage?
-              if Keywords.starts_kw?(tok) do
-                # call_args_no_parens_many: exprs followed by kw
-                with {:ok, kw_list, state, log} <-
-                       Keywords.parse_kw_no_parens_call(state, :matched, log) do
-                  {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
+        case TokenAdapter.peek(state_after_eoe) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
+            state = EOE.skip(state)
+            # Check for keyword after comma
+            case TokenAdapter.peek(state) do
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    # call_args_no_parens_many: exprs followed by kw
+                    with {:ok, kw_list, state, log} <-
+                           Keywords.parse_kw_no_parens_call(state, :matched, log) do
+                      # If expr was a keyword list from quoted key, merge them
+                      if is_keyword_list(expr) do
+                        {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
+                      else
+                        {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
+                      end
+                    end
+
+                  is_keyword_list(expr) and tok.kind in [:list_string_start, :bin_string_start] ->
+                    # Another quoted keyword after a keyword list - continue merging
+                    parse_stab_parens_exprs_quoted_kw_continuation(expr, acc, state, log)
+
+                  true ->
+                    parse_stab_parens_exprs([expr | acc], state, :matched, log)
                 end
-              else
+
+              _ ->
                 parse_stab_parens_exprs([expr | acc], state, :matched, log)
-              end
+            end
 
-            _ ->
-              parse_stab_parens_exprs([expr | acc], state, :matched, log)
-          end
+          {:ok, %{kind: :")"}, _} ->
+            {:ok, Enum.reverse([expr | acc]), state_after_eoe, log}
 
-        {:ok, %{kind: :")"}, _} ->
-          {:ok, Enum.reverse([expr | acc]), state_after_eoe, log}
+          _ ->
+            {:ok, Enum.reverse([expr | acc]), state, log}
+        end
 
-        _ ->
-          {:ok, Enum.reverse([expr | acc]), state, log}
-      end
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
+    end
+  end
+
+  # Parse a single expression for stab parens, handling quoted keywords
+  defp parse_stab_parens_single_expr(state, log) do
+    case Pratt.parse_with_min_bp(state, :matched, log, 51) do
+      {:ok, ast, state, log} ->
+        {:ok, ast, state, log}
+
+      # Handle quoted keyword key - parse value and return as keyword pair
+      {:keyword_key, key_atom, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <-
+               Pratt.parse_with_min_bp(state, :matched, log, 51) do
+          {:ok, [{key_atom, value_ast}], state, log}
+        end
+
+      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <-
+               Pratt.parse_with_min_bp(state, :matched, log, 51) do
+          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+          {:ok, [{key_ast, value_ast}], state, log}
+        end
+
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
+    end
+  end
+
+  # Parse continuation of keyword list in stab parens context
+  defp parse_stab_parens_exprs_quoted_kw_continuation(acc_kw, acc, state, log) do
+    case parse_stab_parens_single_expr(state, log) do
+      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
+        state_after_eoe = EOE.skip(state)
+
+        case TokenAdapter.peek(state_after_eoe) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :")"}, _} ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <-
+                           Keywords.parse_kw_no_parens_call(state, :matched, log) do
+                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_stab_parens_exprs_quoted_kw_continuation(
+                      acc_kw ++ expr,
+                      acc,
+                      state,
+                      log
+                    )
+
+                  true ->
+                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+            end
+
+          {:ok, %{kind: :")"}, _} ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state_after_eoe, log}
+
+          _ ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 
@@ -747,16 +859,33 @@ defmodule ToxicParser.Grammar.Containers do
         end
 
       {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # call_args_no_parens_kw: (x: 1 -> body)
-          # Use min_bp > stab_op (10) to stop keyword values before ->
-          # The kw_list is already [x: 1], and we need to wrap it in a list to get [[x: 1]]
-          with {:ok, kw_list, state, log} <-
-                 Keywords.parse_kw_call_with_min_bp(state, ctx, log, 11) do
-            {:ok, [kw_list], state, log}
-          end
-        else
-          parse_stab_pattern_exprs(acc, state, ctx, log)
+        cond do
+          Keywords.starts_kw?(tok) ->
+            # call_args_no_parens_kw: (x: 1 -> body)
+            # Use min_bp > stab_op (10) to stop keyword values before ->
+            # The kw_list is already [x: 1], and we need to wrap it in a list to get [[x: 1]]
+            with {:ok, kw_list, state, log} <-
+                   Keywords.parse_kw_call_with_min_bp(state, ctx, log, 11) do
+              {:ok, [kw_list], state, log}
+            end
+
+          tok.kind in [:list_string_start, :bin_string_start] ->
+            # Potentially a quoted keyword like ('x': 1 -> body)
+            # Parse as expression and check if it's a keyword list
+            case parse_stab_pattern_exprs(acc, state, ctx, log) do
+              {:ok, [kw_list], state, log} when is_list(kw_list) and length(kw_list) > 0 ->
+                # It was a keyword list - return it wrapped
+                {:ok, [kw_list], state, log}
+
+              {:ok, patterns, state, log} ->
+                {:ok, patterns, state, log}
+
+              {:error, _, _, _} = error ->
+                error
+            end
+
+          true ->
+            parse_stab_pattern_exprs(acc, state, ctx, log)
         end
 
       _ ->
@@ -842,13 +971,24 @@ defmodule ToxicParser.Grammar.Containers do
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
-              if Keywords.starts_kw?(tok) do
-                # Expressions followed by keywords
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
-                  {:ok, Enum.reverse([expr | acc]) ++ [kw_list], state, log}
-                end
-              else
-                parse_call_args_parens_exprs([expr | acc], state, ctx, log)
+              cond do
+                Keywords.starts_kw?(tok) ->
+                  # Expressions followed by keywords
+                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                    # If expr was a keyword list from quoted key, merge them
+                    if is_keyword_list(expr) do
+                      {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
+                    else
+                      {:ok, Enum.reverse([expr | acc]) ++ [kw_list], state, log}
+                    end
+                  end
+
+                is_keyword_list(expr) and tok.kind in [:list_string_start, :bin_string_start] ->
+                  # Another quoted keyword after a keyword list - continue merging
+                  parse_call_args_parens_quoted_kw_continuation(expr, acc, state, ctx, log)
+
+                true ->
+                  parse_call_args_parens_exprs([expr | acc], state, ctx, log)
               end
 
             _ ->
@@ -858,6 +998,64 @@ defmodule ToxicParser.Grammar.Containers do
         _ ->
           {:ok, Enum.reverse([expr | acc]), state, log}
       end
+    end
+  end
+
+  # Check if result is a keyword list (from quoted keyword parsing)
+  defp is_keyword_list(list) when is_list(list) and length(list) > 0, do: true
+  defp is_keyword_list(_), do: false
+
+  # Parse continuation of keyword list in paren call context
+  defp parse_call_args_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
+    # Parse the quoted keyword via expression
+    case Expressions.expr(state, :matched, log) do
+      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :")"}, _} ->
+                # Trailing comma
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_call_args_parens_quoted_kw_continuation(
+                      acc_kw ++ expr,
+                      acc,
+                      state,
+                      ctx,
+                      log
+                    )
+
+                  true ->
+                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+            end
+
+          _ ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        # Not a keyword
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 
@@ -874,16 +1072,26 @@ defmodule ToxicParser.Grammar.Containers do
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
-              # TODO: no coverage?
-              if Keywords.starts_kw?(tok) do
-                # call_args_no_parens_many: exprs followed by kw
-                # Use min_bp > stab_op (10) to stop keyword values before ->
-                with {:ok, kw_list, state, log} <-
-                       Keywords.parse_kw_no_parens_call_with_min_bp(state, :matched, log, 11) do
-                  {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
-                end
-              else
-                parse_stab_pattern_exprs([expr | acc], state, :matched, log)
+              cond do
+                Keywords.starts_kw?(tok) ->
+                  # call_args_no_parens_many: exprs followed by kw
+                  # Use min_bp > stab_op (10) to stop keyword values before ->
+                  with {:ok, kw_list, state, log} <-
+                         Keywords.parse_kw_no_parens_call_with_min_bp(state, :matched, log, 11) do
+                    # If expr was a keyword list from quoted key, merge them
+                    if is_keyword_list(expr) do
+                      {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
+                    else
+                      {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
+                    end
+                  end
+
+                is_keyword_list(expr) and tok.kind in [:list_string_start, :bin_string_start] ->
+                  # Another quoted keyword after a keyword list - continue merging
+                  parse_stab_pattern_exprs_quoted_kw_continuation(expr, acc, state, log)
+
+                true ->
+                  parse_stab_pattern_exprs([expr | acc], state, :matched, log)
               end
 
             _ ->
@@ -896,6 +1104,62 @@ defmodule ToxicParser.Grammar.Containers do
         _ ->
           {:ok, Enum.reverse([expr | acc]), state, log}
       end
+    end
+  end
+
+  # Parse continuation of keyword list in stab pattern context when we encounter another quoted keyword
+  defp parse_stab_pattern_exprs_quoted_kw_continuation(acc_kw, acc, state, log) do
+    # Parse the quoted keyword via expression
+    case parse_stab_pattern_expr(state, log) do
+      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
+        state_after_eoe = EOE.skip(state)
+
+        case TokenAdapter.peek(state_after_eoe) do
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :stab_op}, _} ->
+                # End before ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+
+              {:ok, tok, _} ->
+                cond do
+                  Keywords.starts_kw?(tok) ->
+                    with {:ok, more_kw, state, log} <-
+                           Keywords.parse_kw_no_parens_call_with_min_bp(state, :matched, log, 11) do
+                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
+                    end
+
+                  tok.kind in [:list_string_start, :bin_string_start] ->
+                    parse_stab_pattern_exprs_quoted_kw_continuation(
+                      acc_kw ++ expr,
+                      acc,
+                      state,
+                      log
+                    )
+
+                  true ->
+                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+                end
+
+              _ ->
+                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+            end
+
+          {:ok, %{kind: :stab_op}, _} ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+
+          _ ->
+            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
+        end
+
+      {:ok, _expr, state, log} ->
+        {:error, {:expected, :keyword}, state, log}
+
+      {:error, _, _, _} = error ->
+        error
     end
   end
 
@@ -918,7 +1182,33 @@ defmodule ToxicParser.Grammar.Containers do
 
       # Other tokens - use Pratt parser with min_bp to stop before ->
       _ ->
-        Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp)
+        case Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+          {:ok, ast, state, log} ->
+            {:ok, ast, state, log}
+
+          # Handle quoted keyword key - parse value and return as keyword pair
+          {:keyword_key, key_atom, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <-
+                   Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+              {:ok, [{key_atom, value_ast}], state, log}
+            end
+
+          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <-
+                   Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+              key_ast =
+                Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+
+              {:ok, [{key_ast, value_ast}], state, log}
+            end
+
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
+        end
     end
   end
 
