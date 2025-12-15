@@ -255,6 +255,7 @@ defmodule ToxicParser.Grammar.Maps do
                 # Parse entries after |
                 case TokenAdapter.peek(state) do
                   {:ok, tok, _} ->
+                    # TODO: no coverage?
                     if Keywords.starts_kw?(tok) do
                       # Keyword entries: %{base | a: 1, b: 2}
                       with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do

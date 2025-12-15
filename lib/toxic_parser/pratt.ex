@@ -306,6 +306,7 @@ defmodule ToxicParser.Pratt do
 
           {:ok, next_tok, _} ->
             # do_identifier can also have no-parens args before do-block
+            # TODO: no coverage?
             if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
@@ -321,6 +322,7 @@ defmodule ToxicParser.Pratt do
       :op_identifier ->
         case TokenAdapter.peek(state) do
           {:ok, next_tok, _} ->
+            # TODO: no coverage?
             if NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
             else
@@ -348,6 +350,7 @@ defmodule ToxicParser.Pratt do
           {:ok, next_tok, _} ->
             # For plain identifiers, only parse no-parens call if next token is NOT dual_op
             # (dual_op after identifier with spaces is binary operator, not unary argument)
+            # TODO: no coverage? only failing corpus
             if next_tok.kind != :dual_op and
                  (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) do
               parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
@@ -718,6 +721,7 @@ defmodule ToxicParser.Pratt do
           # op_identifier means tokenizer determined this is a no-parens call
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
+          # TODO: no coverage? only failing corpus
           token.kind == :op_identifier and
               (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
@@ -733,6 +737,7 @@ defmodule ToxicParser.Pratt do
             led(ast, state, log, min_bp, context, opts)
 
           # Could be no-parens call argument - delegate to Calls
+          # TODO: no coverage? only failing corpus
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
@@ -1718,6 +1723,7 @@ defmodule ToxicParser.Pratt do
 
       {:ok, tok, _} ->
         # Check if this is a keyword list first
+        # TODO: no coverage?
         if Keywords.starts_kw?(tok) do
           # kw_data case: [a: 1, b: 2]
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
@@ -1733,6 +1739,7 @@ defmodule ToxicParser.Pratt do
                   # After comma, check if next is keyword list
                   case TokenAdapter.peek(state) do
                     {:ok, kw_tok, _} ->
+                      # TODO: no coverage?
                       if Keywords.starts_kw?(kw_tok) do
                         with {:ok, kw_list, state, log} <-
                                Keywords.parse_kw_data(state, ctx, log) do
@@ -1798,6 +1805,7 @@ defmodule ToxicParser.Pratt do
         case TokenAdapter.peek(state) do
           {:ok, kw_tok, _} ->
             cond do
+              # TODO: no coverage?
               Keywords.starts_kw?(kw_tok) ->
                 with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
                   # Merge keyword lists

@@ -72,6 +72,10 @@ defmodule ToxicParser.ConformanceLargeTest do
       code = "some \"foo\": 1, abc: :ok"
 
       assert toxic_parse(code) == s2q(code)
+
+      code = "some \"foo\": 1, 'abc': :ok"
+
+      assert toxic_parse(code) == s2q(code)
     end
 
     test "not quoted and quoted single list" do
@@ -298,6 +302,10 @@ defmodule ToxicParser.ConformanceLargeTest do
       assert toxic_parse(code) == s2q(code)
 
       code = "D.foo(1, 'foo': 1, bar: 2)"
+
+      assert toxic_parse(code) == s2q(code)
+
+      code = "D.foo(1, 'foo': 1, 'bar': 2)"
 
       assert toxic_parse(code) == s2q(code)
 
@@ -1221,6 +1229,65 @@ defmodule ToxicParser.ConformanceLargeTest do
       defmodule Foo do
         use AnotherMod.Nested,
           some: :option
+
+        def run(arg) do
+          bar()
+          :ok
+        end
+      end
+      """
+
+      assert toxic_parse(code) == s2q(code)
+
+      code = """
+      defmodule Foo do
+        use AnotherMod.Nested,
+          'some': :option
+
+        def run(arg) do
+          bar()
+          :ok
+        end
+      end
+      """
+
+      assert toxic_parse(code) == s2q(code)
+
+      code = """
+      defmodule Foo do
+        use AnotherMod.Nested,
+          foo: bar
+          'some': :option
+
+        def run(arg) do
+          bar()
+          :ok
+        end
+      end
+      """
+
+      code = """
+      defmodule Foo do
+        use AnotherMod.Nested,
+          'foo': bar
+          some: :option
+
+        def run(arg) do
+          bar()
+          :ok
+        end
+      end
+      """
+
+      assert toxic_parse(code) == s2q(code)
+
+      assert toxic_parse(code) == s2q(code)
+
+      code = """
+      defmodule Foo do
+        use AnotherMod.Nested,
+          'foo': bar
+          'some': :option
 
         def run(arg) do
           bar()

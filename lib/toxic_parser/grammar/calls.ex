@@ -480,6 +480,7 @@ defmodule ToxicParser.Grammar.Calls do
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
+          # TODO: no coverage? only fails corpus tests
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call_no_led(tok, state, ctx, log)
 
@@ -621,6 +622,7 @@ defmodule ToxicParser.Grammar.Calls do
 
               {:ok, kw_tok, _} ->
                 cond do
+                  # TODO: no coverage?
                   Keywords.starts_kw?(kw_tok) ->
                     with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
                       {:ok, acc_kw ++ expr ++ more_kw, state, log}

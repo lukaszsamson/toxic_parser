@@ -278,8 +278,8 @@ defmodule ToxicParser.Grammar.Dots do
             # and should NOT be merged with following keywords even if it's a keyword list
             is_container_literal =
               case tok.kind do
-                # TODO: other delimiters like <<, (, %, %{}
-                kind when kind in [:"[", :"{"] -> true
+                # NOTE: only [ and ( seem relevant here
+                kind when kind in [:"[", :"<<", :"(", :"{"] -> true
                 _ -> false
               end
 

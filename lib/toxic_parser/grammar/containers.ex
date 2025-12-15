@@ -482,6 +482,7 @@ defmodule ToxicParser.Grammar.Containers do
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
+              # TODO: no coverage?
               if Keywords.starts_kw?(tok) do
                 # call_args_no_parens_many: exprs followed by kw
                 with {:ok, kw_list, state, log} <-
@@ -814,6 +815,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_call_args_parens(state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
+        # TODO: no coverage?
         if Keywords.starts_kw?(tok) do
           # Just keywords: fn (x: 1) -> body end
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
@@ -872,6 +874,7 @@ defmodule ToxicParser.Grammar.Containers do
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
+              # TODO: no coverage?
               if Keywords.starts_kw?(tok) do
                 # call_args_no_parens_many: exprs followed by kw
                 # Use min_bp > stab_op (10) to stop keyword values before ->
@@ -1548,6 +1551,7 @@ defmodule ToxicParser.Grammar.Containers do
         # For definite keywords (kw_identifier), parse as keyword list
         # For potential quoted keywords (string_start), try keyword parsing with checkpoint
         cond do
+          # TODO: no coverage
           Keywords.starts_kw?(tok) ->
             # Definite keyword - parse as keyword list
             with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
@@ -1638,6 +1642,7 @@ defmodule ToxicParser.Grammar.Containers do
               # For keyword tail, check both regular and quoted keyword starts
               # For quoted keywords, use checkpoint since it may be a regular string
               cond do
+                # TODO: no coverage?
                 Keywords.starts_kw?(next_tok) ->
                   # Definite keyword tail
                   parse_tuple_keyword_tail(first, state, log, leading_newlines)
@@ -1754,6 +1759,7 @@ defmodule ToxicParser.Grammar.Containers do
             {:ok, next_tok, _} ->
               # Check for keyword tail (e.g., {1, 2, 3, foo: :bar})
               cond do
+                # TODO: no coverage?
                 Keywords.starts_kw?(next_tok) ->
                   # Definite keyword tail
                   parse_tuple_rest_keyword_tail(new_tagged_acc, state, log, leading_newlines)

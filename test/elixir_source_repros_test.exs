@@ -19,6 +19,18 @@ defmodule ToxicParser.ElixirSourceReprosTest do
 
       assert_conforms(code)
     end
+
+    test "call with multiline args should not have newlines when first arg on same line - quoted" do
+      code = """
+      IO.warn("message",
+        'line': line,
+        'column': column,
+        file: file
+      )
+      """
+
+      assert_conforms(code)
+    end
   end
 
   describe "nested keyword lists" do
@@ -408,10 +420,54 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
 
+    test "map literal followed by keyword args in dot call" do
+      code = ~S'''
+      String.split(%{"\r\n" => "\n"}, trim: false)
+      '''
+
+      assert_conforms(code)
+
+      code = ~S'''
+      String.split({"\r\n", "\n", 1}, trim: false)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "bitstring literal followed by keyword args in dot call" do
+      code = ~S'''
+      String.split(<<"\r\n", "\n">>, trim: false)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "stub expression followed by keyword args in dot call" do
+      code = ~S'''
+      String.split(("\r\n" -> "\n"), trim: false)
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "fn expression followed by keyword args in dot call" do
+      code = ~S'''
+      String.split(fn "\r\n" -> "\n" end, trim: false)
+      '''
+
+      assert_conforms(code)
+    end
+
     test "tuple literal followed by keyword args in dot call" do
       # Similar case with tuple
       code = ~S'''
       Foo.bar({1, 2}, key: value)
+      '''
+
+      assert_conforms(code)
+
+      code = ~S'''
+      Foo.bar({1, 2, 3}, key: value)
       '''
 
       assert_conforms(code)
