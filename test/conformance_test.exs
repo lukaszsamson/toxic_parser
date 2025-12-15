@@ -2009,6 +2009,30 @@ defmodule ToxicParser.ConformanceTest do
       # no_parens_one_ambig_expr -> dot_op_identifier call_args_no_parens_ambig
       assert_conforms("foo -bar 1, 2")
     end
+
+    test "op_identifier with ambiguous args op_identifier" do
+      assert_conforms("foo t e")
+      assert_conforms("foo t +e")
+    end
+
+    test "op_identifier with ambiguous args keyword" do
+      assert_conforms("foo t x: 1")
+      assert_conforms("foo t 'x': 1")
+      assert_conforms("foo t x: 1, y: 2")
+      assert_conforms("foo t 'x': 1, y: 2")
+      assert_conforms("foo t x: 1, 'y': 2")
+
+      assert_conforms("foo t 0, x: 1")
+      assert_conforms("foo t 0, 'x': 1")
+      assert_conforms("foo t 0, x: 1, y: 2")
+      assert_conforms("foo t 0, 'x': 1, y: 2")
+      assert_conforms("foo t 0, x: 1, 'y': 2")
+    end
+
+    test "op_identifier with ambiguous args do" do
+      assert_conforms("foo t a do :ok end")
+      assert_conforms("foo t +a do :ok end")
+    end
   end
 
   describe "no_parens_expr - no_parens_many_expr" do

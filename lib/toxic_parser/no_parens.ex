@@ -8,6 +8,7 @@ defmodule ToxicParser.NoParens do
     :atom,
     :string,
     :identifier,
+    :op_identifier,
     :do_identifier,
     :paren_identifier,
     :bracket_identifier,
