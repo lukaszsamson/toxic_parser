@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Dots do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
@@ -49,31 +50,14 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
-      # Skip trailing EOE before close paren
-      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
-      _ = trailing_newlines
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+         {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+      total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+      call_meta = Meta.closing_meta(dot_meta, close_meta, total_newlines)
 
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :")"} = close_tok, state} ->
-          # newlines represents leading newlines after (, not trailing before )
-          _ = trailing_newlines
-          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
-
-          newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-          call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
-
-          {:ok, {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}, state, log}
-
-        {:ok, other, state} ->
-          {:error, {:expected, :")", got: other.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
-      end
+      {:ok, {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}, state, log}
+    else
+      {:error, reason, state} -> {:error, reason, state, log}
     end
   end
 
@@ -143,40 +127,16 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
-      # Skip trailing EOE before close paren
-      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+         {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+      total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+      callee_meta = Builder.Helpers.token_meta(tok.metadata)
+      meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :")"} = close_tok, state} ->
-          # Only count trailing newlines for empty args
-          # (newlines metadata represents leading newlines inside parens)
-          total_newlines =
-            if args == [] do
-              leading_newlines + trailing_newlines
-            else
-              leading_newlines
-            end
-
-          callee_meta = Builder.Helpers.token_meta(tok.metadata)
-          close_meta = Builder.Helpers.token_meta(close_tok.metadata)
-
-          # Build metadata: [newlines: N, closing: [...], line: L, column: C]
-          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-          callee = Builder.Helpers.from_token(tok)
-          {:ok, {callee, meta, Enum.reverse(args)}, state, log}
-
-        {:ok, other, state} ->
-          {:error, {:expected, :")", got: other.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, :unexpected_eof, state}
-
-        {:error, diag, state} ->
-          {:error, diag, state}
-      end
+      callee = Builder.Helpers.from_token(tok)
+      {:ok, {callee, meta, Enum.reverse(args)}, state, log}
+    else
+      {:error, reason, state} -> {:error, reason, state, log}
     end
   end
 
@@ -223,30 +183,16 @@ defmodule ToxicParser.Grammar.Dots do
           # Skip leading EOE and count newlines
           {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-          with {:ok, args, state, log} <- parse_paren_args([], state, :matched, log) do
-            # Skip trailing EOE before close paren
-            {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+          with {:ok, args, state, log} <- parse_paren_args([], state, :matched, log),
+               {:ok, close_meta, trailing_newlines, state} <-
+                 Meta.consume_closing(state, :")") do
+            total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
+            call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
 
-            case TokenAdapter.next(state) do
-              {:ok, %{kind: :")"} = close_tok, state} ->
-                total_newlines = leading_newlines + trailing_newlines
-                close_meta = Builder.Helpers.token_meta(close_tok.metadata)
-
-                newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-                call_meta = newlines_meta ++ [closing: close_meta] ++ meta_with_delimiter
-
-                # Return as call AST: {atom, call_meta, args}
-                {:ok, {atom, call_meta, Enum.reverse(args)}, state, log}
-
-              {:ok, other, state} ->
-                {:error, {:expected, :")", got: other.kind}, state, log}
-
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
-
-              {:error, diag, state} ->
-                {:error, diag, state, log}
-            end
+            # Return as call AST: {atom, call_meta, args}
+            {:ok, {atom, call_meta, Enum.reverse(args)}, state, log}
+          else
+            {:error, reason, state} -> {:error, reason, state, log}
           end
 
         true ->

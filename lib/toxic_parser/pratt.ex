@@ -11,6 +11,7 @@ defmodule ToxicParser.Pratt do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Precedence, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
@@ -906,43 +907,16 @@ defmodule ToxicParser.Pratt do
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <-
-           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-      # Skip trailing EOE before close paren
-      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+         {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+      total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+      callee_meta = build_meta(callee_tok.metadata)
+      meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-      case expect_close_paren(state) do
-        {:ok, close_tok, state} ->
-          # For non-empty calls, only count leading newlines
-          # For empty calls, count all newlines
-          total_newlines =
-            if args == [] do
-              leading_newlines + trailing_newlines
-            else
-              leading_newlines
-            end
-
-          callee_meta = build_meta(callee_tok.metadata)
-          close_meta = build_meta(close_tok.metadata)
-
-          # Build metadata: [newlines: N, closing: [...], line: L, column: C]
-          newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-          meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-          ast = {callee_tok.value, meta, Enum.reverse(args)}
-          {:ok, ast, state, log}
-
-        {:error, reason, state} ->
-          {:error, reason, state, log}
-      end
-    end
-  end
-
-  defp expect_close_paren(state) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: :")"} = tok, state} -> {:ok, tok, state}
-      {:ok, tok, state} -> {:error, {:expected, :")", got: tok.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
+      ast = {callee_tok.value, meta, Enum.reverse(args)}
+      {:ok, ast, state, log}
+    else
+      {:error, reason, state} -> {:error, reason, state, log}
     end
   end
 
@@ -1029,53 +1003,28 @@ defmodule ToxicParser.Pratt do
       {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
       with {:ok, args, state, log} <-
-             ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-        # Skip trailing EOE before close paren
-        {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+             ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+           {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+        total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+        # Get line/column from left AST (the callee)
+        callee_meta = extract_meta(left)
+        call_meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-        case TokenAdapter.next(state) do
-          {:ok, %{kind: :")"} = close_tok, state} ->
-            # For non-empty calls, only count leading newlines
-            # For empty calls, count all newlines
-            total_newlines =
-              if args == [] do
-                leading_newlines + trailing_newlines
-              else
-                leading_newlines
-              end
+        # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
+        # Otherwise it's a nested call: {left, call_meta, args}
+        combined =
+          case left do
+            {name, _meta, nil} when is_atom(name) ->
+              {name, call_meta, Enum.reverse(args)}
 
-            close_meta = build_meta(close_tok.metadata)
-            # Get line/column from left AST (the callee)
-            callee_meta = extract_meta(left)
+            _ ->
+              {left, call_meta, Enum.reverse(args)}
+          end
 
-            newlines_meta =
-              if total_newlines > 0, do: [newlines: total_newlines], else: []
-
-            call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-            # If left is a simple identifier {name, meta, nil}, convert to call {name, call_meta, args}
-            # Otherwise it's a nested call: {left, call_meta, args}
-            combined =
-              case left do
-                {name, _meta, nil} when is_atom(name) ->
-                  {name, call_meta, Enum.reverse(args)}
-
-                _ ->
-                  {left, call_meta, Enum.reverse(args)}
-              end
-
-            # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
-            maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-
-          {:ok, other, state} ->
-            {:error, {:expected, :")", got: other.kind}, state, log}
-
-          {:eof, state} ->
-            {:error, :unexpected_eof, state, log}
-
-          {:error, diag, state} ->
-            {:error, diag, state, log}
-        end
+        # Check for nested calls and do-blocks (foo() do...end, foo()() do...end)
+        maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+      else
+        {:error, reason, state} -> {:error, reason, state, log}
       end
     else
       # Not a valid paren call (e.g., `if (a)` with space - `if` is :identifier, not :paren_identifier)
@@ -1103,13 +1052,8 @@ defmodule ToxicParser.Pratt do
 
         with {:ok, args, newlines, close_meta, state, log} <-
                parse_dot_container_args(state, context, log) do
-          # Build: {{:., dot_meta, [left, :{}]}, [newlines: n, closing: close_meta] ++ dot_meta, args}
-          # Only add newlines to metadata if > 0
-          newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-
           combined =
-            {{:., dot_meta, [left, :{}]}, newlines_meta ++ [closing: close_meta] ++ dot_meta,
-             args}
+            {{:., dot_meta, [left, :{}]}, Meta.closing_meta(dot_meta, close_meta, newlines), args}
 
           led(combined, state, log, min_bp, context, opts)
         end
@@ -1264,10 +1208,8 @@ defmodule ToxicParser.Pratt do
             open_meta = build_meta(open_tok.metadata)
             close_meta = build_meta(close_tok.metadata)
 
-            newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-
             bracket_meta =
-              [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+              Meta.closing_meta(open_meta, close_meta, leading_newlines, from_brackets: true)
 
             combined =
               {{:., bracket_meta, [Access, :get]}, bracket_meta, [left | Enum.reverse(indices)]}
@@ -1363,39 +1305,18 @@ defmodule ToxicParser.Pratt do
         {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
         with {:ok, args, state, log} <-
-               ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-          # Skip trailing EOE before close paren
-          {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+               ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+             {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+          total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+          # Get line/column from callee AST
+          callee_meta = extract_meta(ast)
+          meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-          case TokenAdapter.next(state) do
-            {:ok, %{kind: :")"} = close_tok, state} ->
-              total_newlines =
-                if args == [] do
-                  leading_newlines + trailing_newlines
-                else
-                  leading_newlines
-                end
-
-              # Get line/column from callee AST
-              callee_meta = extract_meta(ast)
-              close_meta = build_meta(close_tok.metadata)
-
-              newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-              meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-              combined = {ast, meta, Enum.reverse(args)}
-              # Recurse for chained calls like foo()()()
-              maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-
-            {:ok, other, state} ->
-              {:error, {:expected, :")", got: other.kind}, state, log}
-
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
-
-            {:error, diag, state} ->
-              {:error, diag, state, log}
-          end
+          combined = {ast, meta, Enum.reverse(args)}
+          # Recurse for chained calls like foo()()()
+          maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+        else
+          {:error, reason, state} -> {:error, reason, state, log}
         end
 
       {:ok, %{kind: :do}, _} ->
@@ -1473,27 +1394,23 @@ defmodule ToxicParser.Pratt do
     if Keyword.has_key?(id_meta, :closing) do
       # Already a call - wrap it as nested call
       callee_meta = Keyword.take(id_meta, [:line, :column])
-      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-      call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
+      call_meta = Meta.closing_meta(callee_meta, close_meta, newlines)
       {callee, call_meta, Enum.reverse(args)}
     else
       # First call on dot expression - convert to call form
       base_meta = Keyword.delete(id_meta, :no_parens)
-      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-      call_meta = newlines_meta ++ [closing: close_meta] ++ base_meta
+      call_meta = Meta.closing_meta(base_meta, close_meta, newlines)
       {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
     end
   end
 
   defp dot_to_call_with_meta({:., dot_meta, dot_args}, args, newlines, close_meta) do
-    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-    call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
+    call_meta = Meta.closing_meta(dot_meta, close_meta, newlines)
     {{:., dot_meta, dot_args}, call_meta, Enum.reverse(args)}
   end
 
   defp dot_to_call_with_meta(other, args, newlines, close_meta) do
-    newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-    meta = newlines_meta ++ [closing: close_meta]
+    meta = Meta.closing_meta([], close_meta, newlines)
     {other, meta, Enum.reverse(args)}
   end
 
@@ -2257,46 +2174,24 @@ defmodule ToxicParser.Pratt do
 
         with {:ok, args, state, log} <-
                ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-          # Skip trailing EOE before close paren
-          {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+          with {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+            total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+            callee_meta = extract_meta(left)
+            call_meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-          case TokenAdapter.next(state) do
-            {:ok, %{kind: :")"} = close_tok, state} ->
-              # For non-empty calls, only count leading newlines
-              # For empty calls, count all newlines
-              total_newlines =
-                if args == [] do
-                  leading_newlines + trailing_newlines
-                else
-                  leading_newlines
-                end
+            combined =
+              case left do
+                {name, _meta, nil} when is_atom(name) ->
+                  {name, call_meta, Enum.reverse(args)}
 
-              close_meta = build_meta(close_tok.metadata)
-              callee_meta = extract_meta(left)
+                _ ->
+                  {left, call_meta, Enum.reverse(args)}
+              end
 
-              newlines_meta = if total_newlines > 0, do: [newlines: total_newlines], else: []
-              call_meta = newlines_meta ++ [closing: close_meta] ++ callee_meta
-
-              combined =
-                case left do
-                  {name, _meta, nil} when is_atom(name) ->
-                    {name, call_meta, Enum.reverse(args)}
-
-                  _ ->
-                    {left, call_meta, Enum.reverse(args)}
-                end
-
-              # Continue to handle more dots and calls
-              led_dots_and_calls(combined, state, log, context)
-
-            {:ok, other, state} ->
-              {:error, {:expected, :")", got: other.kind}, state, log}
-
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
-
-            {:error, diag, state} ->
-              {:error, diag, state, log}
+            # Continue to handle more dots and calls
+            led_dots_and_calls(combined, state, log, context)
+          else
+            {:error, reason, state} -> {:error, reason, state, log}
           end
         end
 

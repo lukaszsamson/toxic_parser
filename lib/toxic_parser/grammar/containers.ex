@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Containers do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Bitstrings, EOE, Expressions, Keywords, Maps, Stabs}
 
   @type result ::
@@ -112,7 +113,7 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, %{kind: :")"} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
-        parens_meta = [parens: open_meta ++ [closing: close_meta]]
+        parens_meta = [parens: Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)]
         ast = {:__block__, parens_meta, []}
         # Continue with Pratt.led to handle trailing operators
         Pratt.led(ast, state, log, min_bp, ctx)
@@ -246,7 +247,7 @@ defmodule ToxicParser.Grammar.Containers do
 
         {:unquote_splicing, _meta, [_arg]} ->
           # unquote_splicing always gets wrapped in __block__ with closing metadata
-          {:__block__, [closing: close_meta] ++ open_meta, [single]}
+          {:__block__, Meta.closing_meta(open_meta, close_meta), [single]}
 
         _ ->
           # Regular single expression - add parens metadata to 3-tuple AST nodes
@@ -259,7 +260,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   defp finish_paren_exprs(exprs, open_meta, close_meta, state, log, min_bp, ctx) do
     # Multiple expressions - wrap in __block__
-    ast = {:__block__, [closing: close_meta] ++ open_meta, Enum.reverse(exprs)}
+    ast = {:__block__, Meta.closing_meta(open_meta, close_meta), Enum.reverse(exprs)}
     Pratt.led(ast, state, log, min_bp, ctx)
   end
 
@@ -272,7 +273,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp add_parens_meta(literal, _open_meta, _close_meta), do: literal
 
   defp build_parens_meta(open_meta, close_meta) do
-    open_meta ++ [closing: close_meta]
+    Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)
   end
 
   defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
@@ -506,8 +507,7 @@ defmodule ToxicParser.Grammar.Containers do
     open_meta = token_meta(open_tok.metadata)
 
     with {:ok, elements, newlines, close_meta, state, log} <- parse_tuple_args(state, ctx, log) do
-      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-      meta = newlines_meta ++ [closing: close_meta] ++ open_meta
+      meta = Meta.closing_meta(open_meta, close_meta, newlines)
 
       # 2-element tuples are represented as literal {a, b}
       # Other sizes use {:{}, meta, elements}

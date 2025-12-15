@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Maps do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Keywords}
 
   @type result ::
@@ -147,23 +148,20 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, %{kind: :"}"} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
-        newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-        map_meta = newlines_meta ++ [closing: close_meta] ++ brace_meta
+        map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
         {:ok, build_map_ast(base, [], percent_meta, map_meta), state, log}
 
       {:ok, _, _} ->
         # Try to parse map update first, then fall back to regular entries
         case try_parse_map_update(state, ctx, log) do
           {:ok, update_ast, close_meta, state, log} ->
-            newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-            map_meta = newlines_meta ++ [closing: close_meta] ++ brace_meta
+            map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
             {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, log}
 
           {:not_update, state} ->
             # Parse map_close: kw_data | assoc | assoc_base ',' kw_data
             with {:ok, entries, close_meta, state, log} <- parse_map_close(state, ctx, log) do
-              newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-              map_meta = newlines_meta ++ [closing: close_meta] ++ brace_meta
+              map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
               {:ok, build_map_ast(base, entries, percent_meta, map_meta), state, log}
             end
 

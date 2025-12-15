@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Stabs do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
 
   # Stab pattern parsing uses min_bp one higher than stab_op (bp=10) to stop before `->`
@@ -19,7 +20,7 @@ defmodule ToxicParser.Grammar.Stabs do
         # Output: {:__block__, [closing: [...], line: L, column: C], []}
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
-        meta = [closing: close_meta] ++ open_meta
+        meta = Meta.closing_meta(open_meta, close_meta)
         ast = {:__block__, meta, []}
         # Continue with Pratt.led to handle trailing operators
         Pratt.led(ast, state, log, min_bp, ctx)
@@ -154,7 +155,9 @@ defmodule ToxicParser.Grammar.Stabs do
     # Parse body (or empty if just ->)
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
       # Build stab clause with empty patterns and parens metadata
-      parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
+      parens_meta =
+        [parens: Meta.closing_meta(inner_open_meta, inner_close_meta, 0, [], base_first: true)]
+
       clause = {:->, parens_meta ++ newlines_meta ++ stab_base_meta, [[], body]}
 
       # Check for more clauses
@@ -184,7 +187,12 @@ defmodule ToxicParser.Grammar.Stabs do
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
             # Build guarded stab clause
-            parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
+            parens_meta =
+              [
+                parens:
+                  Meta.closing_meta(inner_open_meta, inner_close_meta, 0, [], base_first: true)
+              ]
+
             guard_ast = {:when, when_meta, [guard]}
             clause = {:->, parens_meta ++ newlines_meta ++ stab_base_meta, [[guard_ast], body]}
 
@@ -282,7 +290,9 @@ defmodule ToxicParser.Grammar.Stabs do
     newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
-      parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
+      parens_meta =
+        [parens: Meta.closing_meta(inner_open_meta, inner_close_meta, 0, [], base_first: true)]
+
       stab_meta = newlines_meta ++ stab_base_meta
       # Apply parens meta and unwrap splice for stab patterns
       unwrapped = unwrap_splice(args)
@@ -318,7 +328,12 @@ defmodule ToxicParser.Grammar.Stabs do
           newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
-            parens_meta = [parens: inner_open_meta ++ [closing: inner_close_meta]]
+            parens_meta =
+              [
+                parens:
+                  Meta.closing_meta(inner_open_meta, inner_close_meta, 0, [], base_first: true)
+              ]
+
             stab_meta = newlines_meta ++ stab_base_meta
             # Apply parens meta and unwrap splice for stab patterns
             unwrapped = unwrap_splice(args)
@@ -526,7 +541,9 @@ defmodule ToxicParser.Grammar.Stabs do
     case parse_stab_patterns([], state, ctx, log) do
       # 5-tuple: patterns with parens metadata (from stab_parens_many)
       {:ok, patterns, state, log, {open_meta, close_meta}} ->
-        parens_meta = [parens: open_meta ++ [closing: close_meta]]
+        parens_meta =
+          [parens: Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)]
+
         parse_stab_clause_after_patterns(patterns, parens_meta, state, ctx, log, terminator)
 
       # 4-tuple: patterns without parens metadata

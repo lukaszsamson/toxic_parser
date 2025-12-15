@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
   @type result ::
@@ -33,15 +34,13 @@ defmodule ToxicParser.Grammar.Bitstrings do
       {:ok, %{kind: :">>"} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
-        newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-        meta = newlines_meta ++ [closing: close_meta] ++ open_meta
+        meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
         ast = {:<<>>, meta, []}
         {:ok, ast, state, log}
 
       _ ->
         with {:ok, parts, close_meta, state, log} <- parse_segments([], state, ctx, log) do
-          newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
-          meta = newlines_meta ++ [closing: close_meta] ++ open_meta
+          meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
           ast = {:<<>>, meta, parts}
           {:ok, ast, state, log}
         end

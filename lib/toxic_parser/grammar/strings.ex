@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.Strings do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Expressions
 
   @simple_string_start [:bin_string_start, :list_string_start]
@@ -272,7 +273,7 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Build interpolation AST based on string kind
   defp build_interpolation_ast(expr, open_meta, close_meta, kind) do
-    call_meta = [from_interpolation: true, closing: close_meta] ++ open_meta
+    call_meta = Meta.closing_meta(open_meta, close_meta, 0, from_interpolation: true)
 
     case kind do
       k when k in [:binary, :heredoc_binary, :sigil, :atom] ->

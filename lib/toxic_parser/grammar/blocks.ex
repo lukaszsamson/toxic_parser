@@ -10,6 +10,7 @@ defmodule ToxicParser.Grammar.Blocks do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Stabs}
 
   @type result ::
@@ -55,8 +56,7 @@ defmodule ToxicParser.Grammar.Blocks do
       log = exit_scope(log, :fn, fn_tok.metadata)
       end_location = Builder.Helpers.token_meta(end_meta)
       # Build metadata: [newlines: N, closing: [...], line: L, column: C]
-      newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
-      meta = newlines_meta ++ [closing: end_location] ++ fn_meta
+      meta = Meta.closing_meta(fn_meta, end_location, newlines)
       {:ok, {:fn, meta, clauses}, state, log}
     end
   end
