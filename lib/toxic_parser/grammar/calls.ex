@@ -336,55 +336,78 @@ defmodule ToxicParser.Grammar.Calls do
 
   @doc """
   Parse no-parens call arguments (exported for use by Pratt parser for dot calls).
+  Optional `min_bp` parameter (default 0) stops argument parsing before operators
+  with binding power < min_bp. This is essential for proper precedence handling
+  in contexts like stab clauses where we must stop before `->`.
   """
-  def parse_no_parens_args(acc, state, ctx, log) do
+  def parse_no_parens_args(acc, state, ctx, log, min_bp \\ 0) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
         {:ok, Enum.reverse(acc), state, log}
 
-      {:ok, tok, _} ->
-        cond do
-          Keywords.starts_kw?(tok) ->
-            # kw_list is already [x: 1], wrap once for args: [[x: 1]]
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
-              {:ok, Enum.reverse([kw_list | acc]), state, log}
-            end
+      {:ok, %{kind: kind} = tok, _} ->
+        # Check if we should stop at this operator due to min_bp.
+        # BUT only for pure binary operators - tokens like dual_op can be unary,
+        # so they should be allowed to start no-parens arguments.
+        # The stab_op check is now handled by excluding it from led() entirely.
+        can_be_unary = kind in [:dual_op, :unary_op, :at_op, :capture_op, :ternary_op]
 
-          true ->
-            # Parse args in :matched context to prevent do-block attachment to arguments.
-            # The do-block belongs to the outer call, not to individual args.
-            with {:ok, arg, state, log} <- Expressions.expr(state, :matched, log) do
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, _} ->
-                  {:ok, _comma, state} = TokenAdapter.next(state)
-                  # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
-                  # If so, and next is also a keyword (regular or quoted), merge them
-                  case TokenAdapter.peek(state) do
-                    {:ok, next_tok, _} when is_keyword_list_result(arg) ->
-                      cond do
-                        Keywords.starts_kw?(next_tok) ->
-                          # Continue collecting keywords into this list
-                          with {:ok, more_kw, state, log} <-
-                                 Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                            merged_kw = arg ++ more_kw
-                            {:ok, Enum.reverse([merged_kw | acc]), state, log}
-                          end
+        case {can_be_unary, Pratt.bp(kind)} do
+          {false, bp} when is_integer(bp) and bp < min_bp ->
+            # Stop before this pure binary operator (e.g., -> is now handled elsewhere)
+            {:ok, Enum.reverse(acc), state, log}
 
-                        next_tok.kind in [:list_string_start, :bin_string_start] ->
-                          # Another quoted keyword - parse via expression and merge
-                          parse_no_parens_quoted_kw_continuation(arg, acc, state, ctx, log)
+          _ ->
+            cond do
+              Keywords.starts_kw?(tok) ->
+                # kw_list is already [x: 1], wrap once for args: [[x: 1]]
+                with {:ok, kw_list, state, log} <-
+                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                  {:ok, Enum.reverse([kw_list | acc]), state, log}
+                end
 
-                        true ->
-                          parse_no_parens_args([arg | acc], state, ctx, log)
-                      end
+              true ->
+                # Parse args in :matched context to prevent do-block attachment to arguments.
+                # The do-block belongs to the outer call, not to individual args.
+                # Use min_bp=0 for argument values - the argument should consume all binary
+                # operators like :: and when. The caller's min_bp is only used to check
+                # whether to *start* parsing (the check above), not to constrain argument values.
+                # This allows @spec foo(a) :: bar to parse :: as part of spec's argument.
+                case Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                  {:ok, arg, state, log} ->
+                    handle_no_parens_arg(arg, acc, state, ctx, log, min_bp)
 
-                    _ ->
-                      parse_no_parens_args([arg | acc], state, ctx, log)
-                  end
+                  # Handle quoted keyword key - parse value and return as keyword pair
+                  {:keyword_key, key_atom, state, log} ->
+                    state = EOE.skip(state)
 
-                _ ->
-                  {:ok, Enum.reverse([arg | acc]), state, log}
-              end
+                    with {:ok, value_ast, state, log} <-
+                           Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                      kw_pair = [{key_atom, value_ast}]
+                      handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
+                    end
+
+                  # Handle interpolated keyword key
+                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+                    state = EOE.skip(state)
+
+                    with {:ok, value_ast, state, log} <-
+                           Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                      key_ast =
+                        Expressions.build_interpolated_keyword_key(
+                          parts,
+                          kind,
+                          start_meta,
+                          delimiter
+                        )
+
+                      kw_pair = [{key_ast, value_ast}]
+                      handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
+                    end
+
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
+                end
             end
         end
 
@@ -396,22 +419,58 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
+  # Helper to handle a parsed argument in no-parens context
+  defp handle_no_parens_arg(arg, acc, state, ctx, log, min_bp) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :","}, _} ->
+        {:ok, _comma, state} = TokenAdapter.next(state)
+        # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
+        # If so, and next is also a keyword (regular or quoted), merge them
+        case TokenAdapter.peek(state) do
+          {:ok, next_tok, _} when is_keyword_list_result(arg) ->
+            cond do
+              Keywords.starts_kw?(next_tok) ->
+                # Continue collecting keywords into this list
+                with {:ok, more_kw, state, log} <-
+                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                  merged_kw = arg ++ more_kw
+                  {:ok, Enum.reverse([merged_kw | acc]), state, log}
+                end
+
+              next_tok.kind in [:list_string_start, :bin_string_start] ->
+                # Another quoted keyword - parse via expression and merge
+                parse_no_parens_quoted_kw_continuation(arg, acc, state, ctx, log, min_bp)
+
+              true ->
+                parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
+            end
+
+          _ ->
+            parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
+        end
+
+      _ ->
+        {:ok, Enum.reverse([arg | acc]), state, log}
+    end
+  end
+
   @doc """
   Parse a call without calling led() at the end.
   Used by Pratt parser when it needs to preserve min_bp for proper associativity.
   The caller is responsible for calling led() with the correct min_bp.
+  Optional `min_bp` parameter (default 0) is threaded through to argument parsing.
   """
-  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_without_led(%State{} = state, ctx, %EventLog{} = log) do
+  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse_without_led(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do
           :other ->
-            Pratt.parse(state, ctx, log)
+            Pratt.parse_with_min_bp(state, ctx, log, min_bp)
 
           ident_kind ->
             {:ok, _tok, state} = TokenAdapter.next(state)
-            parse_identifier_no_led(ident_kind, tok, state, ctx, log)
+            parse_identifier_no_led(ident_kind, tok, state, ctx, log, min_bp)
         end
 
       {:eof, state} ->
@@ -423,7 +482,7 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   # Parse identifier without calling led at the end
-  defp parse_identifier_no_led(kind, tok, state, ctx, log) do
+  defp parse_identifier_no_led(kind, tok, state, ctx, log, min_bp) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} when kind == :paren_identifier ->
         parse_paren_call_no_led(tok, state, ctx, log)
@@ -436,16 +495,20 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, next_tok, _} ->
         cond do
           kind == :op_identifier ->
-            parse_op_identifier_call_no_led(tok, state, ctx, log)
+            parse_op_identifier_call_no_led(tok, state, ctx, log, min_bp)
+
+          # Check no-parens arg BEFORE binary operator check.
+          # This handles cases like `spec +integer :: integer` where + is dual_op:
+          # - dual_op has binary precedence (so Pratt.bp returns non-nil)
+          # - BUT it can also start a unary no-parens argument
+          # We want the no-parens interpretation here, so check can_start_no_parens_arg first.
+          NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
+            parse_no_parens_call_no_led(tok, state, ctx, log, min_bp)
 
           Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
             # Binary operator follows - return as bare identifier, caller will handle
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
-
-          # TODO: no coverage? only fails corpus tests
-          NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
-            parse_no_parens_call_no_led(tok, state, ctx, log)
 
           kind == :do_identifier and ctx == :matched ->
             ast = Builder.Helpers.from_token(tok)
@@ -500,13 +563,15 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log) do
-    with {:ok, first_arg, state, log} <- Expressions.expr(state, :matched, log) do
+  defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log, _min_bp) do
+    # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
+    # This allows @spec +integer :: integer to parse :: as part of the argument.
+    with {:ok, first_arg, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 0) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
 
-          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log) do
+          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log, 0) do
             callee = callee_tok.value
             meta = Builder.Helpers.token_meta(callee_tok.metadata)
             ast = {callee, meta, args}
@@ -522,8 +587,8 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_no_parens_call_no_led(callee_tok, state, ctx, log) do
-    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log) do
+  defp parse_no_parens_call_no_led(callee_tok, state, ctx, log, min_bp) do
+    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log, min_bp) do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}
@@ -533,41 +598,33 @@ defmodule ToxicParser.Grammar.Calls do
 
   # Parse continuation of keyword list in no-parens context when we encounter another quoted keyword
   # Used when we have foo 'a': 0, 'b': bar 1, 2
-  defp parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
+  defp parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log, min_bp) do
     # Parse the quoted keyword via expression - should return keyword list
-    case Expressions.expr(state, :matched, log) do
+    # Use min_bp=0 for argument values (see comment in parse_no_parens_args)
+    case Pratt.parse_with_min_bp(state, :matched, log, 0) do
       {:ok, expr, state, log} when is_keyword_list_result(expr) ->
-        # Got another keyword pair, check for more
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, _} ->
-            {:ok, _comma, state} = TokenAdapter.next(state)
+        # Got another keyword pair, continue accumulating
+        continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
-                # Trailing comma or terminator
-                {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+      # Handle keyword_key return - parse value and continue
+      {:keyword_key, key_atom, state, log} ->
+        state = EOE.skip(state)
 
-              {:ok, kw_tok, _} ->
-                cond do
-                  Keywords.starts_kw?(kw_tok) ->
-                    with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                      {:ok, Enum.reverse([acc_kw ++ expr ++ more_kw | acc]), state, log}
-                    end
+        with {:ok, value_ast, state, log} <-
+               Pratt.parse_with_min_bp(state, :matched, log, 0) do
+          expr = [{key_atom, value_ast}]
+          continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
+        end
 
-                  kw_tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_no_parens_quoted_kw_continuation(acc_kw ++ expr, acc, state, ctx, log)
+      # Handle interpolated keyword key
+      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+        state = EOE.skip(state)
 
-                  true ->
-                    {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
-                end
-
-              _ ->
-                {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
-            end
-
-          _ ->
-            {:ok, Enum.reverse([acc_kw ++ expr | acc]), state, log}
+        with {:ok, value_ast, state, log} <-
+               Pratt.parse_with_min_bp(state, :matched, log, 0) do
+          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+          expr = [{key_ast, value_ast}]
+          continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
         end
 
       {:ok, _expr, state, log} ->
@@ -576,6 +633,41 @@ defmodule ToxicParser.Grammar.Calls do
 
       {:error, _, _, _} = error ->
         error
+    end
+  end
+
+  # Continue accumulating keywords after successfully parsing a keyword pair
+  defp continue_quoted_kw_accumulation(acc_kw, acc, state, ctx, log, min_bp) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :","}, _} ->
+        {:ok, _comma, state} = TokenAdapter.next(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+            # Trailing comma or terminator
+            {:ok, Enum.reverse([acc_kw | acc]), state, log}
+
+          {:ok, kw_tok, _} ->
+            cond do
+              Keywords.starts_kw?(kw_tok) ->
+                with {:ok, more_kw, state, log} <-
+                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                  {:ok, Enum.reverse([acc_kw ++ more_kw | acc]), state, log}
+                end
+
+              kw_tok.kind in [:list_string_start, :bin_string_start] ->
+                parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log, min_bp)
+
+              true ->
+                {:ok, Enum.reverse([acc_kw | acc]), state, log}
+            end
+
+          _ ->
+            {:ok, Enum.reverse([acc_kw | acc]), state, log}
+        end
+
+      _ ->
+        {:ok, Enum.reverse([acc_kw | acc]), state, log}
     end
   end
 

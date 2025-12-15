@@ -1807,6 +1807,22 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("case x do\n_ -> :any\nend")
     end
 
+    test "case with guards containing no-parens calls - issue: no-parens call precedence violation" do
+      # No-parens calls in guards must stop before the stab operator (->)
+      # The stab_op has low precedence and should NOT be consumed by the no-parens call args
+      assert_conforms("case x do y when foo 1 + 2 -> :ok end")
+      assert_conforms("case x do y when bar a, b -> :ok end")
+      assert_conforms("case x do y when baz 1 -> :ok end")
+      assert_conforms("case x do y when baz x: 1 -> :ok end")
+      assert_conforms("case x do y when baz 'x': 1 -> :ok end")
+      assert_conforms("case x do y when baz x: 1, y: 2 -> :ok end")
+      assert_conforms("case x do y when baz x: 1, 'y': 2 -> :ok end")
+      assert_conforms("case x do y when baz 'x': 1, y: 2 -> :ok end")
+
+      assert_conforms("case x do y when baz a, x: 1 -> :ok end")
+      assert_conforms("case x do y when baz a, 'x': 1 -> :ok end")
+    end
+
     test "cond block" do
       assert_conforms("cond do\ntrue -> :ok\nend")
       assert_conforms("cond do\na > 0 -> :positive\na < 0 -> :negative\ntrue -> :zero\nend")

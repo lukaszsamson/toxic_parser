@@ -726,7 +726,7 @@ defmodule ToxicParser.Pratt do
         # belong to the argument expression in Elixir.
         state = TokenAdapter.pushback(state, token)
 
-        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
           led_min_bp = if has_do_block?(right) and unary_operand, do: 0, else: min_bp
           led(right, state, log, led_min_bp, context, opts)
         end
@@ -735,7 +735,7 @@ defmodule ToxicParser.Pratt do
         # Do-block - delegate to Calls.parse_without_led
         state = TokenAdapter.pushback(state, token)
 
-        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
           # For unary operands: ALL binary ops should attach (min_bp=0)
           # For binary RHS: preserve min_bp for associativity
           led_min_bp = if unary_operand, do: 0, else: min_bp
@@ -752,7 +752,7 @@ defmodule ToxicParser.Pratt do
               (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
 
-            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
               # Preserve the original min_bp for proper associativity
               led(right, state, log, min_bp, context, opts)
             end
@@ -767,7 +767,7 @@ defmodule ToxicParser.Pratt do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
-            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
               # For unary operands with do-blocks: ALL binary ops should attach
               # For binary RHS with do-blocks: preserve min_bp for associativity
               # For non-do-block expressions: always preserve min_bp
@@ -874,6 +874,13 @@ defmodule ToxicParser.Pratt do
       # This matches Elixir's behavior where dual_op after newlines is unary
       {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
         # Push back EOE tokens and return left - dual_op after EOE is not continuation
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
+
+      # stab_op (->) is NOT a general binary operator - it only appears in stab clause contexts
+      # Parsing it here would wrongly parse "1 -> 2" as a binary expression
+      # Stab clauses are handled by the Stabs module which knows when -> is valid
+      {:stab_op, _} ->
         state = pushback_eoe_tokens(state, eoe_tokens)
         {:ok, left, state, log}
 

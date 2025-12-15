@@ -698,4 +698,36 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "@spec with unary operators" do
+    test "@spec with unary + operator" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex line 1555
+      # @spec +integer :: integer - the :: should be inside spec's argument
+      # NOT: (@spec +integer) :: integer
+      code = "@spec +integer :: integer"
+
+      assert_conforms(code)
+    end
+
+    test "@spec with unary - operator" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex line 1598
+      code = "@spec -integer :: integer"
+
+      assert_conforms(code)
+    end
+
+    test "@spec with unary + float" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex line 1556
+      code = "@spec +float :: float"
+
+      assert_conforms(code)
+    end
+
+    test "@spec with unary - float" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/lib/kernel.ex line 1599
+      code = "@spec -float :: float"
+
+      assert_conforms(code)
+    end
+  end
 end
