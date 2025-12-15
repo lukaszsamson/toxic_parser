@@ -70,6 +70,30 @@ defmodule ToxicParser.TokenAdapterTest do
     assert next_int.kind == :int
   end
 
+  test "drop_checkpoint vs rewind - drop continues forward, rewind goes back" do
+    # Test drop_checkpoint continues from current position
+    state = TokenAdapter.new("a;b;c")
+    {:ok, %{value: :a}, state} = TokenAdapter.next(state)
+    {ref, state} = TokenAdapter.checkpoint(state)
+    {:ok, %{kind: :eoe}, state} = TokenAdapter.next(state)
+    {:ok, %{value: :b}, state} = TokenAdapter.next(state)
+
+    dropped_state = TokenAdapter.drop_checkpoint(state, ref)
+    {:ok, next_after_drop, _} = TokenAdapter.next(dropped_state)
+    assert next_after_drop.kind == :eoe
+
+    # Test rewind goes back to checkpoint position
+    state = TokenAdapter.new("a;b;c")
+    {:ok, %{value: :a}, state} = TokenAdapter.next(state)
+    {ref, state} = TokenAdapter.checkpoint(state)
+    {:ok, %{kind: :eoe}, state} = TokenAdapter.next(state)
+    {:ok, %{value: :b}, state} = TokenAdapter.next(state)
+
+    rewound_state = TokenAdapter.rewind(state, ref)
+    {:ok, next_after_rewind, _} = TokenAdapter.next(rewound_state)
+    assert next_after_rewind.kind == :eoe
+  end
+
   test "tolerant mode surfaces error_token and synthesized closers" do
     state = TokenAdapter.new(")", mode: :tolerant)
 
