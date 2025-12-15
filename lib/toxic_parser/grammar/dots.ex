@@ -54,11 +54,16 @@ defmodule ToxicParser.Grammar.Dots do
                  :identifier,
                  :do_identifier,
                  :dot_identifier,
-                 :dot_do_identifier,
-                 :bracket_identifier
+                 :dot_do_identifier
                ] ->
             # Return {member_atom, member_meta} tuple so caller can build proper AST
+            # Regular identifier - bracket access NOT allowed (whitespace before [)
             {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+
+          :bracket_identifier ->
+            # Bracket identifier - bracket access IS allowed (no whitespace before [)
+            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :allows_bracket}, state,
+             log}
 
           # op_identifier or dot_op_identifier indicates no-parens call is expected
           kind when kind in [:op_identifier, :dot_op_identifier] ->

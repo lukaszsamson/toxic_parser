@@ -940,32 +940,41 @@ defmodule ToxicParser.Pratt do
               _ ->
                 with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
                   # Check if rhs indicates a no-parens call (from op_identifier/dot_op_identifier)
-                  {combined, expects_no_parens_call} =
+                  # or bracket access (from bracket_identifier)
+                  {combined, expects_no_parens_call, allows_bracket} =
                     case rhs do
                       # Simple identifier with :no_parens_call flag: {member_atom, member_meta, :no_parens_call}
                       # This indicates a no-parens call is expected (from op_identifier/dot_op_identifier)
                       {member, member_meta, :no_parens_call} when is_atom(member) ->
                         {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
-                         true}
+                         true, false}
+
+                      # Bracket identifier with :allows_bracket flag: {member_atom, member_meta, :allows_bracket}
+                      # This indicates bracket access is allowed (no whitespace before [)
+                      {member, member_meta, :allows_bracket} when is_atom(member) ->
+                        {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
+                         false, true}
 
                       # Simple identifier: {member_atom, member_meta}
                       # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
+                      # Bracket access NOT allowed (whitespace before [)
                       {member, member_meta} when is_atom(member) ->
                         {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []},
-                         false}
+                         false, false}
 
                       # Alias on RHS - build combined __aliases__ (dot_alias rule)
                       # Must come before the general {name, meta, args} pattern
                       {:__aliases__, rhs_meta, [rhs_alias]} ->
-                        {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false}
+                        {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, false}
 
                       # Call with args: {name, meta, args}
+                      # Bracket access is always allowed after a call result (no whitespace check needed)
                       {name, meta, args} when is_list(args) ->
-                        {{{:., dot_meta, [left, name]}, meta, args}, false}
+                        {{{:., dot_meta, [left, name]}, meta, args}, false, true}
 
                       # Other AST node
                       other ->
-                        {{:., dot_meta, [left, other]}, false}
+                        {{:., dot_meta, [left, other]}, false, false}
                     end
 
                   case TokenAdapter.peek(state) do
@@ -1022,8 +1031,9 @@ defmodule ToxicParser.Pratt do
                         end
                       end
 
-                    {:ok, %{kind: :"["}, _} ->
-                      # Bracket access: foo.bar[:key] - handle via led() which processes [
+                    {:ok, %{kind: :"["}, _} when allows_bracket ->
+                      # Bracket access: foo.bar[:key] - only when bracket access is allowed
+                      # (no whitespace before [)
                       led(combined, state, log, min_bp, context, opts)
 
                     {:ok, %{kind: :do}, _} ->
@@ -1073,44 +1083,54 @@ defmodule ToxicParser.Pratt do
             end
 
           # Bracket access: expr[key]
-          # NOTE: Only treat as bracket access if there's NO EOE between left and [
-          # `foo[x]` is bracket access, but `foo\n[x]` is not (the [x] is a separate list)
+          # NOTE: Only treat as bracket access if:
+          # 1. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
+          # 2. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
           {:"[", _} when eoe_tokens == [] ->
-            {:ok, open_tok, state} = TokenAdapter.next(state)
+            # Check allows_bracket flag (defaults to true for backward compatibility)
+            allows_bracket = Keyword.get(opts, :allows_bracket, true)
 
-            # Skip leading EOE and count newlines (only leading newlines matter for metadata)
-            {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+            if not allows_bracket do
+              # Space before [ means this is NOT bracket access, but a no-parens call with list arg
+              # Return left as-is (no-parens call parsing will be handled by caller)
+              {:ok, left, state, log}
+            else
+              {:ok, open_tok, state} = TokenAdapter.next(state)
 
-            with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
-              # Skip trailing EOE before close bracket (don't count these)
-              {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
+              # Skip leading EOE and count newlines (only leading newlines matter for metadata)
+              {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-              case TokenAdapter.next(state) do
-                {:ok, %{kind: :"]"} = close_tok, state} ->
-                  # Build metadata with from_brackets, newlines, closing, line, column
-                  open_meta = build_meta(open_tok.metadata)
-                  close_meta = build_meta(close_tok.metadata)
+              with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
+                # Skip trailing EOE before close bracket (don't count these)
+                {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
-                  newlines_meta =
-                    if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+                case TokenAdapter.next(state) do
+                  {:ok, %{kind: :"]"} = close_tok, state} ->
+                    # Build metadata with from_brackets, newlines, closing, line, column
+                    open_meta = build_meta(open_tok.metadata)
+                    close_meta = build_meta(close_tok.metadata)
 
-                  bracket_meta =
-                    [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
+                    newlines_meta =
+                      if leading_newlines > 0, do: [newlines: leading_newlines], else: []
 
-                  combined =
-                    {{:., bracket_meta, [Access, :get]}, bracket_meta,
-                     [left | Enum.reverse(indices)]}
+                    bracket_meta =
+                      [from_brackets: true] ++ newlines_meta ++ [closing: close_meta] ++ open_meta
 
-                  led(combined, state, log, min_bp, context, opts)
+                    combined =
+                      {{:., bracket_meta, [Access, :get]}, bracket_meta,
+                       [left | Enum.reverse(indices)]}
 
-                {:ok, other, state} ->
-                  {:error, {:expected, :"]", got: other.kind}, state, log}
+                    led(combined, state, log, min_bp, context, opts)
 
-                {:eof, state} ->
-                  {:error, :unexpected_eof, state, log}
+                  {:ok, other, state} ->
+                    {:error, {:expected, :"]", got: other.kind}, state, log}
 
-                {:error, diag, state} ->
-                  {:error, diag, state, log}
+                  {:eof, state} ->
+                    {:error, :unexpected_eof, state, log}
+
+                  {:error, diag, state} ->
+                    {:error, diag, state, log}
+                end
               end
             end
 
