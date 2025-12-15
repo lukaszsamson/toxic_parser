@@ -73,6 +73,7 @@ defmodule ToxicParser.Grammar.Stabs do
         # Check what follows: -> or when
         case TokenAdapter.peek(inner_state) do
           {:ok, %{kind: :stab_op}, _} ->
+            inner_state = TokenAdapter.drop_checkpoint(inner_state, ref)
             # (() -> expr)
             parse_empty_paren_stab(
               open_meta,
@@ -84,6 +85,7 @@ defmodule ToxicParser.Grammar.Stabs do
             )
 
           {:ok, %{kind: :when_op}, _} ->
+            inner_state = TokenAdapter.drop_checkpoint(inner_state, ref)
             # (() when guard -> expr)
             parse_empty_paren_when_stab(
               open_meta,
@@ -130,6 +132,7 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, clause, new_state, log} ->
         # Successfully parsed a stab clause, continue with remaining clauses
         # Pass min_bp to continue with led() for trailing operators
+        new_state = TokenAdapter.drop_checkpoint(new_state, ref)
         parse_remaining_stab_clauses([clause], new_state, ctx, log, min_bp)
 
       {:not_stab, _state, _log} ->
@@ -233,6 +236,8 @@ defmodule ToxicParser.Grammar.Stabs do
             # Check for -> or when
             case TokenAdapter.peek(inner_state) do
               {:ok, %{kind: :stab_op}, _} ->
+                inner_state = TokenAdapter.drop_checkpoint(inner_state, ref)
+
                 parse_stab_parens_many_stab(
                   open_meta,
                   inner_open_meta,
@@ -244,6 +249,8 @@ defmodule ToxicParser.Grammar.Stabs do
                 )
 
               {:ok, %{kind: :when_op}, _} ->
+                inner_state = TokenAdapter.drop_checkpoint(inner_state, ref)
+
                 parse_stab_parens_many_when(
                   open_meta,
                   inner_open_meta,
@@ -733,6 +740,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.peek(state2) do
               {:ok, %{kind: kind}, _} when kind in [:stab_op, :when_op] ->
                 # Yes, this is stab_parens_many
+                state2 = TokenAdapter.drop_checkpoint(state2, ref)
                 {:ok, patterns, state2, log2, parens_meta}
 
               _ ->

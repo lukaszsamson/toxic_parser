@@ -135,6 +135,16 @@ defmodule ToxicParser.TokenAdapter do
     }
   end
 
+  @doc """
+  Drop a checkpoint without rewinding.
+  """
+  @spec drop_checkpoint(State.t(), reference()) :: State.t()
+  def drop_checkpoint(%State{} = state, ref) do
+    {_checkpoint, checkpoints} = Map.pop!(state.checkpoints, ref)
+    _ = Toxic.rewind_to(state.stream, ref)
+    %{state | checkpoints: checkpoints}
+  end
+
   defp fetch_next(%State{stream: stream} = state, opts) do
     {terminators, stream} = Toxic.current_terminators(stream)
 

@@ -193,7 +193,7 @@ defmodule ToxicParser.Grammar.Maps do
 
       case parse_map_update_candidate(checkpoint_state, ctx, log) do
         {:ok, update_ast, close_meta, state, log} ->
-          {:ok, update_ast, close_meta, discard_checkpoint(state, checkpoint_id), log}
+          {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id), log}
 
         {:not_update, state} ->
           {:not_update, TokenAdapter.rewind(state, checkpoint_id)}
@@ -625,10 +625,6 @@ defmodule ToxicParser.Grammar.Maps do
   defp annotate_assoc(other, _assoc_meta), do: other
 
   # Build token metadata with explicit newlines count
-  defp discard_checkpoint(state, checkpoint_id) do
-    %{state | checkpoints: Map.delete(state.checkpoints, checkpoint_id)}
-  end
-
   defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
 
   defp token_meta_with_newlines(meta, newlines) when is_integer(newlines) and newlines > 0 do

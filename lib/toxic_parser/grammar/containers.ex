@@ -570,6 +570,7 @@ defmodule ToxicParser.Grammar.Containers do
 
             case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
               {:ok, kw_list, state, log} ->
+                state = TokenAdapter.drop_checkpoint(state, ref)
                 {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                 case TokenAdapter.next(state) do
@@ -644,6 +645,7 @@ defmodule ToxicParser.Grammar.Containers do
 
                   case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
                     {:ok, kw_list, state, log} ->
+                      state = TokenAdapter.drop_checkpoint(state, ref)
                       {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                       case TokenAdapter.next(state) do
@@ -761,6 +763,7 @@ defmodule ToxicParser.Grammar.Containers do
 
                   case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
                     {:ok, kw_list, state, log} ->
+                      state = TokenAdapter.drop_checkpoint(state, ref)
                       {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                       case TokenAdapter.next(state) do

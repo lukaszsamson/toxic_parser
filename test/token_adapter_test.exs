@@ -54,6 +54,22 @@ defmodule ToxicParser.TokenAdapterTest do
     assert rewound.checkpoints == %{}
   end
 
+  test "drop_checkpoint removes saved state without rewinding" do
+    state = TokenAdapter.new("1;2")
+
+    {:ok, first, state} = TokenAdapter.next(state)
+    assert first.kind == :int
+
+    {ref, state} = TokenAdapter.checkpoint(state)
+    {:ok, %{kind: :eoe}, state} = TokenAdapter.next(state)
+
+    state = TokenAdapter.drop_checkpoint(state, ref)
+    assert state.checkpoints == %{}
+
+    {:ok, next_int, _} = TokenAdapter.next(state)
+    assert next_int.kind == :int
+  end
+
   test "tolerant mode surfaces error_token and synthesized closers" do
     state = TokenAdapter.new(")", mode: :tolerant)
 

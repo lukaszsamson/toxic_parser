@@ -188,7 +188,7 @@ defmodule ToxicParser.Grammar.Blocks do
 
     case Stabs.try_parse_stab_clause(checkpoint_state, ctx, log, :end) do
       {:ok, clause, state, log} ->
-        {:ok, clause, state, log}
+        {:ok, clause, TokenAdapter.drop_checkpoint(state, ref), log}
 
       {:not_stab, _state, log} ->
         # Rewind to before we tried to parse stab
