@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Keywords do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Expressions, Strings}
+  alias ToxicParser.Grammar.{EOE, Expressions, Strings}
 
   @type result ::
           {:ok, [Macro.t()], State.t(), EventLog.t()}
@@ -165,7 +165,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
   # Parse keyword value after the key has been determined
   defp parse_kw_value(key, state, log, min_bp, value_ctx) do
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
     # The value context depends on where the keyword list appears in the grammar.
@@ -193,7 +193,7 @@ defmodule ToxicParser.Grammar.Keywords do
          min_bp,
          value_ctx
        ) do
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     result =
       if min_bp > 0 do
@@ -206,17 +206,6 @@ defmodule ToxicParser.Grammar.Keywords do
       # Build interpolated key AST
       key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
       {:ok, {key_ast, value_ast}, state, log}
-    end
-  end
-
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        skip_eoe(state)
-
-      _ ->
-        state
     end
   end
 end

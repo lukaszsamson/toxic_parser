@@ -3,8 +3,8 @@ defmodule ToxicParser.Grammar.Containers do
   Container parsing for lists and tuples (Phase 6 scaffolding).
   """
 
-  alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Bitstrings, Expressions, Keywords, Maps}
+  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Grammar.{Bitstrings, EOE, Expressions, Keywords, Maps}
 
   # Stab pattern parsing uses min_bp=11 to stop before `->` (bp=10) but allow all other
   # operators including `when` (bp=50) and `<-`/`\\` (bp=40). The `when` at the TOP LEVEL
@@ -90,16 +90,22 @@ defmodule ToxicParser.Grammar.Containers do
 
     # Check for leading semicolon (forces stab interpretation)
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{source: :semicolon}}, _} ->
-        # Leading semicolon - parse as stab or empty
-        {:ok, _semi, state} = TokenAdapter.next(state)
-        # Skip any additional EOE
-        state = skip_eoe(state)
-        parse_paren_stab_or_empty(open_meta, state, ctx, log, min_bp)
+      {:ok, tok, _} ->
+        if semicolon_eoe?(tok) do
+          # Leading semicolon - parse as stab or empty
+          {:ok, _semi, state} = TokenAdapter.next(state)
+          # Skip any additional EOE
+          state = EOE.skip(state)
+          parse_paren_stab_or_empty(open_meta, state, ctx, log, min_bp)
+        else
+          # Skip any remaining EOE tokens
+          state = EOE.skip(state)
+          parse_paren_content(open_meta, state, ctx, log, min_bp)
+        end
 
       _ ->
         # Skip any remaining EOE tokens
-        state = skip_eoe(state)
+        state = EOE.skip(state)
         parse_paren_content(open_meta, state, ctx, log, min_bp)
     end
   end
@@ -160,7 +166,7 @@ defmodule ToxicParser.Grammar.Containers do
   # min_bp controls whether to continue with led() for trailing operators
   defp parse_paren_stab(_open_meta, state, ctx, log, min_bp) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
-      state = skip_eoe(state)
+      state = EOE.skip(state)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"}, state} ->
@@ -188,7 +194,7 @@ defmodule ToxicParser.Grammar.Containers do
     inner_open_meta = token_meta(inner_open_tok.metadata)
 
     # Skip EOE inside inner parens
-    inner_state = skip_eoe(inner_state)
+    inner_state = EOE.skip(inner_state)
 
     case TokenAdapter.peek(inner_state) do
       # Empty inner parens: () -> or () when
@@ -252,7 +258,7 @@ defmodule ToxicParser.Grammar.Containers do
     stab_base_meta = token_meta(stab_tok.metadata)
 
     # Skip EOE after stab and count newlines
-    {state, newlines} = skip_eoe_count_newlines(state, 0)
+    {state, newlines} = EOE.skip_count_newlines(state, 0)
     newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
     # Parse body (or empty if just ->)
@@ -272,7 +278,7 @@ defmodule ToxicParser.Grammar.Containers do
     when_meta = token_meta(when_tok.metadata)
 
     # Skip EOE after when
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
     with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
@@ -281,7 +287,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
           # Skip EOE after stab and count newlines
-          {state, newlines} = skip_eoe_count_newlines(state, 0)
+          {state, newlines} = EOE.skip_count_newlines(state, 0)
           newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -319,7 +325,7 @@ defmodule ToxicParser.Grammar.Containers do
     # Try to parse the content as stab pattern arguments
     case parse_stab_parens_args(inner_state, ctx, log) do
       {:ok, args, inner_state, log} ->
-        inner_state = skip_eoe(inner_state)
+        inner_state = EOE.skip(inner_state)
 
         case TokenAdapter.next(inner_state) do
           {:ok, %{kind: :")"} = inner_close_tok, inner_state} ->
@@ -380,7 +386,7 @@ defmodule ToxicParser.Grammar.Containers do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
     # Skip EOE after stab and count newlines
-    {state, newlines} = skip_eoe_count_newlines(state, 0)
+    {state, newlines} = EOE.skip_count_newlines(state, 0)
     newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -406,7 +412,7 @@ defmodule ToxicParser.Grammar.Containers do
        ) do
     {:ok, when_tok, state} = TokenAdapter.next(state)
     when_meta = token_meta(when_tok.metadata)
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
     with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
@@ -414,7 +420,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
           # Skip EOE after stab and count newlines
-          {state, newlines} = skip_eoe_count_newlines(state, 0)
+          {state, newlines} = EOE.skip_count_newlines(state, 0)
           newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -465,12 +471,12 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_stab_parens_exprs(acc, state, _ctx, log) do
     # Parse expression with min_bp > when_op (50) to stop before -> and when
     with {:ok, expr, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 51) do
-      state_after_eoe = skip_eoe(state)
+      state_after_eoe = EOE.skip(state)
 
       case TokenAdapter.peek(state_after_eoe) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
@@ -553,7 +559,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, _stab, state} = TokenAdapter.next(state)
         stab_base_meta = token_meta(stab_tok.metadata)
         # Skip EOE after stab and count newlines
-        {state, newlines} = skip_eoe_count_newlines(state, 0)
+        {state, newlines} = EOE.skip_count_newlines(state, 0)
 
         stab_meta =
           if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
@@ -588,7 +594,7 @@ defmodule ToxicParser.Grammar.Containers do
         # Pattern followed by guard then stab
         {:ok, _when, state} = TokenAdapter.next(state)
         when_meta = token_meta(when_tok.metadata)
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         # Parse guard expression with min_bp > stab_op (10) to stop before ->
         with {:ok, guard, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 11) do
@@ -596,7 +602,7 @@ defmodule ToxicParser.Grammar.Containers do
             {:ok, %{kind: :stab_op} = stab_tok, state} ->
               stab_base_meta = token_meta(stab_tok.metadata)
               # Skip EOE after stab and count newlines
-              {state, newlines} = skip_eoe_count_newlines(state, 0)
+              {state, newlines} = EOE.skip_count_newlines(state, 0)
 
               stab_meta =
                 if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
@@ -761,7 +767,7 @@ defmodule ToxicParser.Grammar.Containers do
     open_meta = token_meta(open_tok.metadata)
 
     # Skip EOE inside parens
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
       # Empty parens: fn () -> body end
@@ -775,7 +781,7 @@ defmodule ToxicParser.Grammar.Containers do
       # Content inside parens - parse as call_args_parens
       {:ok, _, _} ->
         with {:ok, args, state, log} <- parse_call_args_parens(state, ctx, log) do
-          state = skip_eoe(state)
+          state = EOE.skip(state)
 
           case TokenAdapter.next(state) do
             {:ok, %{kind: :")"} = close_tok, state} ->
@@ -822,12 +828,12 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_call_args_parens_exprs(acc, state, ctx, log) do
     # Parse matched expression
     with {:ok, expr, state, log} <- Expressions.expr(state, :matched, log) do
-      state = skip_eoe(state)
+      state = EOE.skip(state)
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
@@ -854,12 +860,12 @@ defmodule ToxicParser.Grammar.Containers do
     # Parse expression as matched_expr, stopping before -> but allowing when and <-
     # This implements call_args_no_parens_expr -> matched_expr
     with {:ok, expr, state, log} <- parse_stab_pattern_expr(state, log) do
-      state_after_eoe = skip_eoe(state)
+      state_after_eoe = EOE.skip(state)
 
       case TokenAdapter.peek(state_after_eoe) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           # Check for keyword after comma
           case TokenAdapter.peek(state) do
             {:ok, tok, _} ->
@@ -964,7 +970,7 @@ defmodule ToxicParser.Grammar.Containers do
         acc = annotate_last_expr_eoe(acc, eoe_tok)
         # Consume EOE
         {:ok, _eoe, state} = TokenAdapter.next(state)
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         # Check what's next after EOE
         case TokenAdapter.peek(state) do
@@ -1059,44 +1065,15 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Annotate the last (most recent) expression with EOE metadata
   defp annotate_last_expr_eoe([last | rest], eoe_tok) do
-    eoe_meta = build_eoe_meta(eoe_tok)
-    annotated = annotate_body_eoe(last, eoe_meta)
+    eoe_meta = EOE.build_eoe_meta(eoe_tok)
+    annotated = EOE.annotate_eoe(last, eoe_meta)
     [annotated | rest]
   end
-
-  # Build end_of_expression metadata from EOE token
-  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
-       when is_integer(newlines) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [newlines: newlines, line: line, column: column]
-
-      _ ->
-        []
-    end
-  end
-
-  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [line: line, column: column]
-
-      _ ->
-        []
-    end
-  end
-
-  # Annotate an AST node with end_of_expression metadata
-  defp annotate_body_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
-    {left, [{:end_of_expression, eoe_meta} | meta], right}
-  end
-
-  defp annotate_body_eoe(body, _eoe_meta), do: body
 
   # Parse remaining stab clauses after the first one
   # min_bp controls whether to continue with led() for trailing operators
   defp parse_remaining_stab_clauses(acc, state, ctx, log, min_bp \\ 0) do
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
@@ -1142,7 +1119,7 @@ defmodule ToxicParser.Grammar.Containers do
   def parse_stab_eoe_until(acc, state, ctx, log, terminator) do
     case try_parse_stab_clause(state, ctx, log, terminator) do
       {:ok, clause, state, log} ->
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         case TokenAdapter.peek(state) do
           {:ok, %{kind: ^terminator}, _} ->
@@ -1201,7 +1178,7 @@ defmodule ToxicParser.Grammar.Containers do
           annotated_expr = annotate_paren_expr_eoe(expr, eoe_tok)
           # Consume EOE
           {:ok, _eoe, state} = TokenAdapter.next(state)
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           # Check if there's more content or close paren
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :")"} = close_tok, _} ->
@@ -1248,7 +1225,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Annotate expression with end_of_expression metadata from EOE token
   defp annotate_paren_expr_eoe({name, meta, args}, eoe_tok) when is_list(meta) do
-    eoe_meta = build_eoe_meta(eoe_tok)
+    eoe_meta = EOE.build_eoe_meta(eoe_tok)
     {name, [{:end_of_expression, eoe_meta} | meta], args}
   end
 
@@ -1301,37 +1278,33 @@ defmodule ToxicParser.Grammar.Containers do
     open_meta ++ [closing: close_meta]
   end
 
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state)
+  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
-      _ ->
-        state
-    end
-  end
-
-  # Skip EOE tokens but stop at semicolons (semicolons force stab interpretation)
   defp skip_eoe_not_semicolon(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{source: :semicolon}}, _} ->
-        # Don't skip semicolons
-        state
+      {:ok, tok, _} ->
+        if semicolon_eoe?(tok) do
+          state
+        else
+          case tok.kind do
+            :eoe ->
+              {:ok, _eoe, state} = TokenAdapter.next(state)
+              skip_eoe_not_semicolon(state)
 
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_not_semicolon(state)
+            _ ->
+              state
+          end
+        end
 
       _ ->
         state
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
-    do: [line: line, column: column]
-
-  defp token_meta(_), do: []
+  defp semicolon_eoe?(%{kind: :eoe, value: %{source: :semicolon}}), do: true
+  defp semicolon_eoe?(%{kind: :eoe, raw: {:";", _, _}}), do: true
+  defp semicolon_eoe?(%{kind: :eoe, raw: {:";", _}}), do: true
+  defp semicolon_eoe?(_), do: false
 
   defp parse_list(state, ctx, log, min_bp) do
     with {:ok, ast, state, log} <- parse_list_base(state, ctx, log) do
@@ -1345,7 +1318,7 @@ defmodule ToxicParser.Grammar.Containers do
     {:ok, _open, state} = TokenAdapter.next(state)
 
     # Skip leading EOE
-    {state, _newlines} = skip_eoe_count_newlines(state, 0)
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.peek(state) do
       # Empty list
@@ -1370,7 +1343,7 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            {state, _newlines} = skip_eoe_count_newlines(state, 0)
+            {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"]"}, state} ->
@@ -1408,7 +1381,7 @@ defmodule ToxicParser.Grammar.Containers do
       end
 
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       # Check if expr is a keyword list (from quoted keyword parsing like "": 1)
       # If so, we should merge it rather than wrap it as a single element
@@ -1416,7 +1389,7 @@ defmodule ToxicParser.Grammar.Containers do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
@@ -1553,7 +1526,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   defp parse_tuple_args(state, _ctx, log) do
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.peek(state) do
       # Empty tuple
@@ -1575,7 +1548,7 @@ defmodule ToxicParser.Grammar.Containers do
           Keywords.starts_kw?(tok) ->
             # Definite keyword - parse as keyword list
             with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
-              {state, _newlines} = skip_eoe_count_newlines(state, 0)
+              {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
               case TokenAdapter.next(state) do
                 {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1599,7 +1572,7 @@ defmodule ToxicParser.Grammar.Containers do
 
             case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
               {:ok, kw_list, state, log} ->
-                {state, _newlines} = skip_eoe_count_newlines(state, 0)
+                {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                 case TokenAdapter.next(state) do
                   {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1639,7 +1612,7 @@ defmodule ToxicParser.Grammar.Containers do
     {first_is_container_literal, state} = tuple_element_container_literal?(state)
 
     with {:ok, first, state, log} <- Expressions.expr(state, :unmatched, log) do
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -1649,7 +1622,7 @@ defmodule ToxicParser.Grammar.Containers do
 
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -1672,7 +1645,7 @@ defmodule ToxicParser.Grammar.Containers do
 
                   case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
                     {:ok, kw_list, state, log} ->
-                      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+                      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                       case TokenAdapter.next(state) do
                         {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1736,7 +1709,7 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse keyword tail for tuple like {first, foo: 1, bar: 2}
   defp parse_tuple_keyword_tail(first, state, log, leading_newlines) do
     with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1759,13 +1732,13 @@ defmodule ToxicParser.Grammar.Containers do
     {expr_is_container_literal, state} = tuple_element_container_literal?(state)
 
     with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
       new_tagged_acc = [{expr, expr_is_container_literal} | tagged_acc]
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -1788,7 +1761,7 @@ defmodule ToxicParser.Grammar.Containers do
 
                   case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
                     {:ok, kw_list, state, log} ->
-                      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+                      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
                       case TokenAdapter.next(state) do
                         {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1841,7 +1814,7 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse keyword tail for 3+ element tuple like {1, 2, 3, foo: :bar}
   defp parse_tuple_rest_keyword_tail(tagged_acc, state, log, leading_newlines) do
     with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -1858,17 +1831,6 @@ defmodule ToxicParser.Grammar.Containers do
         {:error, diag, state} ->
           {:error, diag, state, log}
       end
-    end
-  end
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
     end
   end
 

@@ -11,8 +11,7 @@ defmodule ToxicParser.Pratt do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Precedence, State, TokenAdapter}
-  alias ToxicParser.Grammar.Keywords
-  alias ToxicParser.Grammar.{Blocks, Calls, Dots}
+  alias ToxicParser.Grammar.{Blocks, Calls, Dots, EOE, Keywords}
 
   @type context :: :matched | :unmatched | :no_parens
 
@@ -458,7 +457,7 @@ defmodule ToxicParser.Pratt do
   defp parse_unary(op_token, state, context, log, min_bp) do
     # Skip EOE after unary operator (allows "!\ntrue")
     # Note: Unlike binary ops, unary ops don't include newlines metadata
-    {state, _newlines} = skip_eoe_after_op(state)
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
@@ -552,7 +551,7 @@ defmodule ToxicParser.Pratt do
     {bp, _assoc} = Precedence.binary(:ternary_op)
 
     # Skip EOE after operator
-    {state, _newlines} = skip_eoe_after_op(state)
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
@@ -598,7 +597,7 @@ defmodule ToxicParser.Pratt do
       end
 
     # Skip EOE after operator
-    {state, _newlines} = skip_eoe_after_op(state)
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
     # Parse the operand with unary precedence
     case TokenAdapter.next(state) do
@@ -749,12 +748,12 @@ defmodule ToxicParser.Pratt do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <-
            ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
       # Skip trailing EOE before close paren
-      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_close_paren(state) do
         {:ok, close_tok, state} ->
@@ -857,12 +856,12 @@ defmodule ToxicParser.Pratt do
               {:ok, _open_tok, state} = TokenAdapter.next(state)
 
               # Skip leading EOE and count newlines
-              {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+              {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
               with {:ok, args, state, log} <-
                      ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
                 # Skip trailing EOE before close paren
-                {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+                {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
                 case TokenAdapter.next(state) do
                   {:ok, %{kind: :")"} = close_tok, state} ->
@@ -925,12 +924,12 @@ defmodule ToxicParser.Pratt do
             {:ok, _open_tok, state} = TokenAdapter.next(state)
 
             # Skip leading EOE and count newlines
-            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+            {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
             with {:ok, args, state, log} <-
                    ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
               # Skip trailing EOE before close paren
-              {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+              {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
               case TokenAdapter.next(state) do
                 {:ok, %{kind: :")"} = close_tok, state} ->
@@ -1012,7 +1011,7 @@ defmodule ToxicParser.Pratt do
                     {:ok, %{kind: :"("}, _} ->
                       {:ok, _open, state} = TokenAdapter.next(state)
                       # Skip leading EOE and count newlines
-                      {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+                      {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
                       with {:ok, args, state, log} <-
                              ToxicParser.Grammar.CallsPrivate.parse_paren_args(
@@ -1022,7 +1021,7 @@ defmodule ToxicParser.Pratt do
                                log
                              ) do
                         # Skip trailing EOE before close paren
-                        {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+                        {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
                         case TokenAdapter.next(state) do
                           {:ok, %{kind: :")"} = close_tok, state} ->
@@ -1118,11 +1117,11 @@ defmodule ToxicParser.Pratt do
             {:ok, open_tok, state} = TokenAdapter.next(state)
 
             # Skip leading EOE and count newlines (only leading newlines matter for metadata)
-            {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+            {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
             with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
               # Skip trailing EOE before close bracket (don't count these)
-              {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+              {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
               case TokenAdapter.next(state) do
                 {:ok, %{kind: :"]"} = close_tok, state} ->
@@ -1177,7 +1176,7 @@ defmodule ToxicParser.Pratt do
             # 1. EOE after the operator (continuation: "1 +\n2")
             # 2. The operator token itself (continuation operator: "a\n|> b")
             # We take the max of both
-            {state, newlines_after_op} = skip_eoe_after_op(state)
+            {state, newlines_after_op} = EOE.skip_count_newlines(state, 0)
             token_newlines = Map.get(op_token.metadata, :newlines, 0)
             effective_newlines = max(newlines_after_op, token_newlines)
 
@@ -1253,12 +1252,12 @@ defmodule ToxicParser.Pratt do
         {:ok, _open_tok, state} = TokenAdapter.next(state)
 
         # Skip leading EOE and count newlines
-        {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+        {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
         with {:ok, args, state, log} <-
                ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
           # Skip trailing EOE before close paren
-          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+          {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.next(state) do
             {:ok, %{kind: :")"} = close_tok, state} ->
@@ -1469,7 +1468,7 @@ defmodule ToxicParser.Pratt do
   # Returns {:ok, args, newlines, close_meta, state, log}
   defp parse_dot_container_args(state, ctx, log) do
     # Skip leading EOE and count newlines
-    {state, newlines} = skip_eoe_count_newlines(state, 0)
+    {state, newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -1480,7 +1479,7 @@ defmodule ToxicParser.Pratt do
       {:ok, _, _} ->
         with {:ok, args, state, log} <- parse_dot_container_args_loop([], state, ctx, log) do
           # Skip trailing EOE before close
-          {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
           # For non-empty containers, only count leading newlines (matching calls.ex pattern)
           total_newlines = newlines
 
@@ -1518,7 +1517,7 @@ defmodule ToxicParser.Pratt do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
           # After comma, check if we hit EOE or closing brace (trailing comma case)
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"}"}, _} ->
@@ -1542,17 +1541,6 @@ defmodule ToxicParser.Pratt do
         _ ->
           {:ok, acc ++ [expr], state, log}
       end
-    end
-  end
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
     end
   end
 
@@ -1764,18 +1752,6 @@ defmodule ToxicParser.Pratt do
     [newlines: newlines] ++ build_meta(token_meta)
   end
 
-  # Skip EOE tokens after an operator and count newlines
-  defp skip_eoe_after_op(state, newlines \\ 0) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_after_op(state, newlines + n)
-
-      _ ->
-        {state, newlines}
-    end
-  end
-
   defp parse_access_indices(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"]"}, state} ->
@@ -1821,7 +1797,7 @@ defmodule ToxicParser.Pratt do
             # Handle quoted keyword key like 'foo': 1
             {:keyword_key, key_atom, state, log} ->
               # Skip EOE after colon before parsing value
-              state = skip_eoe_after_op(state) |> elem(0)
+              state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
               with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
                 expr = [{key_atom, value_ast}]
@@ -1831,7 +1807,7 @@ defmodule ToxicParser.Pratt do
             {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
               alias ToxicParser.Grammar.Expressions
               # Skip EOE after colon before parsing value
-              state = skip_eoe_after_op(state) |> elem(0)
+              state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
               with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
                 key_ast =
@@ -1874,7 +1850,7 @@ defmodule ToxicParser.Pratt do
                 # Parse the next quoted keyword
                 case parse(state, ctx, log) do
                   {:keyword_key, key_atom, state, log} ->
-                    state = skip_eoe_after_op(state) |> elem(0)
+                    state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
                     with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
                       next_kw = [{key_atom, value_ast}]
@@ -1884,7 +1860,7 @@ defmodule ToxicParser.Pratt do
 
                   {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
                     alias ToxicParser.Grammar.Expressions
-                    state = skip_eoe_after_op(state) |> elem(0)
+                    state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
                     with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
                       key_ast =
@@ -2005,12 +1981,12 @@ defmodule ToxicParser.Pratt do
         {:ok, _open_tok, state} = TokenAdapter.next(state)
 
         # Skip leading EOE and count newlines
-        {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+        {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
         with {:ok, args, state, log} <-
                ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
           # Skip trailing EOE before close paren
-          {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+          {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.next(state) do
             {:ok, %{kind: :")"} = close_tok, state} ->

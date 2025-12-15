@@ -10,7 +10,7 @@ defmodule ToxicParser.Grammar.Blocks do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Containers
+  alias ToxicParser.Grammar.{Containers, EOE}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -42,35 +42,22 @@ defmodule ToxicParser.Grammar.Blocks do
   end
 
   defp parse_fn(fn_tok, state, ctx, log) do
-    alias ToxicParser.Grammar.Containers
-
     {:ok, _fn, state} = TokenAdapter.next(state)
-    fn_meta = token_meta(fn_tok.metadata)
+    fn_meta = Builder.Helpers.token_meta(fn_tok.metadata)
     log = enter_scope(log, :fn, fn_tok.metadata)
 
     # Skip optional EOE after fn and count newlines
-    {state, newlines} = skip_eoe_count_newlines(state, 0)
+    {state, newlines} = EOE.skip_count_newlines(state, 0)
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
     with {:ok, clauses, state, log} <- Containers.parse_stab_eoe_until([], state, ctx, log, :end),
          {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
       log = exit_scope(log, :fn, fn_tok.metadata)
-      end_location = token_meta(end_meta)
+      end_location = Builder.Helpers.token_meta(end_meta)
       # Build metadata: [newlines: N, closing: [...], line: L, column: C]
       newlines_meta = if newlines > 0, do: [newlines: newlines], else: []
       meta = newlines_meta ++ [closing: end_location] ++ fn_meta
       {:ok, {:fn, meta, clauses}, state, log}
-    end
-  end
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
     end
   end
 
@@ -111,11 +98,7 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}) do
-    [line: line, column: column]
-  end
-
-  defp token_meta(_), do: []
+  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
   defp expect_kind_with_meta(state, kind, log) do
     case TokenAdapter.next(state) do
@@ -231,43 +214,14 @@ defmodule ToxicParser.Grammar.Blocks do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe} = eoe_tok, _} ->
         {:ok, _tok, state} = TokenAdapter.next(state)
-        eoe_meta = build_eoe_meta(eoe_tok)
-        annotated = annotate_eoe(expr, eoe_meta)
+        eoe_meta = EOE.build_eoe_meta(eoe_tok)
+        annotated = EOE.annotate_eoe(expr, eoe_meta)
         {annotated, state}
 
       _ ->
         {expr, state}
     end
   end
-
-  # Build end_of_expression metadata from an EOE token
-  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
-       when is_integer(newlines) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [newlines: newlines, line: line, column: column]
-
-      _ ->
-        []
-    end
-  end
-
-  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [line: line, column: column]
-
-      _ ->
-        []
-    end
-  end
-
-  # Annotate an AST node with end_of_expression metadata
-  defp annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) do
-    {left, [{:end_of_expression, eoe_meta} | meta], right}
-  end
-
-  defp annotate_eoe(ast, _eoe_meta), do: ast
 
   # unquote_splicing always gets wrapped in __block__ (parser assumes block is being spliced)
   # See elixir_parser.yrl: build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter)

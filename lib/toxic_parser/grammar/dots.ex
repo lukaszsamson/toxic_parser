@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Dots do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Expressions, Keywords}
+  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
   defguardp is_keyword_list_result(arg)
@@ -94,11 +94,11 @@ defmodule ToxicParser.Grammar.Dots do
     {:ok, _open, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
       # Skip trailing EOE before close paren
-      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"} = close_tok, state} ->
@@ -173,11 +173,11 @@ defmodule ToxicParser.Grammar.Dots do
           {:ok, _open, state} = TokenAdapter.next(state)
 
           # Skip leading EOE and count newlines
-          {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+          {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
           with {:ok, args, state, log} <- parse_paren_args([], state, :matched, log) do
             # Skip trailing EOE before close paren
-            {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+            {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
             case TokenAdapter.next(state) do
               {:ok, %{kind: :")"} = close_tok, state} ->
@@ -247,24 +247,13 @@ defmodule ToxicParser.Grammar.Dots do
     end
   end
 
-  defp delimiter_from_value(34), do: "\""
+  defp delimiter_from_value(?"), do: "\""
   defp delimiter_from_value(?'), do: "'"
   defp delimiter_from_value(_), do: "\""
 
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
-    end
-  end
-
   defp parse_paren_args(acc, state, _ctx, log) do
     # Skip EOE before checking for close paren or next arg
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
@@ -294,7 +283,7 @@ defmodule ToxicParser.Grammar.Dots do
             # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
             with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
               # Skip EOE after arg before checking for comma
-              state = skip_eoe(state)
+              state = EOE.skip(state)
 
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, _} ->
@@ -302,7 +291,7 @@ defmodule ToxicParser.Grammar.Dots do
                   # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
                   # If so, and next is also a keyword, merge them
                   # BUT: if it started as a container literal ([...] or {...}), don't merge
-                  state = skip_eoe(state)
+                  state = EOE.skip(state)
 
                   case TokenAdapter.peek(state) do
                     {:ok, next_tok, _}
@@ -334,17 +323,6 @@ defmodule ToxicParser.Grammar.Dots do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state)
-
-      _ ->
-        state
     end
   end
 end

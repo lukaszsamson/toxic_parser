@@ -3,8 +3,8 @@ defmodule ToxicParser.Grammar.Bitstrings do
   Parsing for bitstring literals (<<>>).
   """
 
-  alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Expressions, Keywords}
+  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -27,7 +27,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
     open_meta = token_meta(open_tok.metadata)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :">>"} = close_tok, _} ->
@@ -48,21 +48,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
     end
   end
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
-    do: [line: line, column: column]
-
-  defp token_meta(_), do: []
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
-    end
-  end
+  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
   defp parse_segments(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
@@ -76,7 +62,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
           # Parse keyword data and finish
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
             # Skip EOE before close
-            {state, _newlines} = skip_eoe_count_newlines(state, 0)
+            {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
             case TokenAdapter.next(state) do
               {:ok, %{kind: :">>"} = close_tok, state} ->
@@ -109,13 +95,13 @@ defmodule ToxicParser.Grammar.Bitstrings do
   defp parse_segment(acc, state, ctx, log) do
     with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
       # Skip EOE after expression
-      {state, _newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
           # Skip EOE after comma
-          {state, _newlines} = skip_eoe_count_newlines(state, 0)
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
           # Check for trailing comma
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :">>"} = close_tok, _} ->

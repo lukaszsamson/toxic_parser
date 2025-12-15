@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Expressions do
   """
 
   alias ToxicParser.{Builder, EventLog, Pratt, Recovery, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Blocks, Calls, Containers}
+  alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -24,7 +24,7 @@ defmodule ToxicParser.Grammar.Expressions do
   @spec expr_list(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr_list(%State{} = state, ctx, %EventLog{} = log) do
     # If input is empty (or only EOE), return empty block early
-    {state, leading_eoe_meta} = skip_eoe_with_meta(state)
+    {state, leading_eoe_meta} = EOE.skip_with_meta(state)
 
     case TokenAdapter.peek(state) do
       {:eof, state} ->
@@ -52,7 +52,6 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   # Build empty block with metadata from first EOE token if present
-  defp build_empty_block(nil), do: {:__block__, [], []}
   defp build_empty_block(meta), do: {:__block__, meta, []}
 
   @doc """
@@ -114,7 +113,7 @@ defmodule ToxicParser.Grammar.Expressions do
               # String was a quoted keyword key like "a": - parse value and return as keyword pair
               {:keyword_key, key_atom, state, log} ->
                 # Skip EOE (newlines) after the colon before parsing value
-                state = skip_eoe(state)
+                state = EOE.skip(state)
 
                 with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
                   {:ok, [{key_atom, value_ast}], state, log}
@@ -123,7 +122,7 @@ defmodule ToxicParser.Grammar.Expressions do
               # Interpolated keyword key like "fo#{1}o": - build binary_to_atom call
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
                 # Skip EOE (newlines) after the colon before parsing value
-                state = skip_eoe(state)
+                state = EOE.skip(state)
 
                 with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
@@ -147,7 +146,7 @@ defmodule ToxicParser.Grammar.Expressions do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe}, _} ->
         # Skip all consecutive EOE tokens (handles cases like "1\n;2")
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         # Check if we've reached EOF or terminator after trailing EOE
         case TokenAdapter.peek(state) do
@@ -191,75 +190,17 @@ defmodule ToxicParser.Grammar.Expressions do
     {:ok, block, state, log}
   end
 
-  # Skip all EOE tokens
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state)
-
-      _ ->
-        state
-    end
-  end
-
-  # Skip EOE tokens but capture metadata from first one
-  defp skip_eoe_with_meta(state, first_meta \\ nil) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, metadata: meta}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        # Capture metadata from first EOE token only
-        new_meta = first_meta || token_to_meta(meta)
-        skip_eoe_with_meta(state, new_meta)
-
-      _ ->
-        {state, first_meta}
-    end
-  end
-
-  defp token_to_meta(%{range: %{start: %{line: line, column: column}}}) do
-    [line: line, column: column]
-  end
-
-  defp token_to_meta(_), do: []
-
   # Annotate an expression with end_of_expression metadata if followed by EOE.
   # This implements the `annotate_eoe` pattern from elixir_parser.yrl.
   defp maybe_annotate_eoe(ast, state) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe} = eoe_token, _} ->
-        eoe_meta = build_eoe_meta(eoe_token)
-        annotated = annotate_eoe(ast, eoe_meta)
+        eoe_meta = EOE.build_eoe_meta(eoe_token)
+        annotated = EOE.annotate_eoe(ast, eoe_meta)
         {annotated, state}
 
       _ ->
         {ast, state}
-    end
-  end
-
-  # Build end_of_expression metadata from an EOE token.
-  # Format: [newlines: N, line: L, column: C] when newlines count is available
-  # Based on elixir_parser.yrl end_of_expression/1:
-  # - Always include newlines if it's an integer (including 0)
-  # - Otherwise just include line/column
-  defp build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
-       when is_integer(newlines) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [newlines: newlines, line: line, column: column]
-
-      _ ->
-        []
-    end
-  end
-
-  defp build_eoe_meta(%{kind: :eoe, metadata: meta}) do
-    case meta do
-      %{range: %{start: %{line: line, column: column}}} ->
-        [line: line, column: column]
-
-      _ ->
-        []
     end
   end
 
@@ -292,22 +233,6 @@ defmodule ToxicParser.Grammar.Expressions do
 
     Builder.Helpers.error(reason, meta)
   end
-
-  # Annotate an AST node with end_of_expression metadata.
-  # Based on elixir_parser.yrl annotate_eoe/2:
-  # - For stab expressions, annotate the RHS body
-  # - For other 3-tuples with list metadata, prepend end_of_expression
-  # - Skip stab operators themselves (they handle their own EOE)
-  defp annotate_eoe({:->, stab_meta, [stab_args, {left, meta, right}]}, eoe_meta)
-       when is_list(meta) do
-    {:->, stab_meta, [stab_args, {left, [{:end_of_expression, eoe_meta} | meta], right}]}
-  end
-
-  defp annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) and left != :-> do
-    {left, [{:end_of_expression, eoe_meta} | meta], right}
-  end
-
-  defp annotate_eoe(ast, _eoe_meta), do: ast
 
   @doc """
   Builds an AST node for an interpolated keyword key like "foo\#{x}":

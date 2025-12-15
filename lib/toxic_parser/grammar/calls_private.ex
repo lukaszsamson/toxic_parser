@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
   alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Expressions, Keywords}
+  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
   defguardp is_keyword_list_result(arg)
@@ -23,7 +23,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_paren_args(acc, state, _ctx, log) do
     # Skip EOE before checking for close paren or next arg
-    state = skip_eoe(state)
+    state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
@@ -52,7 +52,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
             # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
             with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
               # Skip EOE after arg before checking for comma
-              state = skip_eoe(state)
+              state = EOE.skip(state)
 
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, _} ->
@@ -60,7 +60,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                   # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
                   # If so, and next is also a keyword, merge them
                   # BUT: if it started as a container literal ([...] or {...}), don't merge
-                  state = skip_eoe(state)
+                  state = EOE.skip(state)
 
                   case TokenAdapter.peek(state) do
                     {:ok, next_tok, _}
@@ -93,17 +93,6 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-    end
-  end
-
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state)
-
-      _ ->
-        state
     end
   end
 

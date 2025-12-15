@@ -3,8 +3,8 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.Keywords
+  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Grammar.{EOE, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -46,11 +46,11 @@ defmodule ToxicParser.Grammar.Maps do
         # map -> '%' map_base_expr map_args (struct)
         percent_meta = token_meta(meta)
         # Skip optional EOE after %
-        state = skip_eoe(state)
+        state = EOE.skip(state)
         # Parse map_base_expr (the struct name)
         with {:ok, base, state, log} <- parse_map_base_expr(state, ctx, log) do
           # Skip optional EOE after base
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           parse_map_args(base, percent_meta, state, ctx, log)
         end
 
@@ -71,7 +71,7 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
@@ -83,7 +83,7 @@ defmodule ToxicParser.Grammar.Maps do
       # Produces: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
@@ -120,7 +120,7 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, _open, state} = TokenAdapter.next(state)
         brace_meta = token_meta(open_meta)
         # Skip leading EOE and count newlines
-        {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+        {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
         parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, ctx, log)
 
       {:ok, tok, state} ->
@@ -137,7 +137,7 @@ defmodule ToxicParser.Grammar.Maps do
   # Called after the opening brace has been consumed (for %{} case)
   defp parse_map_args_after_brace(base, percent_meta, brace_meta, state, ctx, log) do
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
     parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, ctx, log)
   end
 
@@ -223,14 +223,14 @@ defmodule ToxicParser.Grammar.Maps do
 
           true ->
             # Skip any EOE before checking for |
-            state = skip_eoe(state)
+            state = EOE.skip(state)
 
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
                 # This is a map update!
                 {:ok, _pipe, state} = TokenAdapter.next(state)
                 # Skip EOE after | and count newlines
-                {state, newlines_after_pipe} = skip_eoe_count_newlines(state, 0)
+                {state, newlines_after_pipe} = EOE.skip_count_newlines(state, 0)
                 # Newlines can come from BEFORE the | (in token metadata) or AFTER (in EOE)
                 # Take the max of both
                 token_newlines = Map.get(pipe_tok.metadata, :newlines, 0)
@@ -244,7 +244,7 @@ defmodule ToxicParser.Grammar.Maps do
                     if Keywords.starts_kw?(tok) do
                       # Keyword entries: %{base | a: 1, b: 2}
                       with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                        state = skip_eoe(state)
+                        state = EOE.skip(state)
 
                         case TokenAdapter.next(state) do
                           {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -384,7 +384,7 @@ defmodule ToxicParser.Grammar.Maps do
         if Keywords.starts_kw?(tok) do
           # kw_data close_curly
           with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            state = skip_eoe(state)
+            state = EOE.skip(state)
 
             case TokenAdapter.next(state) do
               {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -417,7 +417,7 @@ defmodule ToxicParser.Grammar.Maps do
   # Parse assoc entries (key => value pairs)
   defp parse_assoc_entries(acc, state, ctx, log) do
     with {:ok, entry, state, log} <- parse_assoc_expr(state, ctx, log) do
-      state = skip_eoe(state)
+      state = EOE.skip(state)
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -427,7 +427,7 @@ defmodule ToxicParser.Grammar.Maps do
 
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
-          state = skip_eoe(state)
+          state = EOE.skip(state)
           # Check for trailing comma, kw_data, or more assoc_expr
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -439,7 +439,7 @@ defmodule ToxicParser.Grammar.Maps do
               if Keywords.starts_kw?(tok) do
                 # assoc_base ',' kw_data
                 with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                  state = skip_eoe(state)
+                  state = EOE.skip(state)
 
                   case TokenAdapter.next(state) do
                     {:ok, %{kind: :"}"} = close_tok, state} ->
@@ -517,7 +517,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:keyword_key, key_atom, state, log} ->
         alias ToxicParser.Grammar.Expressions
         # Skip EOE (newlines) after the colon before parsing value
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
           {:ok, {key_atom, value_ast}, state, log}
@@ -526,7 +526,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
         alias ToxicParser.Grammar.Expressions
         # Skip EOE (newlines) after the colon before parsing value
-        state = skip_eoe(state)
+        state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
@@ -597,42 +597,16 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp annotate_assoc(other, _assoc_meta), do: other
 
-  defp skip_eoe(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe(state)
-
-      _ ->
-        state
-    end
-  end
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
-    end
-  end
-
   # Build token metadata with explicit newlines count
   defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
 
-  defp token_meta_with_newlines(%{range: %{start: %{line: line, column: column}}}, newlines)
-       when newlines > 0 do
-    [newlines: newlines, line: line, column: column]
+  defp token_meta_with_newlines(meta, newlines) when is_integer(newlines) and newlines > 0 do
+    [newlines: newlines] ++ Builder.Helpers.token_meta(meta)
   end
 
   defp token_meta_with_newlines(_, _), do: []
 
-  defp token_meta(%{range: %{start: %{line: line, column: column}}}),
-    do: [line: line, column: column]
-
-  defp token_meta(_), do: []
+  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
   # Build map AST: %{} or %Struct{}
   defp build_map_ast(nil, pairs, _percent_meta, map_meta) do

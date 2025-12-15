@@ -8,7 +8,7 @@ defmodule ToxicParser.Grammar.Calls do
   """
 
   alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Blocks, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Blocks, EOE, Expressions, Keywords}
 
   # Check if an expression result is a keyword list (from quoted keyword parsing)
   defguardp is_keyword_list_result(arg)
@@ -133,12 +133,12 @@ defmodule ToxicParser.Grammar.Calls do
     {:ok, open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines (only leading newlines matter for metadata)
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     # Parse the bracket argument (container_expr or kw_data)
     with {:ok, arg, state, log} <- parse_bracket_arg_no_skip(state, ctx, log) do
       # Skip trailing EOE before close bracket (don't count these)
-      {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_token(state, :"]") do
         {:ok, close_tok, state} ->
@@ -284,11 +284,11 @@ defmodule ToxicParser.Grammar.Calls do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
       # Skip trailing EOE before close paren
-      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_token(state, :")") do
         {:ok, close_tok, state} ->
@@ -334,11 +334,11 @@ defmodule ToxicParser.Grammar.Calls do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
       # Skip trailing EOE before close paren
-      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_token(state, :")") do
         {:ok, close_tok, state} ->
@@ -370,17 +370,6 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp extract_meta({_name, meta, _args}) when is_list(meta) do
     Keyword.take(meta, [:line, :column])
-  end
-
-  defp skip_eoe_count_newlines(state, count) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        skip_eoe_count_newlines(state, count + n)
-
-      _ ->
-        {state, count}
-    end
   end
 
   defp expect_token(state, kind) do
@@ -551,10 +540,10 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp parse_paren_call_no_led(callee_tok, state, ctx, log) do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log) do
-      {state, trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_token(state, :")") do
         {:ok, close_tok, state} ->
@@ -577,10 +566,10 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp parse_bracket_access_no_led(ident_tok, _open_tok, state, ctx, log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
-    {state, leading_newlines} = skip_eoe_count_newlines(state, 0)
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
     with {:ok, arg, state, log} <- parse_bracket_arg_no_skip(state, ctx, log) do
-      {state, _trailing_newlines} = skip_eoe_count_newlines(state, 0)
+      {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
       case expect_token(state, :"]") do
         {:ok, close_tok, state} ->
