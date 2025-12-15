@@ -472,6 +472,7 @@ defmodule ToxicParser.Pratt do
           :")",
           :"]",
           :"}",
+          :",",
           :when_op,
           :stab_op,
           :block_identifier
@@ -897,7 +898,9 @@ defmodule ToxicParser.Pratt do
                   _ = trailing_newlines
                   close_meta = build_meta(close_tok.metadata)
 
-                  newlines_meta = if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+                  newlines_meta =
+                    if leading_newlines > 0, do: [newlines: leading_newlines], else: []
+
                   call_meta = newlines_meta ++ [closing: close_meta] ++ dot_meta
 
                   combined = {{:., dot_meta, [left]}, call_meta, Enum.reverse(args)}

@@ -163,9 +163,10 @@ defmodule ToxicParser.Grammar.Dots do
             {:ok, {atom, meta_with_delimiter, args}, state, log}
           end
 
-        # quoted_bracket_identifier_end: D."foo"[1] - return simple identifier, bracket access handled by caller
+        # quoted_bracket_identifier_end: D."foo"[1] - return with :allows_bracket flag
+        # so caller knows bracket access is allowed
         end_kind == :quoted_bracket_identifier_end ->
-          {:ok, {atom, meta_with_delimiter}, state, log}
+          {:ok, {atom, meta_with_delimiter, :allows_bracket}, state, log}
 
         # quoted_do_identifier_end: D."foo" do...end - return as call AST, do-block parsed by caller
         end_kind == :quoted_do_identifier_end ->
