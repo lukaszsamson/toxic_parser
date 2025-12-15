@@ -78,18 +78,6 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list usable in data (container) position."
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_data(%State{} = state, ctx, %EventLog{} = log) do
-    if System.get_env("TP_DEBUG_KW_DATA") == "1" and state.source == "{1, foo: 1, bar: 2}" do
-      case TokenAdapter.peek(state) do
-        {:ok, tok, _} ->
-          IO.puts(
-            "TP_DEBUG_KW_DATA enter parse_kw_data next_kind=#{inspect(tok.kind)} next_value=#{inspect(tok.value)}"
-          )
-
-        _ ->
-          IO.puts("TP_DEBUG_KW_DATA enter parse_kw_data next=<none>")
-      end
-    end
-
     parse_kw_list([], state, ctx, log, 0, :unmatched)
   end
 
