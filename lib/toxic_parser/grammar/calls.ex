@@ -376,11 +376,7 @@ defmodule ToxicParser.Grammar.Calls do
               true ->
                 # Parse args in :matched context to prevent do-block attachment to arguments.
                 # The do-block belongs to the outer call, not to individual args.
-                # Use min_bp=0 for argument values - the argument should consume all binary
-                # operators like :: and when. The caller's min_bp is only used to check
-                # whether to *start* parsing (the check above), not to constrain argument values.
-                # This allows @spec foo(a) :: bar to parse :: as part of spec's argument.
-                case Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                case Pratt.parse(state, :matched, log) do
                   {:ok, arg, state, log} ->
                     handle_no_parens_arg(arg, acc, state, ctx, log, min_bp)
 
@@ -389,7 +385,7 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                           Pratt.parse(state, :matched, log) do
                       kw_pair = [{key_atom, value_ast}]
                       handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
                     end
@@ -399,7 +395,7 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, :matched, log, 0) do
+                           Pratt.parse(state, :matched, log) do
                       key_ast =
                         Expressions.build_interpolated_keyword_key(
                           parts,

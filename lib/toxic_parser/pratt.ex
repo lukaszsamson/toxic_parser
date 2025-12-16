@@ -123,11 +123,12 @@ defmodule ToxicParser.Pratt do
   Used for map updates where we need to stop before the pipe operator.
   Also used for guard expressions in stab clauses where we need to stop before ->.
   """
-  @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp) do
+  @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer(), keyword()) ::
+          result()
+  def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp, opts \\ []) do
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, left, state, log} <- nud(token, state, context, log, min_bp: min_bp) do
-      led(left, state, log, min_bp, context)
+      led(left, state, log, min_bp, context, opts)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
@@ -394,7 +395,10 @@ defmodule ToxicParser.Pratt do
               true ->
                 # Parse arg with min_bp constraint
                 # Use parse_with_min_bp directly - keyword_key bubbles up as error
-                with {:ok, arg, state, log} <- parse_with_min_bp(state, :matched, log, min_bp) do
+                # Pass stop_at_assoc: true to prevent => from being consumed
+                # This ensures %{n&n=>1|e} parses as n(&n) => (1|e), not n(&(n=>1|e))
+                with {:ok, arg, state, log} <-
+                       parse_with_min_bp(state, :matched, log, min_bp, stop_at_assoc: true) do
                   case TokenAdapter.peek(state) do
                     {:ok, %{kind: :","}, _} ->
                       {:ok, _comma, state} = TokenAdapter.next(state)
@@ -416,22 +420,25 @@ defmodule ToxicParser.Pratt do
   end
 
   # Parse a single argument with min_bp, handling keyword_key from quoted keywords
+  # Pass stop_at_assoc: true to prevent => from being consumed in map contexts
   defp parse_no_parens_arg_with_min_bp(state, context, log, min_bp) do
-    case parse_with_min_bp(state, context, log, min_bp) do
+    case parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
       {:ok, ast, state, log} ->
         {:ok, ast, state, log}
 
       {:keyword_key, key_atom, state, log} ->
         state = EOE.skip(state)
 
-        with {:ok, value_ast, state, log} <- parse_with_min_bp(state, context, log, min_bp) do
+        with {:ok, value_ast, state, log} <-
+               parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
           {:ok, [{key_atom, value_ast}], state, log}
         end
 
       {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
         state = EOE.skip(state)
 
-        with {:ok, value_ast, state, log} <- parse_with_min_bp(state, context, log, min_bp) do
+        with {:ok, value_ast, state, log} <-
+               parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           {:ok, [{key_ast, value_ast}], state, log}
         end
@@ -882,7 +889,8 @@ defmodule ToxicParser.Pratt do
         led_call(left, state, log, min_bp, context, opts)
 
       # dot_call_op: expr.(args) - anonymous function call
-      {:dot_call_op, _} ->
+      # Must check bp >= min_bp to respect operator precedence
+      {:dot_call_op, {bp, _}} when bp >= min_bp ->
         led_dot_call(left, state, log, min_bp, context, opts)
 
       {:dot_op, {bp, _}} when bp >= min_bp ->
@@ -921,6 +929,17 @@ defmodule ToxicParser.Pratt do
       {:stab_op, _} ->
         state = pushback_eoe_tokens(state, eoe_tokens)
         {:ok, left, state, log}
+
+      # assoc_op (=>) is NOT a general binary operator - it only appears in map contexts
+      # In no-parens call context, stop at => to avoid parsing n(&n=>1) as n(&(n=>1))
+      # In normal context (inside maps), allow => to be consumed
+      {:assoc_op, {bp, assoc}} when bp >= min_bp ->
+        if Keyword.get(opts, :stop_at_assoc, false) do
+          state = pushback_eoe_tokens(state, eoe_tokens)
+          {:ok, left, state, log}
+        else
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+        end
 
       {_, {bp, assoc}} when bp >= min_bp ->
         led_binary(left, state, log, min_bp, context, opts, bp, assoc)

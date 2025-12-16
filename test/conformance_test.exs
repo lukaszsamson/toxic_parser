@@ -1098,6 +1098,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn (a:\n1, b: :ok) when x() -> foo() end")
       assert_conforms("fn (x, a: 1) when x() -> foo() end")
       assert_conforms("fn (\nx, a: 1) when x() -> foo() end")
+
+      assert_conforms("fn 1 -> ;-> end")
     end
 
     test "paren stab" do
@@ -1239,6 +1241,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("(\n;1)")
       assert_conforms("(;1\n)")
       assert_conforms("(;e;)")
+      assert_conforms("(;l;f)")
     end
 
     test "empty_paren" do
@@ -1424,6 +1427,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%@0.a{}")
       assert_conforms("%@o.f{}")
       assert_conforms("%^t.d{}")
+      assert_conforms("%@+a.i{}")
     end
 
     test "map update" do
@@ -1443,6 +1447,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{if foo do\n:ok\nend | :a => 1, b: 2}")
       assert_conforms("%{if foo do\n:ok\nend | :a => 1, 'b': 2}")
       assert_conforms("%{'' | x: y}")
+    end
+
+    test "not a map update" do
+      assert_conforms("%{n&n=>1|e}")
     end
 
     test "struct update" do
@@ -1589,6 +1597,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo.bar()()")
       assert_conforms("1.bar()()")
       assert_conforms("1.bar(if a do\n:ok\nend)(bar 1, 2, 3)")
+    end
+
+    test "chained parens_call" do
+      assert_conforms("@i.().o")
     end
   end
 

@@ -86,6 +86,13 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   defp unwrap_single_non_stab_with_parens([single], _open_meta, _close_meta), do: single
+
+  # Multiple non-stab expressions - wrap in __block__ with closing metadata
+  defp unwrap_single_non_stab_with_parens(exprs, open_meta, close_meta) when is_list(exprs) do
+    meta = [closing: close_meta] ++ open_meta
+    {:__block__, meta, exprs}
+  end
+
   defp unwrap_single_non_stab_with_parens(other, _open_meta, _close_meta), do: other
 
   # Try to parse stab_parens_many: ((args) -> expr) or ((args) when g -> expr)
@@ -1198,6 +1205,11 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
             {:ok, nil_ast, state, log}
 
+          {:ok, %{kind: :stab_op}, _} ->
+            # Stab operator after leading semicolon - this starts a new stab clause
+            # Return just the nil (the semicolon's implied nil)
+            {:ok, nil_ast, state, log}
+
           {:ok, _, _} ->
             # More content after leading semicolon - parse next expression and collect
             with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
@@ -1426,12 +1438,30 @@ defmodule ToxicParser.Grammar.Stabs do
         if terminator == :")" do
           # Could be just an expression (stab_expr -> expr)
           with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-            # Check for trailing EOE and annotate expression if present
+            # Check for trailing EOE and continue or return
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :eoe} = eoe_tok, _} ->
                 eoe_meta = EOE.build_eoe_meta(eoe_tok)
                 annotated = EOE.annotate_eoe(expr, eoe_meta)
-                {:ok, collect_stab([annotated | acc]), state, log}
+                # Consume EOE and check for more content
+                {:ok, _eoe, state} = TokenAdapter.next(state)
+                state = EOE.skip(state)
+
+                case TokenAdapter.peek(state) do
+                  {:ok, %{kind: :")"}, _} ->
+                    # Terminator - done
+                    {:ok, collect_stab([annotated | acc]), state, log}
+
+                  {:ok, _, _} ->
+                    # More content - continue parsing
+                    parse_stab_eoe_until([annotated | acc], state, ctx, log, terminator)
+
+                  {:eof, state} ->
+                    {:error, :unexpected_eof, state, log}
+
+                  {:error, diag, state} ->
+                    {:error, diag, state, log}
+                end
 
               _ ->
                 {:ok, collect_stab([expr | acc]), state, log}

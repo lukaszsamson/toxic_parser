@@ -151,8 +151,8 @@ defmodule ToxicParser.Grammar.Maps do
   # The .a is handled separately after building the unary expression.
   defp parse_unary_operand(state, ctx, log) do
     case TokenAdapter.peek(state) do
-      # For nested unary operators (e.g., %@@0.a{}), continue recursively
-      {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
+      # For nested @ operator, continue without dots since @ (320) > dot (310)
+      {:ok, %{kind: :at_op} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -162,12 +162,25 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, ast, state, log}
         end
 
-      # ternary_op :"//" used as unary prefix
+      # For other unary operators (precedence < dot 310), use parse_unary_operand_with_dots
+      # so that dots are included in their operand.
+      # E.g., %@+a.i{} should be @(+(a.i)){} not (@(+a)).i{}
+      {:ok, %{kind: kind} = _tok, _} when kind in [:unary_op, :ellipsis_op, :dual_op] ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+          ast = {op_tok.value, op_meta, [operand]}
+          {:ok, ast, state, log}
+        end
+
+      # ternary_op :"//" used as unary prefix (precedence < dot 310)
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_unary_operand(state, ctx, log) do
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, ctx, log) do
           op_meta = token_meta(op_tok.metadata)
 
           {outer_meta, inner_meta} =
@@ -362,6 +375,8 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   defp parse_map_update_base(state, _ctx, log) do
+    # Use min_bp above pipe_op (70) to stop before |.
+    # This ensures that in %{base | entries}, we parse base correctly.
     case Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.pipe_op_bp() + 1) do
       {:ok, base_expr, state, log} ->
         {:ok, base_expr, state, log}

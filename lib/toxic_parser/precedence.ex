@@ -80,6 +80,10 @@ defmodule ToxicParser.Precedence do
   @spec pipe_op_bp() :: bp() | nil
   def pipe_op_bp, do: bp_from_binary(:pipe_op)
 
+  @doc "Returns binding power for assoc operator (=>)."
+  @spec assoc_op_bp() :: bp() | nil
+  def assoc_op_bp, do: bp_from_binary(:assoc_op)
+
   @doc "Returns the binding power for dot vs dot-call handling."
   @spec dot() :: {bp(), assoc()} | nil
   def dot, do: binary(:dot_op)
