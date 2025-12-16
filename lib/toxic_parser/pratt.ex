@@ -544,18 +544,23 @@ defmodule ToxicParser.Pratt do
         # e.g., "... + 1 * 2" should parse as "...((+1) * 2)" not "(... + 1) * 2"
         ellipsis_terminators = [
           :end,
+          :do,
           :eoe,
           :")",
           :"]",
           :"}",
+          :end_interpolation,
           :",",
           :when_op,
           :stab_op,
           :block_identifier
         ]
 
+        # dual_op can be unary (+/-), ternary_op can be unary (//)
+        # so they should NOT trigger standalone ellipsis
         is_pure_binary_op =
-          operand_token.kind != :dual_op and Precedence.binary(operand_token.kind) != nil
+          operand_token.kind not in [:dual_op, :ternary_op] and
+            Precedence.binary(operand_token.kind) != nil
 
         if op_token.kind in [:ellipsis_op, :range_op] and
              (is_pure_binary_op or operand_token.kind in ellipsis_terminators) do
@@ -920,6 +925,14 @@ defmodule ToxicParser.Pratt do
       # This matches Elixir's behavior where dual_op after newlines is unary
       {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
         # Push back EOE tokens and return left - dual_op after EOE is not continuation
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
+
+      # range_op (..) or ellipsis_op (...) after EOE is NOT a binary operator
+      # e.g., "t;..<e" should be two expressions: t and (..<e), not (t..<) e
+      # The range/ellipsis starts a new expression (unary/nullary)
+      {kind, {bp, _assoc}}
+      when kind in [:range_op, :ellipsis_op] and bp >= min_bp and eoe_tokens != [] ->
         state = pushback_eoe_tokens(state, eoe_tokens)
         {:ok, left, state, log}
 
@@ -1578,12 +1591,15 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Push back a list of EOE tokens (in reverse order of how they were consumed)
+  # Push back a list of EOE tokens so the first token read is first in lookahead.
+  # Since pushback adds to the FRONT of lookahead, we need to push in reverse order:
+  # For [newline, semicolon], push semicolon first, then newline, so lookahead is [newline, semicolon].
   defp pushback_eoe_tokens(state, []), do: state
 
-  defp pushback_eoe_tokens(state, [eoe_tok | rest]) do
-    state = TokenAdapter.pushback(state, eoe_tok)
-    pushback_eoe_tokens(state, rest)
+  defp pushback_eoe_tokens(state, eoe_tokens) do
+    Enum.reduce(Enum.reverse(eoe_tokens), state, fn tok, acc ->
+      TokenAdapter.pushback(acc, tok)
+    end)
   end
 
   # Helper to parse RHS of `when` binary operator

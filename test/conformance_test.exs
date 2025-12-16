@@ -2741,6 +2741,77 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("foo.e ()")
   end
 
+  test "interpolation repro 1" do
+    assert_conforms("'''\nfoo\#{t;..<e}\n'''")
+  end
+
+  test "naked ellipsis" do
+    assert_conforms("def foo() when ... do 1 end")
+    assert_conforms(":\"foo\#{...}\"")
+  end
+
+  describe "newlines" do
+    test "repro 1" do
+      assert_conforms("foo \n;")
+      assert_conforms("^!u\n;")
+      assert_conforms("foo()\n;")
+    end
+
+    test "repro 2" do
+      assert_conforms("c<t-e\n;r do :ok end")
+    end
+
+    test "repro 3" do
+      assert_conforms("~s/foo\#{o\n;}/")
+      assert_conforms("\"\"\"\nfoo\#{o\n;}\n\"\"\"")
+      assert_conforms("\"\#{n\n;}\"")
+    end
+
+    test "repro 4" do
+      assert_conforms("def foo e\n;e do 1 end")
+    end
+
+    test "repro 5" do
+      assert_conforms("foo do x\n; end")
+    end
+
+    test "repro 6" do
+      assert_conforms("foo.r\n;")
+    end
+
+    test "repro 7" do
+      assert_conforms("foo do :ok end \n;d do :error end")
+    end
+
+    test "repro 8" do
+      assert_conforms("foo do :ok end \n;")
+    end
+
+    test "repro 9" do
+      assert_conforms(":ok |> !u\n;")
+    end
+
+    test "repro 10" do
+      assert_conforms("x...\n//y")
+    end
+
+    test "repro 11" do
+      assert_conforms("[\"foo\#{r\n;}\": 1]")
+    end
+
+    test "repro 12" do
+      assert_conforms("fn \n -> :ok end")
+    end
+
+    test "repro 13" do
+      assert_conforms("x + c<t-e\n;r * y")
+    end
+
+    test "repro 14" do
+      assert_conforms("foo \n; bar")
+    end
+  end
+
   # =============================================================================
   # Helper function
   # =============================================================================
