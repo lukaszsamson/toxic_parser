@@ -22,6 +22,8 @@ defmodule ToxicParser.Grammar.Calls do
   """
   @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, ctx, %EventLog{} = log) do
+    ctx = Context.normalize(ctx)
+
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do
@@ -82,7 +84,7 @@ defmodule ToxicParser.Grammar.Calls do
           # do_identifier in matched context with no arguments: this identifier
           # precedes a do-block but the do-block belongs to an outer call.
           # Just return the bare identifier.
-          kind == :do_identifier and ctx == :matched ->
+          kind == :do_identifier and not Context.allow_do_block?(ctx) ->
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
@@ -115,7 +117,7 @@ defmodule ToxicParser.Grammar.Calls do
   #          no_parens_one_ambig -> op_identifier call_args_no_parens_ambig
   defp parse_op_identifier_call(callee_tok, state, ctx, log) do
     # Parse first arg (the unary expression)
-    with {:ok, first_arg, state, log} <- Expressions.expr(state, :matched, log) do
+    with {:ok, first_arg, state, log} <- Expressions.expr(state, Context.matched_expr(), log) do
       # Check for comma to see if there are more args
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
@@ -522,7 +524,7 @@ defmodule ToxicParser.Grammar.Calls do
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
-          kind == :do_identifier and ctx == :matched ->
+          kind == :do_identifier and not Context.allow_do_block?(ctx) ->
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
@@ -579,7 +581,8 @@ defmodule ToxicParser.Grammar.Calls do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
-    with {:ok, first_arg, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 0, stop_at_assoc: true) do
+    with {:ok, first_arg, state, log} <-
+           Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
@@ -614,7 +617,7 @@ defmodule ToxicParser.Grammar.Calls do
   defp parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log, min_bp) do
     # Parse the quoted keyword via expression - should return keyword list
     # Use min_bp=0 for argument values (see comment in parse_no_parens_args)
-    case Pratt.parse_with_min_bp(state, :matched, log, 0) do
+    case Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
       {:ok, expr, state, log} when is_keyword_list_result(expr) ->
         # Got another keyword pair, continue accumulating
         continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
@@ -623,8 +626,8 @@ defmodule ToxicParser.Grammar.Calls do
       {:keyword_key, key_atom, state, log} ->
         state = EOE.skip(state)
 
-        with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, 0) do
+         with {:ok, value_ast, state, log} <-
+                Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
           expr = [{key_atom, value_ast}]
           continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
         end
@@ -634,7 +637,7 @@ defmodule ToxicParser.Grammar.Calls do
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, 0) do
+               Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           expr = [{key_ast, value_ast}]
           continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)

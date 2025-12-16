@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Containers do
   Container parsing for lists and tuples (Phase 6 scaffolding).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Bitstrings, EOE, Expressions, Keywords, Maps, Stabs}
 
@@ -168,7 +168,7 @@ defmodule ToxicParser.Grammar.Containers do
   # a new expression boundary - do-blocks inside belong to the inner call.
   defp parse_expr_in_paren_impl(open_meta, acc, state, ctx, log, min_bp) do
     # Use :unmatched inside parens to allow do-blocks on inner calls
-    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, Context.unmatched_expr(), log) do
       # Check for EOE (semicolon) or close paren
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :eoe} = eoe_tok, _} ->
@@ -550,7 +550,8 @@ defmodule ToxicParser.Grammar.Containers do
           # TODO: no coverage
           Keywords.starts_kw?(tok) ->
             # Definite keyword - parse as keyword list
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
+            with {:ok, kw_list, state, log} <-
+                   Keywords.parse_kw_data(state, Context.container_expr(), log) do
               {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
               case TokenAdapter.next(state) do
@@ -573,7 +574,7 @@ defmodule ToxicParser.Grammar.Containers do
             # Potential quoted keyword - checkpoint and try keyword parsing
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-            case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
+            case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
               {:ok, kw_list, state, log} ->
                 state = TokenAdapter.drop_checkpoint(state, ref)
                 {state, _newlines} = EOE.skip_count_newlines(state, 0)
@@ -615,7 +616,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_tuple_first_element(state, log, leading_newlines) do
     {first_is_container_literal, state} = tuple_element_container_literal?(state)
 
-    with {:ok, first, state, log} <- Expressions.expr(state, :unmatched, log) do
+    with {:ok, first, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
       {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.peek(state) do
@@ -648,7 +649,7 @@ defmodule ToxicParser.Grammar.Containers do
                   # Potential quoted keyword - checkpoint and try
                   {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-                  case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
+                  case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
                     {:ok, kw_list, state, log} ->
                       state = TokenAdapter.drop_checkpoint(state, ref)
                       {state, _newlines} = EOE.skip_count_newlines(state, 0)
@@ -714,7 +715,8 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Parse keyword tail for tuple like {first, foo: 1, bar: 2}
   defp parse_tuple_keyword_tail(first, state, log, leading_newlines) do
-    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
+    with {:ok, kw_list, state, log} <-
+           Keywords.parse_kw_data(state, Context.container_expr(), log) do
       {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.next(state) do
@@ -737,7 +739,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp parse_tuple_rest(tagged_acc, state, log, leading_newlines) do
     {expr_is_container_literal, state} = tuple_element_container_literal?(state)
 
-    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
       {state, _newlines} = EOE.skip_count_newlines(state, 0)
       new_tagged_acc = [{expr, expr_is_container_literal} | tagged_acc]
 
@@ -766,7 +768,7 @@ defmodule ToxicParser.Grammar.Containers do
                   # Potential quoted keyword - checkpoint and try
                   {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-                  case Keywords.parse_kw_data(checkpoint_state, :unmatched, log) do
+                  case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
                     {:ok, kw_list, state, log} ->
                       state = TokenAdapter.drop_checkpoint(state, ref)
                       {state, _newlines} = EOE.skip_count_newlines(state, 0)
@@ -821,7 +823,8 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Parse keyword tail for 3+ element tuple like {1, 2, 3, foo: :bar}
   defp parse_tuple_rest_keyword_tail(tagged_acc, state, log, leading_newlines) do
-    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, :unmatched, log) do
+    with {:ok, kw_list, state, log} <-
+           Keywords.parse_kw_data(state, Context.container_expr(), log) do
       {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
       case TokenAdapter.next(state) do

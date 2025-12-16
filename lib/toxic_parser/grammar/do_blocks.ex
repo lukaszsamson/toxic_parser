@@ -1,7 +1,7 @@
 defmodule ToxicParser.Grammar.DoBlocks do
   @moduledoc false
 
-  alias ToxicParser.{Builder, EventLog, NoParens, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, NoParens, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Keywords}
 
   @type result ::
@@ -49,16 +49,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
         value
 
       :error ->
-        cond do
-          is_map(ctx) and Map.has_key?(ctx, :allow_do_block?) ->
-            Map.get(ctx, :allow_do_block?)
-
-          is_map(ctx) and Map.has_key?(ctx, :allow_do_block) ->
-            Map.get(ctx, :allow_do_block)
-
-          true ->
-            ctx != :matched
-        end
+        ctx = Context.normalize(ctx)
+        ctx.allow_do_block
     end
   end
 

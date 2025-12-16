@@ -93,4 +93,18 @@ defmodule ToxicParser.Context do
   def from_atom(:unmatched), do: unmatched_expr()
   def from_atom(:no_parens), do: no_parens_expr()
   def from_atom(_), do: matched_expr()
+
+  @doc "Normalize legacy atom or nil contexts to a Context struct."
+  @spec normalize(t() | :matched | :unmatched | :no_parens | nil) :: t()
+  def normalize(%__MODULE__{} = ctx), do: ctx
+  def normalize(ctx) when is_atom(ctx), do: from_atom(ctx)
+  def normalize(_), do: matched_expr()
+
+  @doc "Whether the context allows attaching do/end blocks."
+  @spec allow_do_block?(t() | :matched | :unmatched | :no_parens | nil) :: boolean()
+  def allow_do_block?(ctx), do: normalize(ctx).allow_do_block
+
+  @doc "Whether the context allows no_parens_expr extension."
+  @spec allow_no_parens_expr?(t() | :matched | :unmatched | :no_parens | nil) :: boolean()
+  def allow_no_parens_expr?(ctx), do: normalize(ctx).allow_no_parens_expr
 end

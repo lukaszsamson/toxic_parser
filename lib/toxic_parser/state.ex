@@ -6,7 +6,7 @@ defmodule ToxicParser.State do
   alias ToxicParser.{Context, Error}
 
   @type mode :: :strict | :tolerant
-  @type expression_context :: :matched | :unmatched | :no_parens | Context.t()
+  @type expression_context :: Context.t()
 
   @type checkpoint :: %{
           ref: reference(),
@@ -39,7 +39,7 @@ defmodule ToxicParser.State do
             mode: :strict,
             opts: [],
             fuel: :infinity,
-            expression_context: :matched,
+             expression_context: Context.expr(),
             checkpoints: %{},
             line_index: {},
             terminators: [],
@@ -65,12 +65,14 @@ defmodule ToxicParser.State do
 
     {terminators, stream} = Toxic.current_terminators(stream)
 
+    ctx = Context.normalize(Keyword.get(opts, :expression_context, Context.expr()))
+
     %__MODULE__{
       stream: stream,
       mode: mode,
       opts: opts,
       fuel: Keyword.get(opts, :fuel_limit, :infinity),
-      expression_context: Keyword.get(opts, :expression_context, :matched),
+      expression_context: ctx,
       line_index: line_index(source_bin),
       terminators: terminators,
       max_peek: Keyword.get(opts, :max_peek, 4),

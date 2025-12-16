@@ -121,7 +121,7 @@ defmodule ToxicParser.Grammar.Keywords do
       {:ok, %{kind: kind}, _} when kind in @quoted_kw_start ->
         # Potentially a quoted keyword like "foo": or 'bar':
         # Try parsing as string - if it returns keyword_key, it's a keyword
-        case Strings.parse(state, :matched, log, 10000) do
+        case Strings.parse(state, Context.matched_expr(), log, 10000) do
           {:keyword_key, key_atom, state, log} ->
             parse_kw_value(key_atom, state, log, min_bp, value_ctx)
 

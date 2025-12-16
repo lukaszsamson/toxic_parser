@@ -11,7 +11,7 @@ defmodule ToxicParser do
     and continues parsing with normalized `:eoe` tokens carrying newline counts.
   """
 
-  alias ToxicParser.{Env, Error, EventLog, Grammar, Position, Result, TokenAdapter}
+  alias ToxicParser.{Context, Env, Error, EventLog, Grammar, Position, Result, TokenAdapter}
 
   @type mode :: :strict | :tolerant
 
@@ -39,8 +39,10 @@ defmodule ToxicParser do
     mode = Keyword.get(opts, :mode, :strict)
     emit_events? = Keyword.get(opts, :emit_events, false)
     emit_env? = Keyword.get(opts, :emit_env, false)
-    # Top-level uses :unmatched context to allow block expressions like `foo do :ok end`
-    ctx = Keyword.get(opts, :expression_context, :unmatched)
+    ctx =
+      opts
+      |> Keyword.get(:expression_context, Context.expr())
+      |> Context.normalize()
 
     state = TokenAdapter.new(source, opts)
     log = EventLog.new()

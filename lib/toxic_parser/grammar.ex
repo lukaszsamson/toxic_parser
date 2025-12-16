@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar do
   dispatcher; full grammar nonterminals land in later phases.
   """
 
-  alias ToxicParser.{EventLog, Position, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Context, EventLog, Position, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.Expressions
 
   @type result ::
@@ -23,8 +23,7 @@ defmodule ToxicParser.Grammar do
     state = TokenAdapter.new(source, opts)
     log = EventLog.new() |> EventLog.start_node(:root, zero_meta())
 
-    # Top-level uses :unmatched context to allow block expressions like `foo do :ok end`
-    with {:ok, ast, state, log} <- Expressions.expr_list(state, :unmatched, log) do
+    with {:ok, ast, state, log} <- Expressions.expr_list(state, Context.expr(), log) do
       log = EventLog.end_node(log, :root, zero_meta())
       {:ok, ast, state, log}
     end
@@ -32,8 +31,8 @@ defmodule ToxicParser.Grammar do
 
   @doc "Entry point for already-initialized parser state."
   @spec parse(State.t(), EventLog.t(), Pratt.context()) :: result()
-  def parse(%State{} = state, %EventLog{} = log, ctx \\ :unmatched) do
-    Expressions.expr_list(state, ctx, log)
+  def parse(%State{} = state, %EventLog{} = log, ctx \\ Context.expr()) do
+    Expressions.expr_list(state, Context.normalize(ctx), log)
   end
 
   defp zero_meta do

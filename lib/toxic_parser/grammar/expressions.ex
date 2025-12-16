@@ -57,33 +57,28 @@ defmodule ToxicParser.Grammar.Expressions do
   @doc """
   Dispatches to the Pratt parser based on expression context.
   """
-  @spec expr(State.t(), Pratt.context() | Context.t(), EventLog.t()) :: result()
+  @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
   def expr(%State{} = state, ctx, %EventLog{} = log) do
-    case ctx do
-      :matched -> matched_expr(state, log)
-      :unmatched -> unmatched_expr(state, log)
-      :no_parens -> no_parens_expr(state, log)
-      %Context{} -> parse_with_layers(state, ctx, log)
-      _ -> matched_expr(state, log)
-    end
+    ctx = Context.normalize(ctx)
+    parse_with_layers(state, ctx, log)
   end
 
   @doc "Parses a matched expression (no trailing do-block attachment)."
   @spec matched_expr(State.t(), EventLog.t()) :: result()
   def matched_expr(%State{} = state, %EventLog{} = log) do
-    parse_with_layers(state, :matched, log)
+    parse_with_layers(state, Context.matched_expr(), log)
   end
 
   @doc "Parses an unmatched expression (do-block capable context)."
   @spec unmatched_expr(State.t(), EventLog.t()) :: result()
   def unmatched_expr(%State{} = state, %EventLog{} = log) do
-    parse_with_layers(state, :unmatched, log)
+    parse_with_layers(state, Context.unmatched_expr(), log)
   end
 
   @doc "Parses a no-parens expression (call-ambiguous context)."
   @spec no_parens_expr(State.t(), EventLog.t()) :: result()
   def no_parens_expr(%State{} = state, %EventLog{} = log) do
-    parse_with_layers(state, :no_parens, log)
+    parse_with_layers(state, Context.no_parens_expr(), log)
   end
 
   defp parse_with_layers(state, ctx, log) do
@@ -270,9 +265,12 @@ defmodule ToxicParser.Grammar.Expressions do
   # In paren calls (allow_do_block: true), use container_expr which allows do-blocks.
   # In no-parens calls (allow_do_block: false), use kw_no_parens_value to prevent
   # do-blocks from attaching to the keyword value (they belong to outer call).
-  defp keyword_value_context(%Context{allow_do_block: true}), do: Context.container_expr()
-  defp keyword_value_context(%Context{allow_do_block: false}), do: Context.kw_no_parens_value()
-  defp keyword_value_context(:matched), do: Context.kw_no_parens_value()
-  defp keyword_value_context(:no_parens), do: Context.kw_no_parens_value()
-  defp keyword_value_context(_), do: Context.container_expr()
+  defp keyword_value_context(ctx) do
+    ctx = Context.normalize(ctx)
+
+    case ctx.allow_do_block do
+      true -> Context.container_expr()
+      false -> Context.kw_no_parens_value()
+    end
+  end
 end

@@ -26,8 +26,7 @@ defmodule ToxicParser.Pratt do
   alias ToxicParser.Grammar.{Blocks, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
-  # Legacy atom context type (for backward compatibility during migration)
-  @type context :: :matched | :unmatched | :no_parens | Context.t()
+  @type context :: Context.t()
 
   # Operators that can extend matched_expr to no_parens_expr
   # From elixir_parser.yrl no_parens_op_expr rules (lines 230-250)
@@ -52,6 +51,7 @@ defmodule ToxicParser.Pratt do
     :rel_op,
     :arrow_op
   ]
+  @do_block_keywords [:case, :cond, :with, :try, :receive, :if, :unless, :for, :quote]
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -60,11 +60,11 @@ defmodule ToxicParser.Pratt do
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
 
   # Context helper functions (support both legacy atoms and Context structs)
-  defp allow_do_block?(%Context{allow_do_block: v}), do: v
-  defp allow_do_block?(ctx) when is_atom(ctx), do: ctx != :matched
+  defp allow_do_block?(ctx), do: Context.allow_do_block?(ctx)
 
-  defp allow_no_parens_expr?(%Context{allow_no_parens_expr: v}), do: v
-  defp allow_no_parens_expr?(ctx) when is_atom(ctx), do: ctx == :no_parens
+  defp allow_no_parens_expr?(ctx), do: Context.allow_no_parens_expr?(ctx)
+
+  defp normalize_context(ctx), do: Context.normalize(ctx)
 
   defp ensure_no_parens_extension_opt(opts) do
     allow? = Keyword.get(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
@@ -78,6 +78,8 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse(State.t(), context(), EventLog.t()) :: result()
   def parse(%State{} = state, context, %EventLog{} = log) do
+    context = normalize_context(context)
+
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, left, state, log} <- nud(token, state, context, log) do
       led(left, state, log, 0, context)
@@ -97,9 +99,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base(State.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, context, %EventLog{} = log) do
+    context = normalize_context(context)
+
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
-           nud(token, state, context, log,
+            nud(token, state, context, log,
              min_bp: 10000,
              allow_containers: false,
              allow_do_blocks: false
@@ -124,9 +128,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots(%State{} = state, context, %EventLog{} = log) do
+    context = normalize_context(context)
+
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
-           nud(token, state, context, log,
+            nud(token, state, context, log,
              min_bp: 10000,
              allow_containers: false,
              allow_do_blocks: false
@@ -144,9 +150,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base_with_dots_and_calls(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots_and_calls(%State{} = state, context, %EventLog{} = log) do
+    context = normalize_context(context)
+
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
-           nud(token, state, context, log,
+            nud(token, state, context, log,
              min_bp: 10000,
              allow_containers: false,
              allow_do_blocks: false
@@ -166,6 +174,8 @@ defmodule ToxicParser.Pratt do
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer(), keyword()) ::
           result()
   def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp, opts \\ []) do
+    context = normalize_context(context)
+
     # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
     nud_opts = Keyword.merge([min_bp: min_bp], opts)
 
@@ -391,7 +401,7 @@ defmodule ToxicParser.Pratt do
 
               tok.kind in [:list_string_start, :bin_string_start] ->
                 # Potentially a quoted keyword - parse and handle
-                case parse_no_parens_arg_with_min_bp(state, :matched, log, min_bp) do
+                case parse_no_parens_arg_with_min_bp(state, Context.matched_expr(), log, min_bp) do
                   {:ok, arg, state, log} ->
                     case TokenAdapter.peek(state) do
                       {:ok, %{kind: :","}, _} ->
@@ -445,7 +455,13 @@ defmodule ToxicParser.Pratt do
                 # Pass stop_at_assoc: true to prevent => from being consumed
                 # This ensures %{n&n=>1|e} parses as n(&n) => (1|e), not n(&(n=>1|e))
                 with {:ok, arg, state, log} <-
-                       parse_with_min_bp(state, :matched, log, min_bp, stop_at_assoc: true) do
+                       parse_with_min_bp(
+                         state,
+                         Context.matched_expr(),
+                         log,
+                         min_bp,
+                         stop_at_assoc: true
+                       ) do
                   case TokenAdapter.peek(state) do
                     {:ok, %{kind: :","}, _} ->
                       {:ok, _comma, state} = TokenAdapter.next(state)
@@ -504,7 +520,7 @@ defmodule ToxicParser.Pratt do
          log,
          min_bp
        ) do
-    case parse_no_parens_arg_with_min_bp(state, :matched, log, min_bp) do
+    case parse_no_parens_arg_with_min_bp(state, Context.matched_expr(), log, min_bp) do
       {:ok, kw_list, state, log} when is_list(kw_list) and length(kw_list) > 0 ->
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :","}, _} ->
@@ -648,10 +664,33 @@ defmodule ToxicParser.Pratt do
             # Exception: @ (at_op) should capture full expressions including low-precedence
             # operators like `when` for module attributes (@spec foo() when ...).
             # Bracket access for @ is handled separately in led_bracket.
+            {next_token_kind, next_token_value} =
+              case TokenAdapter.peek(state) do
+                {:ok, tok, _} -> {tok.kind, tok.value}
+                _ -> {nil, nil}
+              end
+
             operand_min_bp =
-              case op_token.kind do
-                kind when kind in [:ellipsis_op, :range_op] -> 100
-                _ ->
+              cond do
+                operand_token.kind == :do_identifier and allow_do_block?(context) ->
+                  0
+
+                operand_token.kind == :identifier and next_token_kind == :do_identifier and
+                    allow_do_block?(context) ->
+                  0
+
+                operand_token.kind == :identifier and next_token_kind == :identifier and
+                    next_token_value in @do_block_keywords and allow_do_block?(context) ->
+                  0
+
+                operand_token.kind in [:identifier, :dot_identifier] and
+                    operand_token.value in @do_block_keywords and allow_do_block?(context) ->
+                  0
+
+                op_token.kind in [:ellipsis_op, :range_op] ->
+                  100
+
+                true ->
                   case Precedence.unary(op_token.kind) do
                     {bp, _assoc} -> bp
                     nil -> 300
@@ -1582,8 +1621,8 @@ end
     alias ToxicParser.Grammar.Expressions
 
     # container_args in elixir_parser.yrl allows unmatched_expr
-    # Use :unmatched context to allow do-blocks inside container
-    with {:ok, expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+    # Use container_expr context to allow do-blocks inside container
+    with {:ok, expr, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
@@ -1633,7 +1672,7 @@ end
   defp parse_dot_container_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
     alias ToxicParser.Grammar.Expressions
 
-    case Expressions.expr(state, :unmatched, log) do
+    case Expressions.expr(state, Context.container_expr(), log) do
       {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
         {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
@@ -1870,8 +1909,6 @@ end
 
   # Restrict context to prevent no_parens_expr extension in nested operands
   defp restrict_no_parens_extension(%Context{} = ctx), do: %{ctx | allow_no_parens_expr: false}
-  defp restrict_no_parens_extension(:no_parens), do: :matched
-  defp restrict_no_parens_extension(ctx), do: ctx
 
   # Build binary operation AST, with special handling for "not in" rewrite
   # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
@@ -2108,7 +2145,7 @@ end
               # Skip EOE after colon before parsing value
               state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
-              with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
+              with {:ok, value_ast, state, log} <- parse(state, Context.matched_expr(), log) do
                 expr = [{key_atom, value_ast}]
                 parse_access_indices_after_kw(expr, acc, state, ctx, log)
               end
@@ -2118,7 +2155,7 @@ end
               # Skip EOE after colon before parsing value
               state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
-              with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
+              with {:ok, value_ast, state, log} <- parse(state, Context.matched_expr(), log) do
                 key_ast =
                   Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
 
@@ -2162,7 +2199,8 @@ end
                   {:keyword_key, key_atom, state, log} ->
                     state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
-                    with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
+                    with {:ok, value_ast, state, log} <-
+                           parse(state, Context.matched_expr(), log) do
                       next_kw = [{key_atom, value_ast}]
                       # Recursively continue with merged keywords
                       parse_access_indices_after_kw(kw_expr ++ next_kw, acc, state, ctx, log)
@@ -2172,7 +2210,8 @@ end
                     alias ToxicParser.Grammar.Expressions
                     state = EOE.skip_count_newlines(state, 0) |> elem(0)
 
-                    with {:ok, value_ast, state, log} <- parse(state, :matched, log) do
+                    with {:ok, value_ast, state, log} <-
+                           parse(state, Context.matched_expr(), log) do
                       key_ast =
                         Expressions.build_interpolated_keyword_key(
                           parts,

@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
 
@@ -218,9 +218,14 @@ defmodule ToxicParser.Grammar.Stabs do
     state = EOE.skip(state)
 
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
-    # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
+    # Use unmatched context so do-blocks can attach to expressions like `if a do :ok end`
     with {:ok, guard, state, log} <-
-           Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
+           Pratt.parse_with_min_bp(
+             state,
+             Context.unmatched_expr(),
+             log,
+             Precedence.stab_op_bp() + 1
+           ) do
       # Expect stab
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
@@ -371,7 +376,12 @@ defmodule ToxicParser.Grammar.Stabs do
     # Parse guard expression with min_bp > stab_op (10) to stop before ->
     # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
     with {:ok, guard, state, log} <-
-           Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
+           Pratt.parse_with_min_bp(
+             state,
+             Context.unmatched_expr(),
+             log,
+             Precedence.stab_op_bp() + 1
+           ) do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
@@ -462,8 +472,12 @@ defmodule ToxicParser.Grammar.Stabs do
                 cond do
                   Keywords.starts_kw?(tok) ->
                     # call_args_no_parens_many: exprs followed by kw
-                    with {:ok, kw_list, state, log} <-
-                           Keywords.parse_kw_no_parens_call(state, :matched, log) do
+                     with {:ok, kw_list, state, log} <-
+                            Keywords.parse_kw_no_parens_call(
+                              state,
+                              Context.matched_expr(),
+                              log
+                            ) do
                       # If expr was a keyword list from quoted key, merge them
                       if is_keyword_list(expr) do
                         {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -477,11 +491,11 @@ defmodule ToxicParser.Grammar.Stabs do
                     parse_stab_parens_exprs_quoted_kw_continuation(expr, acc, state, log)
 
                   true ->
-                    parse_stab_parens_exprs([expr | acc], state, :matched, log)
+                    parse_stab_parens_exprs([expr | acc], state, Context.matched_expr(), log)
                 end
 
               _ ->
-                parse_stab_parens_exprs([expr | acc], state, :matched, log)
+                parse_stab_parens_exprs([expr | acc], state, Context.matched_expr(), log)
             end
 
           {:ok, %{kind: :")"}, _} ->
@@ -498,7 +512,12 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse a single expression for stab parens, handling quoted keywords
   defp parse_stab_parens_single_expr(state, log) do
-    case Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
+    case Pratt.parse_with_min_bp(
+           state,
+           Context.matched_expr(),
+           log,
+           Precedence.when_op_bp() + 1
+         ) do
       {:ok, ast, state, log} ->
         {:ok, ast, state, log}
 
@@ -507,7 +526,12 @@ defmodule ToxicParser.Grammar.Stabs do
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
+               Pratt.parse_with_min_bp(
+                 state,
+                 Context.matched_expr(),
+                 log,
+                 Precedence.when_op_bp() + 1
+               ) do
           {:ok, [{key_atom, value_ast}], state, log}
         end
 
@@ -515,7 +539,12 @@ defmodule ToxicParser.Grammar.Stabs do
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, :matched, log, Precedence.when_op_bp() + 1) do
+               Pratt.parse_with_min_bp(
+                 state,
+                 Context.matched_expr(),
+                 log,
+                 Precedence.when_op_bp() + 1
+               ) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           {:ok, [{key_ast, value_ast}], state, log}
         end
@@ -544,7 +573,11 @@ defmodule ToxicParser.Grammar.Stabs do
                 cond do
                   Keywords.starts_kw?(tok) ->
                     with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_no_parens_call(state, :matched, log) do
+                           Keywords.parse_kw_no_parens_call(
+                             state,
+                             Context.matched_expr(),
+                             log
+                           ) do
                       {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
                     end
 
@@ -662,7 +695,12 @@ defmodule ToxicParser.Grammar.Stabs do
         # Parse guard expression with min_bp > stab_op (10) to stop before ->
         # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
         with {:ok, guard, state, log} <-
-               Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.stab_op_bp() + 1) do
+               Pratt.parse_with_min_bp(
+                 state,
+                 Context.unmatched_expr(),
+                 log,
+                 Precedence.stab_op_bp() + 1
+               ) do
           case TokenAdapter.next(state) do
             {:ok, %{kind: :stab_op} = stab_tok, state} ->
               stab_base_meta = token_meta(stab_tok.metadata)
@@ -919,7 +957,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp parse_call_args_parens_exprs(acc, state, ctx, log) do
     # Parse matched expression
-    with {:ok, expr, state, log} <- Expressions.expr(state, :matched, log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, Context.matched_expr(), log) do
       state = EOE.skip(state)
 
       case TokenAdapter.peek(state) do
@@ -966,7 +1004,7 @@ defmodule ToxicParser.Grammar.Stabs do
   # Parse continuation of keyword list in paren call context
   defp parse_call_args_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
     # Parse the quoted keyword via expression
-    case Expressions.expr(state, :matched, log) do
+    case Expressions.expr(state, Context.matched_expr(), log) do
       {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
         state = EOE.skip(state)
 
@@ -1034,13 +1072,13 @@ defmodule ToxicParser.Grammar.Stabs do
                 Keywords.starts_kw?(tok) ->
                   # call_args_no_parens_many: exprs followed by kw
                   # Use min_bp > stab_op (10) to stop keyword values before ->
-                  with {:ok, kw_list, state, log} <-
-                         Keywords.parse_kw_no_parens_call_with_min_bp(
-                           state,
-                           :matched,
-                           log,
-                           Precedence.stab_op_bp() + 1
-                         ) do
+                   with {:ok, kw_list, state, log} <-
+                          Keywords.parse_kw_no_parens_call_with_min_bp(
+                            state,
+                            Context.matched_expr(),
+                            log,
+                            Precedence.stab_op_bp() + 1
+                          ) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
                       {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -1054,11 +1092,11 @@ defmodule ToxicParser.Grammar.Stabs do
                   parse_stab_pattern_exprs_quoted_kw_continuation(expr, acc, state, log)
 
                 true ->
-                  parse_stab_pattern_exprs([expr | acc], state, :matched, log)
+                  parse_stab_pattern_exprs([expr | acc], state, Context.matched_expr(), log)
               end
 
             _ ->
-              parse_stab_pattern_exprs([expr | acc], state, :matched, log)
+              parse_stab_pattern_exprs([expr | acc], state, Context.matched_expr(), log)
           end
 
         {:ok, %{kind: :stab_op}, _} ->
@@ -1093,7 +1131,7 @@ defmodule ToxicParser.Grammar.Stabs do
                     with {:ok, more_kw, state, log} <-
                            Keywords.parse_kw_no_parens_call_with_min_bp(
                              state,
-                             :matched,
+                             Context.matched_expr(),
                              log,
                              Precedence.stab_op_bp() + 1
                            ) do
@@ -1139,18 +1177,24 @@ defmodule ToxicParser.Grammar.Stabs do
       # Container tokens - parse container base then continue with led at min_bp
       # Use parse_container_base which doesn't call Pratt.led internally
       {:ok, %{kind: kind}, _} when kind in [:"{", :"[", :"<<"] ->
-        with {:ok, ast, state, log} <- Containers.parse_container_base(state, :matched, log) do
+        with {:ok, ast, state, log} <-
+               Containers.parse_container_base(state, Context.matched_expr(), log) do
           # Continue with led to handle trailing operators
-          Pratt.led(ast, state, log, @stab_pattern_min_bp, :matched)
+          Pratt.led(ast, state, log, @stab_pattern_min_bp, Context.matched_expr())
         end
 
       # Map literal %{} or struct %Name{}
       {:ok, %{kind: kind}, _} when kind in [:%{}, :%] ->
-        Maps.parse_map(state, :matched, log, @stab_pattern_min_bp)
+        Maps.parse_map(state, Context.matched_expr(), log, @stab_pattern_min_bp)
 
       # Other tokens - use Pratt parser with min_bp to stop before ->
       _ ->
-        case Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+        case Pratt.parse_with_min_bp(
+               state,
+               Context.matched_expr(),
+               log,
+               @stab_pattern_min_bp
+             ) do
           {:ok, ast, state, log} ->
             {:ok, ast, state, log}
 
@@ -1159,7 +1203,12 @@ defmodule ToxicParser.Grammar.Stabs do
             state = EOE.skip(state)
 
             with {:ok, value_ast, state, log} <-
-                   Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+                   Pratt.parse_with_min_bp(
+                     state,
+                     Context.matched_expr(),
+                     log,
+                     @stab_pattern_min_bp
+                   ) do
               {:ok, [{key_atom, value_ast}], state, log}
             end
 
@@ -1167,7 +1216,12 @@ defmodule ToxicParser.Grammar.Stabs do
             state = EOE.skip(state)
 
             with {:ok, value_ast, state, log} <-
-                   Pratt.parse_with_min_bp(state, :matched, log, @stab_pattern_min_bp) do
+                   Pratt.parse_with_min_bp(
+                     state,
+                     Context.matched_expr(),
+                     log,
+                     @stab_pattern_min_bp
+                   ) do
               key_ast =
                 Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
 
@@ -1230,7 +1284,12 @@ defmodule ToxicParser.Grammar.Stabs do
             # For `fn x when e->;e -> 1 end`, after `;` we have `e -> 1` which is a new clause
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-            case try_parse_stab_clause(checkpoint_state, :unmatched, log, terminator) do
+            case try_parse_stab_clause(
+                   checkpoint_state,
+                   Context.unmatched_expr(),
+                   log,
+                   terminator
+                 ) do
               {:ok, _clause, _state2, _log2} ->
                 # This is a new stab clause - return just nil, rewind state
                 {:ok, nil_ast, TokenAdapter.rewind(checkpoint_state, ref), log}
@@ -1239,17 +1298,31 @@ defmodule ToxicParser.Grammar.Stabs do
                 # Not a stab clause - parse as more body expressions
                 state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
 
-                with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+                with {:ok, next_expr, state, log} <-
+                       Expressions.expr(state, Context.unmatched_expr(), log) do
                   # Now collect more expressions (if any), starting with [next_expr, nil_ast]
-                  collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+                  collect_stab_body_exprs(
+                    [next_expr, nil_ast],
+                    state,
+                    Context.unmatched_expr(),
+                    log,
+                    terminator
+                  )
                 end
 
               {:error, _diag, _state2, _log2} ->
                 # Error - parse as more body expressions
                 state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
 
-                with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
-                  collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+                with {:ok, next_expr, state, log} <-
+                       Expressions.expr(state, Context.unmatched_expr(), log) do
+                  collect_stab_body_exprs(
+                    [next_expr, nil_ast],
+                    state,
+                    Context.unmatched_expr(),
+                    log,
+                    terminator
+                  )
                 end
             end
 
@@ -1265,10 +1338,17 @@ defmodule ToxicParser.Grammar.Stabs do
         {:ok, nil, state, log}
 
       {:ok, _, _} ->
-        # Parse first expression - always use :unmatched in stab body to allow do-blocks
-        with {:ok, first_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+        # Parse first expression - always use unmatched context in stab body to allow do-blocks
+        with {:ok, first_expr, state, log} <-
+               Expressions.expr(state, Context.unmatched_expr(), log) do
           # Check if there are more expressions in the body
-          collect_stab_body_exprs([first_expr], state, :unmatched, log, terminator)
+          collect_stab_body_exprs(
+            [first_expr],
+            state,
+            Context.unmatched_expr(),
+            log,
+            terminator
+          )
         end
 
       {:eof, state} ->

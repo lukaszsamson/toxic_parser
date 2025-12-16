@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Strings do
   Parsing for strings, charlists, heredocs, sigils, and quoted atoms from Toxic token streams.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Expressions
 
@@ -259,7 +259,7 @@ defmodule ToxicParser.Grammar.Strings do
 
           {:ok, _, _} ->
             # EOE followed by content - parse the content as expr_list
-            case Expressions.expr_list(state, :unmatched, log) do
+            case Expressions.expr_list(state, Context.unmatched_expr(), log) do
               {:ok, expr, state, log} ->
                 case TokenAdapter.peek(state) do
                   {:ok, %{kind: :end_interpolation} = end_tok, _} ->
@@ -293,7 +293,7 @@ defmodule ToxicParser.Grammar.Strings do
         # Parse the expression inside interpolation
         # Use :unmatched context so do-blocks are consumed by inner calls
         # (e.g., "foo#{K.'a' do :ok end}bar" - the do belongs to the 'a' call)
-        case Expressions.expr_list(state, :unmatched, log) do
+        case Expressions.expr_list(state, Context.unmatched_expr(), log) do
           {:ok, expr, state, log} ->
             # Consume end_interpolation
             case TokenAdapter.peek(state) do

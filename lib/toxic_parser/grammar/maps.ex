@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Keywords}
 
@@ -84,11 +84,11 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_unary_operand(state, :matched, log) do
+        with {:ok, operand, state, log} <- parse_unary_operand(state, Context.matched_expr(), log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
           # Continue with dots/calls to handle trailing .foo or .Bar
-          Pratt.led_dots_and_calls(ast, state, log, :matched)
+          Pratt.led_dots_and_calls(ast, state, log, Context.matched_expr())
         end
 
       # Other unary ops (^, !, not, +, -, ...): precedence < dot 310
@@ -98,7 +98,8 @@ defmodule ToxicParser.Grammar.Maps do
         state = EOE.skip(state)
 
         # Parse operand with dots applied (since dot binds tighter)
-        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, :matched, log) do
+        with {:ok, operand, state, log} <-
+               parse_unary_operand_with_dots(state, Context.matched_expr(), log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
           {:ok, ast, state, log}
@@ -110,7 +111,8 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, :matched, log) do
+        with {:ok, operand, state, log} <-
+               parse_unary_operand_with_dots(state, Context.matched_expr(), log) do
           op_meta = token_meta(op_tok.metadata)
           # Calculate inner/outer metadata with column adjustment
           {outer_meta, inner_meta} =
@@ -132,7 +134,7 @@ defmodule ToxicParser.Grammar.Maps do
       # Example: %@[]{} where [] is the operand of @
       {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
         alias ToxicParser.Grammar.Containers
-        Containers.parse(state, :matched, log)
+        Containers.parse(state, Context.matched_expr(), log)
 
       _ ->
         # sub_matched_expr with dot operator and paren call support
@@ -141,7 +143,7 @@ defmodule ToxicParser.Grammar.Maps do
         #   - unquote(struct) (paren calls)
         #   - module.Foo.Bar (dotted calls)
         # But stops at { which is the struct body
-        Pratt.parse_base_with_dots_and_calls(state, :matched, log)
+        Pratt.parse_base_with_dots_and_calls(state, Context.matched_expr(), log)
     end
   end
 
@@ -383,7 +385,12 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_update_base(state, _ctx, log) do
     # Use min_bp above pipe_op (70) to stop before |.
     # This ensures that in %{base | entries}, we parse base correctly.
-    case Pratt.parse_with_min_bp(state, :unmatched, log, Precedence.pipe_op_bp() + 1) do
+    case Pratt.parse_with_min_bp(
+           state,
+           Context.unmatched_expr(),
+           log,
+           Precedence.pipe_op_bp() + 1
+         ) do
       {:ok, base_expr, state, log} ->
         {:ok, base_expr, state, log}
 
@@ -693,7 +700,7 @@ defmodule ToxicParser.Grammar.Maps do
 
     # Parse the full expression - this will include => as a binary operator
     # Then extract the key/value from the rightmost => in the expression tree
-    case Pratt.parse(state, :unmatched, log) do
+    case Pratt.parse(state, Context.unmatched_expr(), log) do
       {:ok, expr, state, log} ->
         # Check if the result has => at top level or nested
         case extract_assoc(expr) do
@@ -714,7 +721,8 @@ defmodule ToxicParser.Grammar.Maps do
         # Skip EOE (newlines) after the colon before parsing value
         state = EOE.skip(state)
 
-        with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
+        with {:ok, value_ast, state, log} <-
+               Expressions.expr(state, Context.unmatched_expr(), log) do
           {:ok, {key_atom, value_ast}, state, log}
         end
 
@@ -723,7 +731,8 @@ defmodule ToxicParser.Grammar.Maps do
         # Skip EOE (newlines) after the colon before parsing value
         state = EOE.skip(state)
 
-        with {:ok, value_ast, state, log} <- Expressions.expr(state, :unmatched, log) do
+        with {:ok, value_ast, state, log} <-
+               Expressions.expr(state, Context.unmatched_expr(), log) do
           key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
           {:ok, {key_ast, value_ast}, state, log}
         end

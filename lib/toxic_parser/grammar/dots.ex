@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Dots do
   Dot expression parsing helpers (`foo.bar`, `Foo.Bar`, `foo.(...)`, `foo.()`).
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
@@ -299,7 +299,8 @@ defmodule ToxicParser.Grammar.Dots do
           # Skip leading EOE and count newlines
           {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-          with {:ok, args, state, log} <- parse_paren_args([], state, :matched, log),
+          with {:ok, args, state, log} <-
+                 parse_paren_args([], state, Context.matched_expr(), log),
                {:ok, close_meta, trailing_newlines, state} <-
                  Meta.consume_closing(state, :")") do
             total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
@@ -373,7 +374,8 @@ defmodule ToxicParser.Grammar.Dots do
         cond do
           Keywords.starts_kw?(tok) ->
             # Keyword argument like foo: 1 - parse entire keyword list
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, :unmatched, log) do
+            with {:ok, kw_list, state, log} <-
+                   Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
               {:ok, [kw_list | acc], state, log}
             end
 
@@ -391,7 +393,7 @@ defmodule ToxicParser.Grammar.Dots do
             # can consume their do-blocks. This is correct because when inside parens,
             # the do-block clearly belongs to the inner expression, not an outer call.
             # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
-            with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
+            with {:ok, arg, state, log} <- Expressions.expr(state, Context.unmatched_expr(), log) do
               # Skip EOE after arg before checking for comma
               state = EOE.skip(state)
 
@@ -410,7 +412,7 @@ defmodule ToxicParser.Grammar.Dots do
                         Keywords.starts_kw?(next_tok) ->
                           # Continue collecting keywords into this list
                           with {:ok, more_kw, state, log} <-
-                                 Keywords.parse_kw_call(state, :unmatched, log) do
+                                 Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
                             merged_kw = arg ++ more_kw
                             {:ok, [merged_kw | acc], state, log}
                           end
@@ -420,11 +422,11 @@ defmodule ToxicParser.Grammar.Dots do
                           parse_paren_args_quoted_kw_continuation(arg, acc, state, log)
 
                         true ->
-                          parse_paren_args([arg | acc], state, :unmatched, log)
+                          parse_paren_args([arg | acc], state, Context.unmatched_expr(), log)
                       end
 
                     _ ->
-                      parse_paren_args([arg | acc], state, :unmatched, log)
+                      parse_paren_args([arg | acc], state, Context.unmatched_expr(), log)
                   end
 
                 _ ->
@@ -445,7 +447,7 @@ defmodule ToxicParser.Grammar.Dots do
   # Parse continuation of keyword list in paren args context when we encounter another quoted keyword
   defp parse_paren_args_quoted_kw_continuation(acc_kw, acc, state, log) do
     # Parse the quoted keyword via expression
-    case Expressions.expr(state, :unmatched, log) do
+    case Expressions.expr(state, Context.unmatched_expr(), log) do
       {:ok, expr, state, log} when is_keyword_list_result(expr) ->
         state = EOE.skip(state)
 
@@ -463,7 +465,7 @@ defmodule ToxicParser.Grammar.Dots do
                 cond do
                   Keywords.starts_kw?(tok) ->
                     with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_call(state, :unmatched, log) do
+                           Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
                       {:ok, [acc_kw ++ expr ++ more_kw | acc], state, log}
                     end
 
