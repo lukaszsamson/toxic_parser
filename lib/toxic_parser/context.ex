@@ -101,10 +101,10 @@ defmodule ToxicParser.Context do
   def normalize(_), do: matched_expr()
 
   @doc "Whether the context allows attaching do/end blocks."
-  @spec allow_do_block?(t() | :matched | :unmatched | :no_parens | nil) :: boolean()
-  def allow_do_block?(ctx), do: normalize(ctx).allow_do_block
+  @spec allow_do_block?(t()) :: boolean()
+  def allow_do_block?(%__MODULE__{} = ctx), do: ctx.allow_do_block
 
   @doc "Whether the context allows no_parens_expr extension."
-  @spec allow_no_parens_expr?(t() | :matched | :unmatched | :no_parens | nil) :: boolean()
-  def allow_no_parens_expr?(ctx), do: normalize(ctx).allow_no_parens_expr
+  @spec allow_no_parens_expr?(t()) :: boolean()
+  def allow_no_parens_expr?(%__MODULE__{} = ctx), do: ctx.allow_no_parens_expr
 end

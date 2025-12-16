@@ -59,13 +59,6 @@ defmodule ToxicParser.Pratt do
           | {:keyword_key, term(), term(), term()}
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
 
-  # Context helper functions (support both legacy atoms and Context structs)
-  defp allow_do_block?(ctx), do: Context.allow_do_block?(ctx)
-
-  defp allow_no_parens_expr?(ctx), do: Context.allow_no_parens_expr?(ctx)
-
-  defp normalize_context(ctx), do: Context.normalize(ctx)
-
   defp ensure_no_parens_extension_opt(opts) do
     allow? = Keyword.get(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
     Keyword.put(opts, :allow_no_parens_extension?, allow?)
@@ -77,9 +70,7 @@ defmodule ToxicParser.Pratt do
   Parses an expression in the given context.
   """
   @spec parse(State.t(), context(), EventLog.t()) :: result()
-  def parse(%State{} = state, context, %EventLog{} = log) do
-    context = normalize_context(context)
-
+  def parse(%State{} = state, %Context{} = context, %EventLog{} = log) do
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, left, state, log} <- nud(token, state, context, log) do
       led(left, state, log, 0, context)
@@ -98,7 +89,7 @@ defmodule ToxicParser.Pratt do
   This version does NOT check for do-blocks or no-parens call arguments.
   """
   @spec parse_base(State.t(), context(), EventLog.t()) :: result()
-  def parse_base(%State{} = state, context, %EventLog{} = log) do
+  def parse_base(%State{} = state, %Context{} = context, %EventLog{} = log) do
     context = normalize_context(context)
 
     with {:ok, token, state} <- TokenAdapter.next(state),
@@ -127,7 +118,7 @@ defmodule ToxicParser.Pratt do
   - Do-blocks: foo.bar do...end
   """
   @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
-  def parse_base_with_dots(%State{} = state, context, %EventLog{} = log) do
+  def parse_base_with_dots(%State{} = state, %Context{} = context, %EventLog{} = log) do
     context = normalize_context(context)
 
     with {:ok, token, state} <- TokenAdapter.next(state),
@@ -149,7 +140,7 @@ defmodule ToxicParser.Pratt do
   Used for struct names like `%Foo.Bar{}` and `%unquote(struct){}`.
   """
   @spec parse_base_with_dots_and_calls(State.t(), context(), EventLog.t()) :: result()
-  def parse_base_with_dots_and_calls(%State{} = state, context, %EventLog{} = log) do
+  def parse_base_with_dots_and_calls(%State{} = state, %Context{} = context, %EventLog{} = log) do
     context = normalize_context(context)
 
     with {:ok, token, state} <- TokenAdapter.next(state),
@@ -173,7 +164,7 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer(), keyword()) ::
           result()
-  def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp, opts \\ []) do
+  def parse_with_min_bp(%State{} = state, %Context{} = context, %EventLog{} = log, min_bp, opts \\ []) do
     context = normalize_context(context)
 
     # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
@@ -952,7 +943,7 @@ end
   Also used by Maps.parse_unary_operand for %@i(){} patterns.
   """
   @spec parse_paren_call_base(map(), State.t(), context(), EventLog.t()) :: result()
-  def parse_paren_call_base(callee_tok, state, context, log) do
+  def parse_paren_call_base(callee_tok, %State{} = state, %Context{} = context, %EventLog{} = log) do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
@@ -977,7 +968,7 @@ end
   This is exposed for modules like Calls that need to continue parsing after
   building a call expression.
   """
-  def led(left, state, log, min_bp, context, opts \\ []) do
+  def led(left, %State{} = state, %EventLog{} = log, min_bp, %Context{} = context, opts \\ []) do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
@@ -2302,7 +2293,7 @@ end
   Also used by Maps.parse_map_base_expr for unary operators in struct context.
   """
   @spec led_dots_and_calls(Macro.t(), State.t(), EventLog.t(), context()) :: result()
-  def led_dots_and_calls(left, state, log, context) do
+  def led_dots_and_calls(left, %State{} = state, %EventLog{} = log, %Context{} = context) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :dot_op} = _dot_tok, _} ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)

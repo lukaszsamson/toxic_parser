@@ -31,8 +31,8 @@ defmodule ToxicParser.Grammar do
 
   @doc "Entry point for already-initialized parser state."
   @spec parse(State.t(), EventLog.t(), Pratt.context()) :: result()
-  def parse(%State{} = state, %EventLog{} = log, ctx \\ Context.expr()) do
-    Expressions.expr_list(state, Context.normalize(ctx), log)
+  def parse(%State{} = state, %EventLog{} = log, %Context{} = ctx \\ Context.expr()) do
+    Expressions.expr_list(state, ctx, log)
   end
 
   defp zero_meta do

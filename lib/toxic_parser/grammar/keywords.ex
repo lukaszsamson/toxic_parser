@@ -47,7 +47,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
   @doc "Parses a keyword list usable in call argument position."
   @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_kw_call(%State{} = state, ctx, %EventLog{} = log) do
+  def parse_kw_call(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # kw_call in elixir_parser.yrl ultimately parses kw_eol container_expr
     # (container_expr allows do-blocks but not no_parens extension).
     parse_kw_list([], state, ctx, log, 0, Context.container_expr())
@@ -56,13 +56,13 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list with a minimum binding power constraint."
   @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
           result()
-  def parse_kw_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
+  def parse_kw_call_with_min_bp(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
     parse_kw_list([], state, ctx, log, min_bp, Context.container_expr())
   end
 
   @doc "Parses a keyword list usable in no-parens call argument position (call_args_no_parens_kw)."
   @spec parse_kw_no_parens_call(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_kw_no_parens_call(%State{} = state, ctx, %EventLog{} = log) do
+  def parse_kw_no_parens_call(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # call_args_no_parens_kw_expr in elixir_parser.yrl parses kw_eol matched_expr.
     # We use kw_no_parens_value to allow no_parens extension but not do-blocks.
     parse_kw_list([], state, ctx, log, 0, Context.kw_no_parens_value())
@@ -76,13 +76,13 @@ defmodule ToxicParser.Grammar.Keywords do
           non_neg_integer()
         ) ::
           result()
-  def parse_kw_no_parens_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
+  def parse_kw_no_parens_call_with_min_bp(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
     parse_kw_list([], state, ctx, log, min_bp, Context.kw_no_parens_value())
   end
 
   @doc "Parses a keyword list usable in data (container) position."
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_kw_data(%State{} = state, ctx, %EventLog{} = log) do
+  def parse_kw_data(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # Data/container context allows do-blocks but not no_parens extension.
     parse_kw_list([], state, ctx, log, 0, Context.container_expr())
   end

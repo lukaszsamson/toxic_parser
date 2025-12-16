@@ -12,7 +12,7 @@ defmodule ToxicParser.Grammar.Maps do
           | {:error, term(), State.t(), EventLog.t()}
 
   @spec parse_map(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse_map(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse_map(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     with {:ok, ast, state, log} <- parse_map_base(state, ctx, log) do
       # Continue with Pratt.led to handle trailing operators
       Pratt.led(ast, state, log, min_bp, ctx)

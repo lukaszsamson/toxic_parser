@@ -26,7 +26,7 @@ defmodule ToxicParser.Grammar.Blocks do
   are just normal function calls with do-blocks and are handled by Calls.parse.
   """
   @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log) do
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :fn} = tok, _} ->
         parse_fn(tok, state, ctx, log)
@@ -71,7 +71,7 @@ defmodule ToxicParser.Grammar.Blocks do
   @spec parse_do_block(State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, {keyword(), keyword(Macro.t())}, State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
-  def parse_do_block(state, ctx, log) do
+  def parse_do_block(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: :do, metadata: do_meta}, state} ->
         log = enter_scope(log, :do_block, do_meta)

@@ -22,7 +22,7 @@ defmodule ToxicParser.Grammar.Strings do
              EventLog.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in @simple_string_start ->
         parse_simple_string(state, ctx, log, min_bp, opts)

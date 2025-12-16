@@ -22,7 +22,7 @@ defmodule ToxicParser.Grammar.Expressions do
   - grammar -> eoe expr_list eoe : build_block(reverse(annotate_eoe('$3', '$2'))).
   """
   @spec expr_list(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def expr_list(%State{} = state, ctx, %EventLog{} = log) do
+  def expr_list(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # If input is empty (or only EOE), return empty block early
     {state, leading_eoe_meta} = EOE.skip_with_meta(state)
 
@@ -58,8 +58,7 @@ defmodule ToxicParser.Grammar.Expressions do
   Dispatches to the Pratt parser based on expression context.
   """
   @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def expr(%State{} = state, ctx, %EventLog{} = log) do
-    ctx = Context.normalize(ctx)
+  def expr(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     parse_with_layers(state, ctx, log)
   end
 
@@ -81,7 +80,7 @@ defmodule ToxicParser.Grammar.Expressions do
     parse_with_layers(state, Context.no_parens_expr(), log)
   end
 
-  defp parse_with_layers(state, ctx, log) do
+  defp parse_with_layers(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case Blocks.parse(state, ctx, log) do
       {:ok, ast, state, log} ->
         # Continue with led() to handle trailing binary operators like `fn -> a end ** b`
@@ -265,9 +264,7 @@ defmodule ToxicParser.Grammar.Expressions do
   # In paren calls (allow_do_block: true), use container_expr which allows do-blocks.
   # In no-parens calls (allow_do_block: false), use kw_no_parens_value to prevent
   # do-blocks from attaching to the keyword value (they belong to outer call).
-  defp keyword_value_context(ctx) do
-    ctx = Context.normalize(ctx)
-
+  defp keyword_value_context(%Context{} = ctx) do
     case ctx.allow_do_block do
       true -> Context.container_expr()
       false -> Context.kw_no_parens_value()

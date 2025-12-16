@@ -13,7 +13,7 @@ defmodule ToxicParser.Grammar.Containers do
           | {:no_container, State.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
         parse_paren(state, ctx, log, min_bp)
@@ -49,7 +49,7 @@ defmodule ToxicParser.Grammar.Containers do
   Used when the caller needs to control operator binding (e.g., stab patterns).
   """
   @spec parse_container_base(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_container_base(%State{} = state, ctx, %EventLog{} = log) do
+  def parse_container_base(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"["}, _} ->
         parse_list_base(state, ctx, log)

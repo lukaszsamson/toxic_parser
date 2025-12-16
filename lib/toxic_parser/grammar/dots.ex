@@ -17,7 +17,7 @@ defmodule ToxicParser.Grammar.Dots do
   Expects the current peek token to be a dot operator.
   """
   @spec parse_chain(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_chain(left, %State{} = state, ctx, %EventLog{} = log) do
+  def parse_chain(left, %State{} = state, %Context{} = ctx, %EventLog{} = log) do
     {:ok, dot, state} = TokenAdapter.next(state)
     dot_meta = Builder.Helpers.token_meta(dot.metadata)
 
@@ -38,7 +38,7 @@ defmodule ToxicParser.Grammar.Dots do
   Parse a dot call `expr.(...)` when the current token is `:dot_call_op`.
   """
   @spec parse_dot_call(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_dot_call(left, %State{} = state, ctx, %EventLog{} = log) do
+  def parse_dot_call(left, %State{} = state, %Context{} = ctx, %EventLog{} = log) do
     {:ok, dot_tok, state} = TokenAdapter.next(state)
     dot_meta = Builder.Helpers.token_meta(dot_tok.metadata)
 
@@ -74,7 +74,7 @@ defmodule ToxicParser.Grammar.Dots do
   @spec parse_member(State.t(), Pratt.context(), EventLog.t(), keyword()) :: result()
   def parse_member(state, ctx, log, dot_meta \\ [])
 
-  def parse_member(%State{} = state, ctx, %EventLog{} = log, dot_meta) do
+  def parse_member(%State{} = state, %Context{} = ctx, %EventLog{} = log, dot_meta) do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         case Identifiers.classify(tok.kind) do

@@ -21,9 +21,7 @@ defmodule ToxicParser.Grammar.Calls do
   non-call forms and wraps bare identifiers as AST.
   """
   @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log) do
-    ctx = Context.normalize(ctx)
-
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do
@@ -351,7 +349,7 @@ defmodule ToxicParser.Grammar.Calls do
   with binding power < min_bp. This is essential for proper precedence handling
   in contexts like stab clauses where we must stop before `->`.
   """
-  def parse_no_parens_args(acc, state, ctx, log, min_bp \\ 0) do
+  def parse_no_parens_args(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
         {:ok, Enum.reverse(acc), state, log}
@@ -475,7 +473,7 @@ defmodule ToxicParser.Grammar.Calls do
   Optional `min_bp` parameter (default 0) is threaded through to argument parsing.
   """
   @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse_without_led(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse_without_led(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do

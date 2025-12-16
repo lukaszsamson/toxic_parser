@@ -7,7 +7,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @spec expect(State.t(), atom()) :: {:ok, atom(), State.t()} | {:error, term(), State.t()}
-  def expect(state, kind) do
+  def expect(%State{} = state, kind) do
     case TokenAdapter.next(state) do
       {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
       {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
@@ -18,7 +18,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
-  def parse_paren_args(acc, state, _ctx, log) do
+  def parse_paren_args(acc, %State{} = state, %Context{}, log) do
     # Skip EOE before checking for close paren or next arg
     state = EOE.skip(state)
 

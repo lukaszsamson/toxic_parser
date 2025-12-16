@@ -12,7 +12,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
           | {:error, term(), State.t(), EventLog.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     with {:ok, ast, state, log} <- parse_base(state, ctx, log) do
       Pratt.led(ast, state, log, min_bp, ctx)
     end
@@ -23,7 +23,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   Used when caller controls led binding (e.g., in stab patterns).
   """
   @spec parse_base(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_base(%State{} = state, ctx, %EventLog{} = log) do
+  def parse_base(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 

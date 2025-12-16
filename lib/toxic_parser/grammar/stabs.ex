@@ -13,7 +13,7 @@ defmodule ToxicParser.Grammar.Stabs do
   @stab_pattern_min_bp Precedence.stab_op_bp() + 1
 
   # After leading semicolon: either close paren (empty) or stab content
-  def parse_paren_stab_or_empty(open_meta, state, ctx, log, min_bp) do
+  def parse_paren_stab_or_empty(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"} = close_tok, _} ->
         # (;) -> empty stab with semicolon
@@ -33,7 +33,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse stab expressions inside parens
   # min_bp controls whether to continue with led() for trailing operators
-  def parse_paren_stab(open_meta, state, ctx, log, min_bp) do
+  def parse_paren_stab(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
       state = EOE.skip(state)
 
@@ -94,7 +94,7 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Try to parse stab_parens_many: ((args) -> expr) or ((args) when g -> expr)
-  def try_parse_stab_parens_many(open_meta, state, ctx, log, min_bp, fallback_fun) do
+  def try_parse_stab_parens_many(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp, fallback_fun) do
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
     # Consume the inner open paren
@@ -164,7 +164,7 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Try parsing as stab or fallback to expression
-  def try_parse_stab_or_expr(_open_meta, state, ctx, log, min_bp, fallback_fun) do
+  def try_parse_stab_or_expr(_open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp, fallback_fun) do
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
     case try_parse_stab_clause(checkpoint_state, ctx, log) do
@@ -614,7 +614,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Try to parse a stab clause, returning {:not_stab, ...} if it's not a stab
   # Default terminator is :) for paren stabs
-  def try_parse_stab_clause(state, ctx, log) do
+  def try_parse_stab_clause(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     try_parse_stab_clause(state, ctx, log, :")")
   end
 
@@ -623,7 +623,7 @@ defmodule ToxicParser.Grammar.Stabs do
   Returns {:ok, clause, state, log}, {:not_stab, state, log}, or {:error, ...}
   Exported for use by fn parsing.
   """
-  def try_parse_stab_clause(state, ctx, log, terminator) do
+  def try_parse_stab_clause(%State{} = state, %Context{} = ctx, %EventLog{} = log, terminator) do
     # Parse the pattern part first
     case parse_stab_patterns([], state, ctx, log) do
       # 5-tuple: patterns with parens metadata (from stab_parens_many)
@@ -1236,7 +1236,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse the body of a stab clause (expression or nil if empty)
   # Default terminator is :) for paren stabs
-  def parse_stab_body(state, ctx, log) do
+  def parse_stab_body(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     parse_stab_body(state, ctx, log, :")")
   end
 
@@ -1250,7 +1250,7 @@ defmodule ToxicParser.Grammar.Stabs do
   - A block identifier (e.g., :else, :rescue)
   - The start of a new stab clause (detected by trying to parse and seeing ->)
   """
-  def parse_stab_body(state, _ctx, log, terminator) do
+  def parse_stab_body(%State{} = state, %Context{}, %EventLog{} = log, terminator) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: ^terminator}, _} ->
         # Empty body at terminator - return nil
@@ -1521,7 +1521,7 @@ defmodule ToxicParser.Grammar.Stabs do
   """
   @spec parse_stab_eoe_until(list(), State.t(), Pratt.context(), EventLog.t(), atom()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
-  def parse_stab_eoe_until(acc, state, ctx, log, terminator) do
+  def parse_stab_eoe_until(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, terminator) do
     # Checkpoint before trying stab clause - we may need to rewind if not a stab
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
