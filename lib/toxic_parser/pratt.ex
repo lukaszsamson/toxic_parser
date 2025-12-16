@@ -741,6 +741,13 @@ defmodule ToxicParser.Pratt do
 
       {:ok, next_tok, _} ->
         cond do
+          # Alias followed by [ is bracket access, not a no-parens call
+          # Grammar: bracket_expr -> access_expr bracket_arg
+          # Build alias AST and let led handle the [ as bracket access
+          token.kind == :alias and next_tok.kind == :"[" ->
+            ast = Builder.Helpers.from_token(token)
+            led(ast, state, log, min_bp, context, opts)
+
           # op_identifier means tokenizer determined this is a no-parens call
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
@@ -2034,9 +2041,13 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Specialized led that handles dot operators AND paren calls, but stops at `{`.
-  # Used by parse_base_with_dots_and_calls for struct names like %Foo.Bar{} and %unquote(struct){}.
-  defp led_dots_and_calls(left, state, log, context) do
+  @doc """
+  Specialized led that handles dot operators AND paren calls, but stops at `{`.
+  Used by parse_base_with_dots_and_calls for struct names like %Foo.Bar{} and %unquote(struct){}.
+  Also used by Maps.parse_map_base_expr for unary operators in struct context.
+  """
+  @spec led_dots_and_calls(Macro.t(), State.t(), EventLog.t(), context()) :: result()
+  def led_dots_and_calls(left, state, log, context) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :dot_op} = _dot_tok, _} ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)

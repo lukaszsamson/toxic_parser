@@ -54,6 +54,13 @@ defmodule ToxicParser.Grammar.Calls do
         # Grammar: bracket_expr -> dot_bracket_identifier bracket_arg
         parse_bracket_access(tok, open_tok, state, ctx, log)
 
+      # Alias followed by [ is bracket access: A[d]
+      # Grammar: bracket_expr -> access_expr bracket_arg
+      # Push back the alias token and let Pratt.parse handle it (led_bracket will process [)
+      {:ok, %{kind: :"["}, _} when kind == :alias ->
+        state = TokenAdapter.pushback(state, tok)
+        Pratt.parse(state, ctx, log)
+
       {:ok, next_tok, _} ->
         cond do
           # op_identifier means tokenizer determined this is a no-parens call

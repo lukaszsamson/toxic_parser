@@ -69,7 +69,11 @@ defmodule ToxicParser.Grammar.Stabs do
   # Special case for unary ! and not operators with single argument
   # These get wrapped in __block__ with empty metadata instead of adding parens
   # See elixir_parser.yrl build_paren_stab: ?rearrange_uop(Op) clause
-  defp unwrap_single_non_stab_with_parens([{op, _meta, [_single_arg]} = expr], _open_meta, _close_meta)
+  defp unwrap_single_non_stab_with_parens(
+         [{op, _meta, [_single_arg]} = expr],
+         _open_meta,
+         _close_meta
+       )
        when op in [:!, :not] do
     {:__block__, [], [expr]}
   end

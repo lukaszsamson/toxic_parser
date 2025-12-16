@@ -82,19 +82,26 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
+        # For unary operators in struct base context, the operand should be just the
+        # BASE expression without dots. For example, %@0.a{} should parse as:
+        # - @ takes operand 0 (not 0.a)
+        # - Result @0 then gets .a applied to it -> (@0).a
+        # This is because @ (precedence 320) binds tighter than . (precedence 310)
+        with {:ok, operand, state, log} <- parse_unary_operand(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
-          {:ok, ast, state, log}
+          # Continue with dots/calls to handle trailing .foo or .Bar
+          Pratt.led_dots_and_calls(ast, state, log, :matched)
         end
 
       # ternary_op :"//" used as unary prefix (e.g., %//foo{})
       # Produces: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+      # Same treatment as other unary ops: parse base operand then handle dots
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_map_base_expr(state, :matched, log) do
+        with {:ok, operand, state, log} <- parse_unary_operand(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           # Calculate inner/outer metadata with column adjustment
           {outer_meta, inner_meta} =
@@ -107,7 +114,8 @@ defmodule ToxicParser.Grammar.Maps do
             end
 
           ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
-          {:ok, ast, state, log}
+          # Continue with dots/calls to handle trailing .foo or .Bar
+          Pratt.led_dots_and_calls(ast, state, log, :matched)
         end
 
       # Parenthesized expression or list/tuple/bitstring as struct base
@@ -126,6 +134,55 @@ defmodule ToxicParser.Grammar.Maps do
         #   - module.Foo.Bar (dotted calls)
         # But stops at { which is the struct body
         Pratt.parse_base_with_dots_and_calls(state, :matched, log)
+    end
+  end
+
+  # Parse the operand of a unary operator in struct base context.
+  # This parses just the BASE expression without dots.
+  # For example, in %@0.a{}, the operand of @ is just 0, not 0.a.
+  # The .a is handled separately after building the unary expression.
+  defp parse_unary_operand(state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      # For nested unary operators (e.g., %@@0.a{}), continue recursively
+      {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+          ast = {op_tok.value, op_meta, [operand]}
+          {:ok, ast, state, log}
+        end
+
+      # ternary_op :"//" used as unary prefix
+      {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+
+          {outer_meta, inner_meta} =
+            case {Keyword.get(op_meta, :line), Keyword.get(op_meta, :column)} do
+              {line, col} when is_integer(line) and is_integer(col) ->
+                {[line: line, column: col + 1], [line: line, column: col]}
+
+              _ ->
+                {op_meta, op_meta}
+            end
+
+          ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+          {:ok, ast, state, log}
+        end
+
+      # Container as operand (e.g., %@[]{} where [] is the operand)
+      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
+        alias ToxicParser.Grammar.Containers
+        Containers.parse(state, ctx, log)
+
+      # Base expression (literal, identifier, etc.) - parse without dots
+      _ ->
+        Pratt.parse_base(state, ctx, log)
     end
   end
 

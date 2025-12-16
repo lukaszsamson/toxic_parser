@@ -2711,7 +2711,8 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("[\"foo\#{A[d]}\": 1]")
     assert_conforms("A[d]..x//y")
     assert_conforms("~s\"\"\"\nfoo\#{A[d]}\n\"\"\"")
-    assert_conforms()
+    assert_conforms("%{x | foo: A[d]}")
+    assert_conforms("def foo() when A[d] do 1 end")
   end
 
   # =============================================================================
