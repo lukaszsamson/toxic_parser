@@ -1238,6 +1238,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("(;!e)")
       assert_conforms("(\n;1)")
       assert_conforms("(;1\n)")
+      assert_conforms("(;e;)")
     end
 
     test "empty_paren" do
@@ -1422,6 +1423,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("% (){}")
       assert_conforms("%@0.a{}")
       assert_conforms("%@o.f{}")
+      assert_conforms("%^t.d{}")
     end
 
     test "map update" do
@@ -1900,6 +1902,10 @@ defmodule ToxicParser.ConformanceTest do
       # block_expr -> dot_call_identifier call_args_parens call_args_parens do_block
       assert_conforms("foo()() do\nend")
       assert_conforms("foo(1)(2) do\n:ok\nend")
+    end
+
+    test "quoted no_parens call do block" do
+      assert_conforms("o?n.\"fr\" do :ok end")
     end
   end
 
@@ -2713,6 +2719,14 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("~s\"\"\"\nfoo\#{A[d]}\n\"\"\"")
     assert_conforms("%{x | foo: A[d]}")
     assert_conforms("def foo() when A[d] do 1 end")
+  end
+
+  test "ellipsis ternary" do
+    assert_conforms("x...;//y")
+  end
+
+  test "no_parens call on block" do
+    assert_conforms("foo.e ()")
   end
 
   # =============================================================================

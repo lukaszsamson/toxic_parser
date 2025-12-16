@@ -169,8 +169,9 @@ defmodule ToxicParser.Grammar.Dots do
 
         # quoted_do_identifier_end: D."foo" do...end - return as call AST, do-block parsed by caller
         end_kind == :quoted_do_identifier_end ->
-          # Return as call expression {atom, meta, []} so caller can attach do-block
-          {:ok, {atom, meta_with_delimiter, []}, state, log}
+          # Return as call expression {atom, meta, []} with no_parens: true for do-block attachment
+          meta_with_no_parens = [{:no_parens, true} | meta_with_delimiter]
+          {:ok, {atom, meta_with_no_parens, []}, state, log}
 
         # quoted_paren_identifier_end or ( immediately follows: D."foo"()
         end_kind == :quoted_paren_identifier_end or

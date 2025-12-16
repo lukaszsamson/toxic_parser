@@ -78,15 +78,12 @@ defmodule ToxicParser.Grammar.Maps do
   # dot operators for alias chaining but does NOT consume {} as call arguments.
   defp parse_map_base_expr(state, _ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind} = _tok, _} when kind in [:at_op, :unary_op, :ellipsis_op, :dual_op] ->
+      # Special case for @ (at_op): precedence 320 > dot 310
+      # So @0.a should be (@0).a - @ takes just the base, then . applies
+      {:ok, %{kind: :at_op} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        # For unary operators in struct base context, the operand should be just the
-        # BASE expression without dots. For example, %@0.a{} should parse as:
-        # - @ takes operand 0 (not 0.a)
-        # - Result @0 then gets .a applied to it -> (@0).a
-        # This is because @ (precedence 320) binds tighter than . (precedence 310)
         with {:ok, operand, state, log} <- parse_unary_operand(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
@@ -94,14 +91,26 @@ defmodule ToxicParser.Grammar.Maps do
           Pratt.led_dots_and_calls(ast, state, log, :matched)
         end
 
+      # Other unary ops (^, !, not, +, -, ...): precedence < dot 310
+      # So ^t.d should be ^(t.d) - dots are part of the operand
+      {:ok, %{kind: kind} = _tok, _} when kind in [:unary_op, :ellipsis_op, :dual_op] ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        # Parse operand with dots applied (since dot binds tighter)
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, :matched, log) do
+          op_meta = token_meta(op_tok.metadata)
+          ast = {op_tok.value, op_meta, [operand]}
+          {:ok, ast, state, log}
+        end
+
       # ternary_op :"//" used as unary prefix (e.g., %//foo{})
-      # Produces: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
-      # Same treatment as other unary ops: parse base operand then handle dots
+      # Also has precedence < dot 310, so dots are part of the operand
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
-        with {:ok, operand, state, log} <- parse_unary_operand(state, :matched, log) do
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, :matched, log) do
           op_meta = token_meta(op_tok.metadata)
           # Calculate inner/outer metadata with column adjustment
           {outer_meta, inner_meta} =
@@ -114,8 +123,7 @@ defmodule ToxicParser.Grammar.Maps do
             end
 
           ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
-          # Continue with dots/calls to handle trailing .foo or .Bar
-          Pratt.led_dots_and_calls(ast, state, log, :matched)
+          {:ok, ast, state, log}
         end
 
       # Parenthesized expression or list/tuple/bitstring as struct base
@@ -183,6 +191,68 @@ defmodule ToxicParser.Grammar.Maps do
       # Base expression (literal, identifier, etc.) - parse without dots
       _ ->
         Pratt.parse_base(state, ctx, log)
+    end
+  end
+
+  # Parse a unary operand with dots applied (for unary ops with precedence < dot).
+  # Similar to parse_unary_operand but applies dots to the base expression.
+  # Used for operators like ^, !, not where %^t.d{} should parse as %^(t.d){}.
+  defp parse_unary_operand_with_dots(state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      # Nested @ - special handling since @ binds tighter than dot
+      {:ok, %{kind: :at_op} = _tok, _} ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+          ast = {op_tok.value, op_meta, [operand]}
+          # Apply dots after @ since @ binds tighter
+          Pratt.led_dots_and_calls(ast, state, log, ctx)
+        end
+
+      # Other unary ops - recurse with dots
+      {:ok, %{kind: kind} = _tok, _} when kind in [:unary_op, :ellipsis_op, :dual_op] ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+          ast = {op_tok.value, op_meta, [operand]}
+          {:ok, ast, state, log}
+        end
+
+      # ternary_op :"//" used as unary prefix
+      {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        with {:ok, operand, state, log} <- parse_unary_operand_with_dots(state, ctx, log) do
+          op_meta = token_meta(op_tok.metadata)
+
+          {outer_meta, inner_meta} =
+            case {Keyword.get(op_meta, :line), Keyword.get(op_meta, :column)} do
+              {line, col} when is_integer(line) and is_integer(col) ->
+                {[line: line, column: col + 1], [line: line, column: col]}
+
+              _ ->
+                {op_meta, op_meta}
+            end
+
+          ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
+          {:ok, ast, state, log}
+        end
+
+      # Container as operand
+      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
+        alias ToxicParser.Grammar.Containers
+        Containers.parse(state, ctx, log)
+
+      # Base expression - parse and apply dots
+      _ ->
+        with {:ok, base, state, log} <- Pratt.parse_base(state, ctx, log) do
+          Pratt.led_dots_and_calls(base, state, log, ctx)
+        end
     end
   end
 

@@ -497,10 +497,37 @@ defmodule ToxicParser.Pratt do
 
   # Parse unary operator expression
   defp parse_unary(op_token, state, context, log, min_bp) do
-    # Skip EOE after unary operator (allows "!\ntrue")
-    # Note: Unlike binary ops, unary ops don't include newlines metadata
-    {state, _newlines} = EOE.skip_count_newlines(state, 0)
+    # For ellipsis/range operators, check for EOE terminator BEFORE skipping
+    # This ensures "x...;" correctly sees the ; as a terminator
+    # and doesn't skip it, allowing `led` to see the EOE separation
+    if op_token.kind in [:ellipsis_op, :range_op] do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :eoe}, _} ->
+          # EOE is a terminator for ellipsis/range - return standalone
+          ast = {op_token.value, build_meta(op_token.metadata), []}
+          {:ok, ast, state, log}
 
+        _ ->
+          # Not EOE, proceed with normal parsing
+          parse_unary_operand_or_standalone(op_token, state, context, log, min_bp)
+      end
+    else
+      # Skip EOE after unary operator (allows "!\ntrue")
+      # Note: Unlike binary ops, unary ops don't include newlines metadata
+      {state, _newlines} = EOE.skip_count_newlines(state, 0)
+      parse_unary_after_eoe_skip(op_token, state, context, log, min_bp)
+    end
+  end
+
+  # Parse unary operand for ellipsis/range after confirming no EOE terminator
+  defp parse_unary_operand_or_standalone(op_token, state, context, log, min_bp) do
+    # Skip EOE after operator
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
+    parse_unary_after_eoe_skip(op_token, state, context, log, min_bp)
+  end
+
+  # Common unary parsing logic after EOE is handled
+  defp parse_unary_after_eoe_skip(op_token, state, context, log, min_bp) do
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
         # Special case: ... and .. followed by pure binary operator or terminator should be standalone
@@ -1009,6 +1036,19 @@ defmodule ToxicParser.Pratt do
             end
 
           case TokenAdapter.peek(state) do
+            # When ( follows a dot member that was already a call (allows_bracket = true),
+            # it's a nested paren call: foo.bar()()
+            # When ( follows a simple identifier (allows_bracket = false), it means there's
+            # whitespace before (, so ( starts a no-parens argument: foo.e ()
+            {:ok, %{kind: :"("}, _} when not allows_bracket ->
+              with {:ok, args, state, log} <-
+                     Calls.parse_no_parens_args([], state, context, log) do
+                combined = dot_to_no_parens_call(combined, args)
+                # Check for do-blocks after no-parens call: foo.bar () do...end
+                maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+              end
+
+            # Nested paren call: foo.bar()() - rhs was already a call (allows_bracket = true)
             {:ok, %{kind: :"("}, _} ->
               {:ok, _open, state} = TokenAdapter.next(state)
               # Skip leading EOE and count newlines

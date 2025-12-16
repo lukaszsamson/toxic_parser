@@ -1426,7 +1426,16 @@ defmodule ToxicParser.Grammar.Stabs do
         if terminator == :")" do
           # Could be just an expression (stab_expr -> expr)
           with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-            {:ok, collect_stab([expr | acc]), state, log}
+            # Check for trailing EOE and annotate expression if present
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :eoe} = eoe_tok, _} ->
+                eoe_meta = EOE.build_eoe_meta(eoe_tok)
+                annotated = EOE.annotate_eoe(expr, eoe_meta)
+                {:ok, collect_stab([annotated | acc]), state, log}
+
+              _ ->
+                {:ok, collect_stab([expr | acc]), state, log}
+            end
           end
         else
           # fn requires stab - but check for empty clauses list
