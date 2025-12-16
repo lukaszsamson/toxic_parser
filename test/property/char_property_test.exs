@@ -10,7 +10,7 @@ defmodule ToxicParser.CharPropertyTest do
     columns: true,
     token_metadata: true,
     emit_warnings: false,
-    existing_atoms_only: true
+    existing_atoms_only: false
   ]
 
   # Character set for generating random code fragments
@@ -1138,7 +1138,7 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true, existing_atoms_only: false) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end

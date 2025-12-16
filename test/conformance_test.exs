@@ -1235,6 +1235,7 @@ defmodule ToxicParser.ConformanceTest do
 
       assert_conforms("(;1)")
       assert_conforms("(;d)")
+      assert_conforms("(;!e)")
       assert_conforms("(\n;1)")
       assert_conforms("(;1\n)")
     end
@@ -1419,6 +1420,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%!(){}")
       assert_conforms("%@[]{}")
       assert_conforms("% (){}")
+      assert_conforms("%@0.a{}")
+      assert_conforms("%@o.f{}")
     end
 
     test "map update" do
@@ -2700,6 +2703,15 @@ defmodule ToxicParser.ConformanceTest do
 
   test "ternary after range" do
     assert_conforms("x..0;//y")
+  end
+
+  test "bracket on alias" do
+    assert_conforms("x = A[d]")
+    assert_conforms("&A[d]")
+    assert_conforms("[\"foo\#{A[d]}\": 1]")
+    assert_conforms("A[d]..x//y")
+    assert_conforms("~s\"\"\"\nfoo\#{A[d]}\n\"\"\"")
+    assert_conforms()
   end
 
   # =============================================================================
