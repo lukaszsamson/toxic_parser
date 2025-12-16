@@ -239,6 +239,56 @@ defmodule ToxicParser.Grammar.Strings do
         interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
         {:ok, interp_ast, state, log}
 
+      {:ok, %{kind: :eoe} = eoe_tok, _} ->
+        # Interpolation starting with EOE (e.g., #{;})
+        # In Elixir grammar: grammar -> eoe : {'__block__', meta_from_token('$1'), []}.
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        eoe_meta = token_to_meta(eoe_tok.metadata)
+        # Skip any additional EOE
+        alias ToxicParser.Grammar.EOE
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :end_interpolation} = end_tok, _} ->
+            # Just EOE before close - empty block with EOE metadata
+            {:ok, _end, state} = TokenAdapter.next(state)
+            close_meta = token_to_meta(end_tok.metadata)
+            empty_block = {:__block__, eoe_meta, []}
+            interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
+            {:ok, interp_ast, state, log}
+
+          {:ok, _, _} ->
+            # EOE followed by content - parse the content as expr_list
+            case Expressions.expr_list(state, :unmatched, log) do
+              {:ok, expr, state, log} ->
+                case TokenAdapter.peek(state) do
+                  {:ok, %{kind: :end_interpolation} = end_tok, _} ->
+                    {:ok, _end, state} = TokenAdapter.next(state)
+                    close_meta = token_to_meta(end_tok.metadata)
+                    interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
+                    {:ok, interp_ast, state, log}
+
+                  {:ok, tok, _} ->
+                    {:error, {:expected_end_interpolation, tok.kind}, state, log}
+
+                  {:eof, state} ->
+                    {:error, :unexpected_eof, state, log}
+
+                  {:error, diag, state} ->
+                    {:error, diag, state, log}
+                end
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
+            end
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
       _ ->
         # Parse the expression inside interpolation
         # Use :unmatched context so do-blocks are consumed by inner calls

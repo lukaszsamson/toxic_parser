@@ -382,6 +382,16 @@ defmodule ToxicParser.ConformanceTest do
     end
   end
 
+  test "nested grammar in interpolation" do
+    assert_conforms("'asd\#{}ppp'")
+    assert_conforms("'asd\#{;}ppp'")
+    assert_conforms("'asd\#{\n}ppp'")
+    assert_conforms("'asd\#{\n;}ppp'")
+    assert_conforms("'asd\#{a;}ppp'")
+    assert_conforms("'asd\#{;a}ppp'")
+    assert_conforms("'asd\#{a;b}ppp'")
+  end
+
   describe "terminals - identifiers (identifier)" do
     test "simple identifier" do
       assert_conforms("foo")
@@ -984,6 +994,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn 1 -> 2;3 -> 4 end")
       assert_conforms("fn 1 -> 2\n;3 -> 4 end")
 
+      assert_conforms("fn 1 -> ;fs end")
+
       # stab_expr -> expr
       # this case is an error
       # stab_expr -> stab_op_eol_and_expr
@@ -1218,6 +1230,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("(;)")
       assert_conforms("(\n;)")
       assert_conforms("(;\n)")
+
+      assert_conforms("(;1)")
+      assert_conforms("(\n;1)")
+      assert_conforms("(;1\n)")
     end
 
     test "empty_paren" do
@@ -1391,6 +1407,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%//\nfoo{}")
 
       assert_conforms("%...foo{}")
+      assert_conforms("%''{}")
+      assert_conforms("%\"\"{}")
     end
 
     test "map update" do
@@ -1409,6 +1427,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{if foo do\n:ok\nend | a: 1, 'b': 2}")
       assert_conforms("%{if foo do\n:ok\nend | :a => 1, b: 2}")
       assert_conforms("%{if foo do\n:ok\nend | :a => 1, 'b': 2}")
+      assert_conforms("%{'' | x: y}")
     end
 
     test "struct update" do
@@ -2654,6 +2673,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("x \\\\ y")
       assert_conforms("1..10//2 + 3")
     end
+  end
+
+  test "ternary after range" do
+    assert_conforms("x..0;//y")
   end
 
   # =============================================================================

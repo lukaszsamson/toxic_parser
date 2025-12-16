@@ -39,8 +39,11 @@ defmodule ToxicParser.Grammar.Stabs do
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"}, state} ->
+          # Unwrap single plain expression (not stab clause) from list
+          # This handles cases like (;1) where we have a plain expr after semicolon
+          result = unwrap_single_non_stab(clauses)
           # Continue with Pratt.led to handle trailing operators like |
-          Pratt.led(clauses, state, log, min_bp, ctx)
+          Pratt.led(result, state, log, min_bp, ctx)
 
         {:ok, token, state} ->
           {:error, {:expected, :")", got: token.kind}, state, log}
@@ -53,6 +56,13 @@ defmodule ToxicParser.Grammar.Stabs do
       end
     end
   end
+
+  # Unwrap a single non-stab expression from a list
+  # Stab clauses are kept as lists: [{:->, ...}]
+  # Plain expressions are unwrapped: [1] -> 1
+  defp unwrap_single_non_stab([{:->, _, _} | _] = stabs), do: stabs
+  defp unwrap_single_non_stab([single]), do: single
+  defp unwrap_single_non_stab(other), do: other
 
   # Try to parse stab_parens_many: ((args) -> expr) or ((args) when g -> expr)
   def try_parse_stab_parens_many(open_meta, state, ctx, log, min_bp, fallback_fun) do
@@ -151,8 +161,8 @@ defmodule ToxicParser.Grammar.Stabs do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
 
-    # Skip EOE after stab and count newlines
-    {state, newlines} = EOE.skip_count_newlines(state, 0)
+    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+    {state, newlines} = EOE.skip_newlines_only(state, 0)
     newlines_meta = Meta.newlines_meta(newlines)
 
     # Parse body (or empty if just ->)
@@ -184,8 +194,8 @@ defmodule ToxicParser.Grammar.Stabs do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
-          # Skip EOE after stab and count newlines
-          {state, newlines} = EOE.skip_count_newlines(state, 0)
+          # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+          {state, newlines} = EOE.skip_newlines_only(state, 0)
           newlines_meta = Meta.newlines_meta(newlines)
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -292,8 +302,8 @@ defmodule ToxicParser.Grammar.Stabs do
        ) do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
-    # Skip EOE after stab and count newlines
-    {state, newlines} = EOE.skip_count_newlines(state, 0)
+    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+    {state, newlines} = EOE.skip_newlines_only(state, 0)
     newlines_meta = Meta.newlines_meta(newlines)
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -330,8 +340,8 @@ defmodule ToxicParser.Grammar.Stabs do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :stab_op} = stab_tok, state} ->
           stab_base_meta = token_meta(stab_tok.metadata)
-          # Skip EOE after stab and count newlines
-          {state, newlines} = EOE.skip_count_newlines(state, 0)
+          # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+          {state, newlines} = EOE.skip_newlines_only(state, 0)
           newlines_meta = Meta.newlines_meta(newlines)
 
           with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -568,8 +578,8 @@ defmodule ToxicParser.Grammar.Stabs do
         # This is definitely a stab clause
         {:ok, _stab, state} = TokenAdapter.next(state)
         stab_base_meta = token_meta(stab_tok.metadata)
-        # Skip EOE after stab and count newlines
-        {state, newlines} = EOE.skip_count_newlines(state, 0)
+        # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+        {state, newlines} = EOE.skip_newlines_only(state, 0)
 
         stab_meta =
           if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
@@ -613,8 +623,8 @@ defmodule ToxicParser.Grammar.Stabs do
           case TokenAdapter.next(state) do
             {:ok, %{kind: :stab_op} = stab_tok, state} ->
               stab_base_meta = token_meta(stab_tok.metadata)
-              # Skip EOE after stab and count newlines
-              {state, newlines} = EOE.skip_count_newlines(state, 0)
+              # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+              {state, newlines} = EOE.skip_newlines_only(state, 0)
 
               stab_meta =
                 if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
@@ -1146,9 +1156,37 @@ defmodule ToxicParser.Grammar.Stabs do
         # Empty body at terminator - return nil
         {:ok, nil, state, log}
 
-      {:ok, %{kind: :eoe}, _} ->
-        # Empty body at EOE - return nil
-        {:ok, nil, state, log}
+      {:ok, %{kind: :eoe} = eoe_tok, _} ->
+        # Leading EOE means the first expression is nil (empty before semicolon)
+        # Handle cases like: `fn 1 -> ;fs end` where body is `{:__block__, [], [nil, fs]}`
+        # Consume EOE
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        # Build the nil with line/column from the EOE token
+        nil_ast = handle_literal_nil_from_eoe(eoe_tok)
+        state = EOE.skip(state)
+
+        # Check what's next after EOE
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: ^terminator}, _} ->
+            # Just semicolon before terminator - return nil
+            {:ok, nil_ast, state, log}
+
+          {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
+            {:ok, nil_ast, state, log}
+
+          {:ok, _, _} ->
+            # More content after leading semicolon - parse next expression and collect
+            with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+              # Now collect more expressions (if any), starting with [next_expr, nil_ast]
+              collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+            end
+
+          {:eof, state} ->
+            {:ok, nil_ast, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
 
       # For :end terminator, also stop at block identifiers (after, else, catch, rescue)
       {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
@@ -1323,17 +1361,27 @@ defmodule ToxicParser.Grammar.Stabs do
   Parse stab_eoe until a given terminator kind.
   Exported for use by fn parsing in Blocks module.
   For fn, stab is required (no fallback to plain expression).
+
+  This implements Elixir's `stab` and `collect_stab` behavior where:
+  - Multiple stab clauses and expressions can be separated by EOE
+  - Non-stab expressions that follow a stab clause are merged into that stab's body
+  - For example: `fn 1 -> ;fs end` has body {:__block__, [], [nil, fs]}
   """
   @spec parse_stab_eoe_until(list(), State.t(), Pratt.context(), EventLog.t(), atom()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_stab_eoe_until(acc, state, ctx, log, terminator) do
-    case try_parse_stab_clause(state, ctx, log, terminator) do
+    # Checkpoint before trying stab clause - we may need to rewind if not a stab
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+    case try_parse_stab_clause(checkpoint_state, ctx, log, terminator) do
       {:ok, clause, state, log} ->
+        state = TokenAdapter.drop_checkpoint(state, ref)
         state = EOE.skip(state)
 
         case TokenAdapter.peek(state) do
           {:ok, %{kind: ^terminator}, _} ->
-            {:ok, Enum.reverse([clause | acc]), state, log}
+            # acc is in reverse source order (latest first), so [clause | acc] maintains that
+            {:ok, collect_stab([clause | acc]), state, log}
 
           {:ok, _, _} ->
             parse_stab_eoe_until([clause | acc], state, ctx, log, terminator)
@@ -1345,13 +1393,16 @@ defmodule ToxicParser.Grammar.Stabs do
             {:error, diag, state, log}
         end
 
-      {:not_stab, state, log} ->
-        # For fn (terminator = :end), stab is required
+      {:not_stab, _state, log} ->
+        # Rewind and try as plain expression
+        state = TokenAdapter.rewind(checkpoint_state, ref)
+
+        # For fn (terminator = :end), stab is required as the first clause
         # For parens (terminator = :)), expression fallback is allowed
         if terminator == :")" do
           # Could be just an expression (stab_expr -> expr)
           with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-            {:ok, Enum.reverse([expr | acc]), state, log}
+            {:ok, collect_stab([expr | acc]), state, log}
           end
         else
           # fn requires stab - but check for empty clauses list
@@ -1359,8 +1410,26 @@ defmodule ToxicParser.Grammar.Stabs do
             # First "clause" isn't a stab - error
             {:error, {:expected, :stab_op, got: :expression}, state, log}
           else
-            # Already have clauses, this might be end of input
-            {:ok, Enum.reverse(acc), state, log}
+            # Already have clauses - this non-stab expression after EOE should be
+            # merged into the previous clause's body. Parse it and add to acc.
+            with {:ok, expr, state, log} <-
+                   Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
+              state = EOE.skip(state)
+
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: ^terminator}, _} ->
+                  {:ok, collect_stab([expr | acc]), state, log}
+
+                {:ok, _, _} ->
+                  parse_stab_eoe_until([expr | acc], state, ctx, log, terminator)
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+            end
           end
         end
 
@@ -1369,7 +1438,61 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
+  # Implements Elixir's collect_stab function from elixir_parser.yrl
+  # Walks through the stab list, collecting non-stab expressions that follow
+  # a stab clause and merging them into that clause's body.
+  #
+  # The input list is in REVERSE source order (latest clause first).
+  # Non-stab expressions that come BEFORE a stab in the list (which means AFTER in source)
+  # are merged into that stab's body.
+  #
+  # Example input: [fs, {:->, [[1], nil]}] (fs first, then stab)
+  # In source order: `1 -> nil ; fs` where fs follows the stab
+  # Output: [{:->, [[1], {:__block__, [], [nil, fs]}]}]
+  defp collect_stab(items) do
+    # Items are in reverse source order. Process and output in source order.
+    do_collect_stab(items, [], [])
+  end
+
+  # Walk through items (in reverse source order), collecting non-stabs
+  # When we see a stab, the collected exprs came BEFORE it in the list
+  # (which means AFTER it in source), so they get merged into its body.
+  defp do_collect_stab([{:->, meta, [left, right]} | rest], exprs, stabs) do
+    # Found a stab - merge collected exprs into its body
+    # exprs are in reverse source order too, so [right | exprs] puts right first
+    new_body = build_stab_block([right | exprs])
+    new_stab = {:->, meta, [left, new_body]}
+    # Prepend to stabs (building result in source order)
+    do_collect_stab(rest, [], [new_stab | stabs])
+  end
+
+  defp do_collect_stab([expr | rest], exprs, stabs) do
+    # Non-stab expression - collect it
+    do_collect_stab(rest, [expr | exprs], stabs)
+  end
+
+  defp do_collect_stab([], [], stabs) do
+    stabs
+  end
+
+  defp do_collect_stab([], exprs, stabs) do
+    # Remaining expressions without a stab - this shouldn't happen in valid fn
+    # but handle gracefully by returning them
+    exprs ++ stabs
+  end
+
+  # Build a block from multiple expressions, or return single expression as-is
+  defp build_stab_block([single]), do: single
+
+  defp build_stab_block(exprs) when is_list(exprs) do
+    {:__block__, [], exprs}
+  end
+
   defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
+
+  # Build nil literal for leading semicolon in stab body
+  # In Elixir's AST, nil is just a plain `nil` atom, no metadata
+  defp handle_literal_nil_from_eoe(_eoe_tok), do: nil
 
   #   %% an arg style call. unwrap_splice unwraps the splice
   defp unwrap_splice([{:__block__, _, [{:unquote_splicing, _, _}] = splice}]), do: splice

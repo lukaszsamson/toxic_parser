@@ -200,7 +200,8 @@ defmodule ToxicParser.Pratt do
         alias ToxicParser.Grammar.Strings
         Strings.parse(state, context, log, string_min_bp)
 
-      # Other string/sigil tokens - only when containers are allowed
+      # Other string/sigil tokens - always parse strings, they're not containers
+      # This allows %''{}` (struct with empty charlist) to work
       kind
       when kind in [
              :bin_string_start,
@@ -209,13 +210,9 @@ defmodule ToxicParser.Pratt do
              :list_heredoc_start,
              :sigil_start
            ] ->
-        if allow_containers do
-          state = TokenAdapter.pushback(state, token)
-          alias ToxicParser.Grammar.Strings
-          Strings.parse(state, context, log, min_bp)
-        else
-          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
-        end
+        state = TokenAdapter.pushback(state, token)
+        alias ToxicParser.Grammar.Strings
+        Strings.parse(state, context, log, min_bp)
 
       # fn tokens need to be handled by Blocks.parse unless restricted
       :fn ->
@@ -866,8 +863,15 @@ defmodule ToxicParser.Pratt do
 
       # Special case: ternary_op :"//" following range_op :".."
       # Combines into {:..//, meta, [start, stop, step]}
-      {:ternary_op, {bp, _assoc}} when bp >= min_bp ->
+      # BUT: If there's EOE between range and //, don't combine - // starts a new expression
+      # e.g., "x..0;//y" should be two expressions: x..0 and //y (not x..0//y)
+      {:ternary_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens == [] ->
         parse_ternary_op(left, state, min_bp, context, log)
+
+      # ternary_op after EOE is NOT a ternary continuation - it's unary // starting a new expr
+      {:ternary_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
 
       # dual_op (+/-) after EOE is NOT a binary operator - it starts a new expression
       # e.g., "x()\n\n-1" should be two expressions: x() and -1 (unary minus)

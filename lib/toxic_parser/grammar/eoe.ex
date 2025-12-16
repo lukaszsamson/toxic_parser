@@ -31,6 +31,24 @@ defmodule ToxicParser.Grammar.EOE do
     end
   end
 
+  @doc """
+  Skip ONLY newline EOE tokens (not semicolons).
+  Returns the state and total newline count.
+  This implements Elixir's `stab_op_eol` which only allows newlines after `->`.
+  """
+  @spec skip_newlines_only(State.t(), non_neg_integer()) :: {State.t(), non_neg_integer()}
+  def skip_newlines_only(%State{} = state, count) when is_integer(count) and count >= 0 do
+    case TokenAdapter.peek(state) do
+      # Only skip if it's an EOE from newlines, not semicolons
+      {:ok, %{kind: :eoe, value: %{source: source, newlines: n}}, _} when source != :semicolon ->
+        {:ok, _eoe, state} = TokenAdapter.next(state)
+        skip_newlines_only(state, count + n)
+
+      _ ->
+        {state, count}
+    end
+  end
+
   @spec build_eoe_meta(map()) :: keyword()
   def build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
       when is_integer(newlines) do

@@ -213,6 +213,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, update_ast, close_meta, state, log}
     else
       :not_update -> {:not_update, state}
+      {:not_update, state} -> {:not_update, state}
       {:error, _, _, _} = err -> err
     end
   end
@@ -318,10 +319,13 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
+  # Check if we should skip map update parsing and go directly to keyword/assoc parsing.
+  # Only skip for definite keywords (kw_identifier).
+  # String literals can be map update bases (e.g., %{'' | x: y}) OR keyword keys (e.g., %{"": 1}),
+  # so don't short-circuit for strings - let parse_map_update_candidate handle them via checkpoint.
   defp starts_with_kw_or_string?(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _}
-      when kind in [:kw_identifier, :bin_string_start, :list_string_start] ->
+      {:ok, %{kind: :kw_identifier}, _} ->
         true
 
       _ ->
