@@ -2,7 +2,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   @moduledoc false
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
-  alias ToxicParser.{EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
@@ -30,7 +30,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         cond do
           Keywords.starts_kw?(tok) ->
             # Inside parens, use :unmatched so do_identifiers can consume do-blocks
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, :unmatched, log) do
+            with {:ok, kw_list, state, log} <-
+                   Keywords.parse_kw_call(state, Context.container_expr(), log) do
               {:ok, [kw_list | acc], state, log}
             end
 
@@ -43,11 +44,12 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                 _ -> false
               end
 
-            # Inside parens, use :unmatched so do_identifiers (case, if, etc.)
+            # Inside parens, use container_expr so do-blocks are allowed but no_parens
+            # extensions are rejected per call_args_parens_expr grammar.
             # can consume their do-blocks. This is correct because when inside parens,
             # the do-block clearly belongs to the inner expression, not an outer call.
             # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
-            with {:ok, arg, state, log} <- Expressions.expr(state, :unmatched, log) do
+            with {:ok, arg, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
               # Skip EOE after arg before checking for comma
               state = EOE.skip(state)
 
@@ -66,16 +68,16 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                         # Continue collecting keywords into this list
                         # This handles both standard keywords (foo:) and quoted keywords ("foo":)
                         with {:ok, more_kw, state, log} <-
-                               Keywords.parse_kw_call(state, :unmatched, log) do
+                                Keywords.parse_kw_call(state, Context.container_expr(), log) do
                           merged_kw = arg ++ more_kw
                           {:ok, [merged_kw | acc], state, log}
                         end
                       else
-                        parse_paren_args([arg | acc], state, :unmatched, log)
+                        parse_paren_args([arg | acc], state, Context.container_expr(), log)
                       end
 
                     _ ->
-                      parse_paren_args([arg | acc], state, :unmatched, log)
+                      parse_paren_args([arg | acc], state, Context.container_expr(), log)
                   end
 
                 _ ->

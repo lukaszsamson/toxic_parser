@@ -266,6 +266,19 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       code = "defmodule EEx do\nend"
       assert_conforms(code)
     end
+
+    test "double bang in cond guard keeps precedence" do
+      # From: /Users/lukaszsamson/elixir/lib/mix/lib/mix/compilers/elixir.ex:103
+      code = ~S'''
+      cond do
+        !!opts[:force] or is_nil(old_deps_config) or old_cache_key != new_cache_key or
+          (Keyword.get(opts, :check_cwd, true) and old_cwd != File.cwd!()) ->
+          {true, stale, deps_config(local_deps)}
+      end
+      '''
+
+      assert_conforms(code)
+    end
   end
 
   # Helper functions

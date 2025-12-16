@@ -186,15 +186,17 @@ defmodule ToxicParser.Grammar.Calls do
   #   bracket_arg -> open_bracket container_expr close_bracket
   #   bracket_arg -> open_bracket container_expr ',' close_bracket
   # Note: caller handles EOE skipping before calling this
-  defp parse_bracket_arg_no_skip(state, ctx, log) do
+  defp parse_bracket_arg_no_skip(state, _ctx, log) do
+    container_ctx = Context.container_expr()
+
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
           # kw_data case: [a: 1, b: 2]
-          Keywords.parse_kw_data(state, ctx, log)
+          Keywords.parse_kw_data(state, container_ctx, log)
         else
           # container_expr case
-          with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
+          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
             # Check for trailing comma (allowed by grammar)
             case TokenAdapter.peek(state) do
               {:ok, %{kind: :","}, _} ->
@@ -210,14 +212,14 @@ defmodule ToxicParser.Grammar.Calls do
                     # If so, and next is also a keyword (regular or quoted), merge them
                     cond do
                       is_keyword_list_result(expr) and Keywords.starts_kw?(kw_tok) ->
-                        with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
+                        with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, container_ctx, log) do
                           {:ok, expr ++ more_kw, state, log}
                         end
 
                       is_keyword_list_result(expr) and
                           kw_tok.kind in [:list_string_start, :bin_string_start] ->
                         # Another quoted keyword - parse it and continue
-                        parse_quoted_kw_continuation(expr, state, ctx, log)
+                        parse_quoted_kw_continuation(expr, state, container_ctx, log)
 
                       true ->
                         # Not a keyword continuation - just return expr with trailing comma consumed

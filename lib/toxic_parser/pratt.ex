@@ -66,6 +66,11 @@ defmodule ToxicParser.Pratt do
   defp allow_no_parens_expr?(%Context{allow_no_parens_expr: v}), do: v
   defp allow_no_parens_expr?(ctx) when is_atom(ctx), do: ctx == :no_parens
 
+  defp ensure_no_parens_extension_opt(opts) do
+    allow? = Keyword.get(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
+    Keyword.put(opts, :allow_no_parens_extension?, allow?)
+  end
+
   defp is_no_parens_op_expr?(kind), do: kind in @no_parens_op_expr_operators
 
   @doc """
@@ -649,7 +654,7 @@ defmodule ToxicParser.Pratt do
                 _ ->
                   case Precedence.unary(op_token.kind) do
                     {bp, _assoc} -> bp
-                    nil -> min_bp
+                    nil -> 300
                   end
               end
 
@@ -787,19 +792,22 @@ defmodule ToxicParser.Pratt do
         :sigil_start,
         :atom_unsafe_start,
         :atom_safe_start
-      ] ->
-        state = TokenAdapter.pushback(state, token)
-        alias ToxicParser.Grammar.Strings
+    ] ->
+      state = TokenAdapter.pushback(state, token)
+    alias ToxicParser.Grammar.Strings
 
-        # Call Strings.parse with min_bp to preserve operator precedence
-        Strings.parse(state, context, log, min_bp, opts)
+    # Call Strings.parse with min_bp to preserve operator precedence
+    Strings.parse(state, context, log, min_bp, opts)
 
-      true ->
-        with {:ok, right, state, log} <- nud(token, state, context, log) do
-          led(right, state, log, min_bp, context, opts)
-        end
+  true ->
+    nud_opts = Keyword.put(opts, :min_bp, min_bp)
+
+    with {:ok, right, state, log} <- nud(token, state, context, log, nud_opts) do
+      opts = ensure_no_parens_extension_opt(opts)
+      led(right, state, log, min_bp, context, opts)
     end
-  end
+end
+end
 
   # Parse identifier on RHS, handling calls while preserving min_bp for associativity
   # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
@@ -812,6 +820,7 @@ defmodule ToxicParser.Pratt do
         # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp.
         # Pass opts through so do-blocks after paren call know the context.
         with {:ok, ast, state, log} <- parse_paren_call_base(token, state, context, log) do
+          opts = ensure_no_parens_extension_opt(opts)
           maybe_nested_call_or_do_block(ast, state, log, min_bp, context, opts)
         end
 
@@ -823,9 +832,9 @@ defmodule ToxicParser.Pratt do
         state = TokenAdapter.pushback(state, token)
 
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
-          # For unary operands: ALL binary ops should attach (min_bp=0)
-          # For binary RHS: preserve min_bp for associativity
-          led_min_bp = if unary_operand, do: 0, else: min_bp
+          # Preserve min_bp so unary operands do not swallow lower-precedence operators.
+          led_min_bp = min_bp
+          opts = ensure_no_parens_extension_opt(opts)
           led(right, state, log, led_min_bp, context, opts)
         end
 
@@ -834,9 +843,9 @@ defmodule ToxicParser.Pratt do
         state = TokenAdapter.pushback(state, token)
 
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
-          # For unary operands: ALL binary ops should attach (min_bp=0)
-          # For binary RHS: preserve min_bp for associativity
-          led_min_bp = if unary_operand, do: 0, else: min_bp
+          # Preserve min_bp so unary operands do not swallow lower-precedence operators.
+          led_min_bp = min_bp
+          opts = ensure_no_parens_extension_opt(opts)
           led(right, state, log, led_min_bp, context, opts)
         end
 
@@ -847,6 +856,7 @@ defmodule ToxicParser.Pratt do
           # Build alias AST and let led handle the [ as bracket access
           token.kind == :alias and next_tok.kind == :"[" ->
             ast = Builder.Helpers.from_token(token)
+            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
 
           # op_identifier means tokenizer determined this is a no-parens call
@@ -859,12 +869,14 @@ defmodule ToxicParser.Pratt do
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
               # Preserve the original min_bp for proper associativity
+              opts = ensure_no_parens_extension_opt(opts)
               led(right, state, log, min_bp, context, opts)
             end
 
           # Binary operator follows - just return identifier, led will handle with min_bp
           bp(next_tok.kind) ->
             ast = Builder.Helpers.from_token(token)
+            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
 
           # Could be no-parens call argument - delegate to Calls
@@ -873,23 +885,24 @@ defmodule ToxicParser.Pratt do
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
-              # For unary operands: ALL binary ops should attach (min_bp=0)
-              # This ensures @spec foo() when a: term parses correctly
-              # For binary RHS: preserve min_bp for associativity
-              led_min_bp = if unary_operand, do: 0, else: min_bp
+              # Preserve min_bp so unary operands do not swallow lower-precedence operators.
+              led_min_bp = min_bp
 
+              opts = ensure_no_parens_extension_opt(opts)
               led(right, state, log, led_min_bp, context, opts)
             end
 
           # Just a bare identifier
           true ->
             ast = Builder.Helpers.from_token(token)
+            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
         end
 
       _ ->
         # EOF or error - just return identifier
         ast = Builder.Helpers.from_token(token)
+        opts = ensure_no_parens_extension_opt(opts)
         led(ast, state, log, min_bp, context, opts)
     end
   end
@@ -1030,7 +1043,10 @@ defmodule ToxicParser.Pratt do
       # Example: @spec foo() when a: term - the `when` (bp=50) can extend `spec foo()`
       # even though @ has bp=320, because the operand context allows no_parens extension.
       {kind, {bp, assoc}} when is_tuple({bp, assoc}) ->
-        if is_no_parens_op_expr?(kind) and allow_no_parens_expr?(context) do
+        allow_extension? = Keyword.get(opts, :allow_no_parens_extension?, true)
+
+        if allow_extension? and min_bp == 0 and
+             is_no_parens_op_expr?(kind) and allow_no_parens_expr?(context) do
           led_binary(left, state, log, min_bp, context, opts, bp, assoc)
         else
           # No continuation operator found - push back EOE tokens
@@ -1835,7 +1851,10 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
-        with {:ok, right, state, log} <- parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp, opts) do
+        rhs_opts = Keyword.put(opts, :allow_no_parens_extension?, false)
+
+        with {:ok, right, state, log} <-
+               parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp, rhs_opts) do
           combined = build_binary_op(op_token, left, right, newlines)
           # Continuation uses original context to allow further extension at outer level
           led(combined, state, log, min_bp, context, opts)
@@ -1871,13 +1890,19 @@ defmodule ToxicParser.Pratt do
   # Rewrites to {:not, InMeta, [{:in, InMeta, [operand, right]}]} or {:!, InMeta, [{:in, InMeta, [operand, right]}]}
   defp build_binary_op(
          %{kind: :in_op, value: :in, metadata: meta},
-         {op, _op_meta, [operand]},
-         right,
-         _newlines
+          {op, _op_meta, [operand]},
+          right,
+          _newlines
        )
        when op in [:not, :!] do
     in_meta = build_meta(meta)
     {op, in_meta, [{:in, in_meta, [operand, right]}]}
+  end
+
+  # Range ternary rewrite: a .. (b // c) -> a ..// b // c
+  defp build_binary_op(%{kind: :range_op, metadata: meta}, left, {:"//", _meta, [stop, step]}, newlines) do
+    range_meta = build_meta_with_newlines(meta, newlines)
+    {:"..//", range_meta, [left, stop, step]}
   end
 
   # Assoc operator (=>) - just build as normal binary op
