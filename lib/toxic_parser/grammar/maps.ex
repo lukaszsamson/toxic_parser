@@ -31,7 +31,15 @@ defmodule ToxicParser.Grammar.Maps do
         case TokenAdapter.next(state) do
           {:ok, %{kind: :"{"}, state} ->
             # For %{} maps, use percent_meta for position (not brace position)
-            parse_map_args_after_brace(nil, percent_meta, percent_meta, state, ctx, log)
+            # Use a tuple sentinel that can never be a valid struct name
+            parse_map_args_after_brace(
+              {:__no_struct_base__},
+              percent_meta,
+              percent_meta,
+              state,
+              ctx,
+              log
+            )
 
           {:ok, tok, state} ->
             {:error, {:expected, :"{", got: tok.kind}, state, log}
@@ -101,6 +109,14 @@ defmodule ToxicParser.Grammar.Maps do
           ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           {:ok, ast, state, log}
         end
+
+      # Parenthesized expression or list/tuple/bitstring as struct base
+      # Grammar allows these as sub_matched_expr -> access_expr -> list | tuple | bitstring | empty_paren
+      # Example: %!(){} where () is the operand of !
+      # Example: %@[]{} where [] is the operand of @
+      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
+        alias ToxicParser.Grammar.Containers
+        Containers.parse(state, :matched, log)
 
       _ ->
         # sub_matched_expr with dot operator and paren call support
@@ -640,7 +656,9 @@ defmodule ToxicParser.Grammar.Maps do
   defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
   # Build map AST: %{} or %Struct{}
-  defp build_map_ast(nil, pairs, _percent_meta, map_meta) do
+  # Use {:__no_struct_base__} tuple as sentinel for "no struct base" (i.e., %{} not %Foo{})
+  # A tuple can never be a valid struct name, so this allows nil and any atom to be valid bases
+  defp build_map_ast({:__no_struct_base__}, pairs, _percent_meta, map_meta) do
     {:%{}, map_meta, pairs}
   end
 
@@ -650,7 +668,7 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   # Build map update AST: %{expr | ...} or %Struct{expr | ...}
-  defp build_map_update_ast(nil, update_ast, _percent_meta, map_meta) do
+  defp build_map_update_ast({:__no_struct_base__}, update_ast, _percent_meta, map_meta) do
     {:%{}, map_meta, [update_ast]}
   end
 

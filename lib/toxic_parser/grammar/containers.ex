@@ -426,7 +426,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp merge_keyword_expr(acc, expr, is_container_literal)
 
   defp merge_keyword_expr(acc, expr, is_container_literal) when is_list(expr) do
-    if not is_container_literal and is_keyword_list?(expr) do
+    if not is_container_literal and is_non_empty_keyword_list?(expr) do
       Enum.reverse(acc) ++ expr
     else
       Enum.reverse([expr | acc])
@@ -443,7 +443,7 @@ defmodule ToxicParser.Grammar.Containers do
   defp prepend_expr(acc, expr, is_container_literal)
 
   defp prepend_expr(acc, expr, is_container_literal) when is_list(expr) do
-    if not is_container_literal and is_keyword_list?(expr) do
+    if not is_container_literal and is_non_empty_keyword_list?(expr) do
       # Reverse keyword list and prepend each element to acc
       Enum.reduce(Enum.reverse(expr), acc, fn elem, acc -> [elem | acc] end)
     else
@@ -458,6 +458,11 @@ defmodule ToxicParser.Grammar.Containers do
   defp is_keyword_list?([{_key, _value} | rest]), do: is_keyword_list?(rest)
   defp is_keyword_list?([]), do: true
   defp is_keyword_list?(_), do: false
+
+  # Check if a list is a NON-EMPTY keyword list (for merging purposes)
+  # Empty lists should never be merged - they should be kept as elements (e.g., [''] -> [[]])
+  defp is_non_empty_keyword_list?([_ | _] = list), do: is_keyword_list?(list)
+  defp is_non_empty_keyword_list?(_), do: false
 
   defp tuple_element_container_literal?(state) do
     case TokenAdapter.peek(state) do

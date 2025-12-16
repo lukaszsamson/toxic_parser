@@ -258,6 +258,7 @@ defmodule ToxicParser.ConformanceTest do
     test "quoted atom interpolated" do
       assert_conforms(~s(:"hello\#{abc}foo"))
       assert_conforms(":\"foo\#{}\"")
+      assert_conforms(":\"foo\#{''}\"")
     end
   end
 
@@ -1412,6 +1413,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%''{}")
       assert_conforms("%\"\"{}")
       assert_conforms("%0[l]{}")
+      assert_conforms("%nil{}")
+      assert_conforms("%__no_struct_base__{}")
+      assert_conforms("%:__no_struct_base__{}")
+      assert_conforms("%!(){}")
+      assert_conforms("%@[]{}")
+      assert_conforms("% (){}")
     end
 
     test "map update" do
@@ -2210,13 +2217,26 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("['a': 1, b: 2]")
       assert_conforms("[a: 1, 'b': 2]")
       assert_conforms("[1, a: 1]")
+      assert_conforms("[1, 'a': 1]")
       assert_conforms("[1, 2, a: 1, b: 2]")
+      assert_conforms("[1, 2, 'a': 1, b: 2]")
+      assert_conforms("[1, 2, a: 1, 'b': 2]")
+    end
+
+    test "list with keyword tail interpolated" do
+      assert_conforms("[\"foo\#{}\": 1]")
+      assert_conforms("[\"foo\#{bar}\": 1]")
+      assert_conforms("[\"foo\#{l*e}\": 1]")
     end
 
     test "nested lists" do
       assert_conforms("[[1]]")
       assert_conforms("[[1], [2]]")
       assert_conforms("[[[1, 2]]]")
+    end
+
+    test "lists with charlist" do
+      assert_conforms("['']")
     end
   end
 

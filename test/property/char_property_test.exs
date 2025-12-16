@@ -13,11 +13,6 @@ defmodule ToxicParser.CharPropertyTest do
     existing_atoms_only: true
   ]
 
-  # Toxic parse options - same as oracle where applicable
-  @toxic_opts [
-    existing_atoms_only: true
-  ]
-
   # Character set for generating random code fragments
   @char_set [
     # minimal set to cover all keywords, operators, brackets, separators, numbers, aliases and identifiers
@@ -1118,8 +1113,8 @@ defmodule ToxicParser.CharPropertyTest do
         assert {:ok, toxic_ast} = toxic_parse(code)
 
         # Apply workaround for parser bugs with not/! in forms
-        {oracle_ast, toxic_ast} =
-          fix_deprecated_not_in_meta(oracle_ast, toxic_ast)
+        # {oracle_ast, toxic_ast} =
+        #   fix_deprecated_not_in_meta(oracle_ast, toxic_ast)
 
         # Normalize and compare ASTs
         oracle_normalized = normalize_ast(oracle_ast)
@@ -1351,28 +1346,30 @@ defmodule ToxicParser.CharPropertyTest do
     # :indentation
   ]
 
-  defp normalize_ast(ast) do
-    ast
-    |> unwrap_single_block()
-    |> Macro.postwalk(fn
-      # Empty blocks - strip all metadata (Oracle omits it, Toxic includes it)
-      {:__block__, _meta, []} ->
-        {:__block__, [], []}
+  defp normalize_ast(ast), do: ast
 
-      {tag, meta, args} when is_list(meta) ->
-        {tag, Keyword.drop(meta, @ignored_meta_keys), args}
+  # defp normalize_ast(ast) do
+  #   ast
+  #   |> unwrap_single_block()
+  #   |> Macro.postwalk(fn
+  #     # Empty blocks - strip all metadata (Oracle omits it, Toxic includes it)
+  #     {:__block__, _meta, []} ->
+  #       {:__block__, [], []}
 
-      keyword when is_list(keyword) ->
-        if Keyword.keyword?(keyword) do
-          Keyword.drop(keyword, @ignored_meta_keys)
-        else
-          keyword
-        end
+  #     {tag, meta, args} when is_list(meta) ->
+  #       {tag, Keyword.drop(meta, @ignored_meta_keys), args}
 
-      node ->
-        node
-    end)
-  end
+  #     keyword when is_list(keyword) ->
+  #       if Keyword.keyword?(keyword) do
+  #         Keyword.drop(keyword, @ignored_meta_keys)
+  #       else
+  #         keyword
+  #       end
+
+  #     node ->
+  #       node
+  #   end)
+  # end
 
   # Unwrap single-element __block__ nodes (Oracle sometimes wraps parenthesized exprs)
   # TODO: decide if we should keep it or backport the parens handling
