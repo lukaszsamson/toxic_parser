@@ -2098,8 +2098,46 @@ defmodule ToxicParser.Pratt do
           end
         end
 
+      # Handle bracket access: 0[l] for structs like %0[l]{}
+      # Grammar: bracket_expr -> access_expr bracket_arg
+      {:ok, %{kind: :"["}, _} ->
+        {:ok, open_tok, state} = TokenAdapter.next(state)
+
+        # Skip leading EOE and count newlines
+        {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
+        with {:ok, indices, state, log} <- parse_access_indices([], state, context, log) do
+          # Skip trailing EOE before close bracket
+          {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
+
+          case TokenAdapter.next(state) do
+            {:ok, %{kind: :"]"} = close_tok, state} ->
+              # Build bracket access AST like led_bracket does
+              open_meta = build_meta(open_tok.metadata)
+              close_meta = build_meta(close_tok.metadata)
+
+              bracket_meta =
+                Meta.closing_meta(open_meta, close_meta, leading_newlines, from_brackets: true)
+
+              combined =
+                {{:., bracket_meta, [Access, :get]}, bracket_meta, [left | Enum.reverse(indices)]}
+
+              # Continue to handle more chained operations
+              led_dots_and_calls(combined, state, log, context)
+
+            {:ok, other, state} ->
+              {:error, {:expected, :"]", got: other.kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+        end
+
       _ ->
-        # Not a dot or paren - return what we have
+        # Not a dot, paren, or bracket - return what we have
         {:ok, left, state, log}
     end
   end

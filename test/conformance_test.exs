@@ -257,6 +257,7 @@ defmodule ToxicParser.ConformanceTest do
 
     test "quoted atom interpolated" do
       assert_conforms(~s(:"hello\#{abc}foo"))
+      assert_conforms(":\"foo\#{}\"")
     end
   end
 
@@ -1232,6 +1233,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("(;\n)")
 
       assert_conforms("(;1)")
+      assert_conforms("(;d)")
       assert_conforms("(\n;1)")
       assert_conforms("(;1\n)")
     end
@@ -1409,6 +1411,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%...foo{}")
       assert_conforms("%''{}")
       assert_conforms("%\"\"{}")
+      assert_conforms("%0[l]{}")
     end
 
     test "map update" do

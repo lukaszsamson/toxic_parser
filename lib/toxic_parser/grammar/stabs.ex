@@ -33,15 +33,17 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse stab expressions inside parens
   # min_bp controls whether to continue with led() for trailing operators
-  def parse_paren_stab(_open_meta, state, ctx, log, min_bp) do
+  def parse_paren_stab(open_meta, state, ctx, log, min_bp) do
     with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
       state = EOE.skip(state)
 
       case TokenAdapter.next(state) do
-        {:ok, %{kind: :")"}, state} ->
+        {:ok, %{kind: :")"} = close_tok, state} ->
+          close_meta = token_meta(close_tok.metadata)
           # Unwrap single plain expression (not stab clause) from list
-          # This handles cases like (;1) where we have a plain expr after semicolon
-          result = unwrap_single_non_stab(clauses)
+          # This handles cases like (;d) where we have a plain expr after semicolon
+          # For single expressions, add parens metadata matching Elixir's build_block behavior
+          result = unwrap_single_non_stab_with_parens(clauses, open_meta, close_meta)
           # Continue with Pratt.led to handle trailing operators like |
           Pratt.led(result, state, log, min_bp, ctx)
 
@@ -57,12 +59,22 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  # Unwrap a single non-stab expression from a list
+  # Unwrap a single non-stab expression from a list with parens metadata
   # Stab clauses are kept as lists: [{:->, ...}]
-  # Plain expressions are unwrapped: [1] -> 1
-  defp unwrap_single_non_stab([{:->, _, _} | _] = stabs), do: stabs
-  defp unwrap_single_non_stab([single]), do: single
-  defp unwrap_single_non_stab(other), do: other
+  # Plain expressions are unwrapped and get parens metadata added (matching Elixir's build_block)
+  defp unwrap_single_non_stab_with_parens([{:->, _, _} | _] = stabs, _open_meta, _close_meta) do
+    stabs
+  end
+
+  defp unwrap_single_non_stab_with_parens([{name, meta, args}], open_meta, close_meta)
+       when is_list(meta) do
+    # Single 3-tuple expression - add parens metadata like Elixir's build_block does
+    parens_meta = open_meta ++ [closing: close_meta]
+    {name, [parens: parens_meta] ++ meta, args}
+  end
+
+  defp unwrap_single_non_stab_with_parens([single], _open_meta, _close_meta), do: single
+  defp unwrap_single_non_stab_with_parens(other, _open_meta, _close_meta), do: other
 
   # Try to parse stab_parens_many: ((args) -> expr) or ((args) when g -> expr)
   def try_parse_stab_parens_many(open_meta, state, ctx, log, min_bp, fallback_fun) do
