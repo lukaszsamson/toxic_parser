@@ -7,7 +7,7 @@ defmodule ToxicParser.Grammar.Calls do
   subsequent iterations.
   """
 
-  alias ToxicParser.{Builder, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{DoBlocks, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
@@ -374,9 +374,16 @@ defmodule ToxicParser.Grammar.Calls do
                 end
 
               true ->
-                # Parse args in :matched context to prevent do-block attachment to arguments.
-                # The do-block belongs to the outer call, not to individual args.
-                case Pratt.parse(state, :matched, log) do
+                # Parse args in no_parens_expr context:
+                # - allow_do_block: false - do-blocks belong to outer call, not arguments
+                # - allow_no_parens_expr: true - allows operators like `when` to extend inside args
+                # Use min_bp=0 for argument values - they are full expressions not constrained
+                # by outer operator precedence. The outer min_bp only affects when to STOP
+                # parsing arguments (checked at lines 362-365), not the argument values themselves.
+                # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
+                arg_context = Context.no_parens_expr()
+
+                case Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
                   {:ok, arg, state, log} ->
                     handle_no_parens_arg(arg, acc, state, ctx, log, min_bp)
 
@@ -385,7 +392,7 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse(state, :matched, log) do
+                           Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
                       kw_pair = [{key_atom, value_ast}]
                       handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
                     end
@@ -395,7 +402,7 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse(state, :matched, log) do
+                           Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
                       key_ast =
                         Expressions.build_interpolated_keyword_key(
                           parts,
@@ -569,7 +576,8 @@ defmodule ToxicParser.Grammar.Calls do
   defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log, _min_bp) do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
-    with {:ok, first_arg, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 0) do
+    # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
+    with {:ok, first_arg, state, log} <- Pratt.parse_with_min_bp(state, :matched, log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)

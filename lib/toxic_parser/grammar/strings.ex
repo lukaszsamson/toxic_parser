@@ -22,19 +22,19 @@ defmodule ToxicParser.Grammar.Strings do
              EventLog.t()}
 
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse(%State{} = state, ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in @simple_string_start ->
-        parse_simple_string(state, ctx, log, min_bp)
+        parse_simple_string(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: kind}, _} when kind in @heredoc_start ->
-        parse_heredoc(state, ctx, log, min_bp)
+        parse_heredoc(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: kind}, _} when kind in @sigil_start ->
-        parse_sigil(state, ctx, log, min_bp)
+        parse_sigil(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: kind}, _} when kind in @atom_start ->
-        parse_quoted_atom(state, ctx, kind, log, min_bp)
+        parse_quoted_atom(state, ctx, kind, log, min_bp, opts)
 
       {:ok, _tok, _} ->
         {:no_string, state}
@@ -48,7 +48,7 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Parse simple strings (not heredocs)
-  defp parse_simple_string(state, ctx, log, min_bp) do
+  defp parse_simple_string(state, ctx, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = token_to_meta(start_tok.metadata)
     kind = string_kind(start_tok.kind)
@@ -72,13 +72,13 @@ defmodule ToxicParser.Grammar.Strings do
           {:keyword_key, atom, state, log}
         end
       else
-        build_string_ast(parts, kind, start_meta, delimiter, end_tok, state, ctx, log, min_bp)
+        build_string_ast(parts, kind, start_meta, delimiter, end_tok, state, ctx, log, min_bp, opts)
       end
     end
   end
 
   # Parse heredocs with indentation handling
-  defp parse_heredoc(state, ctx, log, min_bp) do
+  defp parse_heredoc(state, ctx, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = token_to_meta(start_tok.metadata)
     kind = string_kind(start_tok.kind)
@@ -93,11 +93,11 @@ defmodule ToxicParser.Grammar.Strings do
       # Trim indentation from parts
       trimmed_parts = trim_heredoc_parts(parts, indentation, line_continuation?: true)
 
-      build_heredoc_ast(trimmed_parts, kind, start_meta, indentation, state, ctx, log, min_bp)
+      build_heredoc_ast(trimmed_parts, kind, start_meta, indentation, state, ctx, log, min_bp, opts)
     end
   end
 
-  defp parse_sigil(state, ctx, log, min_bp) do
+  defp parse_sigil(state, ctx, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = token_to_meta(start_tok.metadata)
     {sigil, delimiter} = start_tok.value
@@ -145,12 +145,12 @@ defmodule ToxicParser.Grammar.Strings do
       content_ast = {:<<>>, content_meta, build_sigil_parts(parts)}
 
       ast = {sigil, meta_with_delimiter, [content_ast, modifiers]}
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
 
   # Parse quoted atoms: :"foo", :"foo bar", :""
-  defp parse_quoted_atom(state, ctx, kind, log, min_bp) do
+  defp parse_quoted_atom(state, ctx, kind, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = token_to_meta(start_tok.metadata)
 
@@ -176,12 +176,12 @@ defmodule ToxicParser.Grammar.Strings do
           {{:., start_meta, [:erlang, :binary_to_atom]}, meta_with_delimiter,
            [{:<<>>, start_meta, args}, :utf8]}
 
-        Pratt.led(ast, state, log, min_bp, ctx)
+        Pratt.led(ast, state, log, min_bp, ctx, opts)
       else
         content = merge_fragments(parts)
         atom = String.to_atom(content)
         ast = Builder.Helpers.literal(atom)
-        Pratt.led(ast, state, log, min_bp, ctx)
+        Pratt.led(ast, state, log, min_bp, ctx, opts)
       end
     end
   end
@@ -341,7 +341,7 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Build AST for simple strings
-  defp build_string_ast(parts, kind, start_meta, delimiter, _end_tok, state, ctx, log, min_bp) do
+  defp build_string_ast(parts, kind, start_meta, delimiter, _end_tok, state, ctx, log, min_bp, opts) do
     if has_interpolations?(parts) do
       args = build_interpolated_parts(parts, kind)
 
@@ -358,7 +358,7 @@ defmodule ToxicParser.Grammar.Strings do
             {{:., start_meta, [List, :to_charlist]}, meta_with_delimiter, [args]}
         end
 
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     else
       content = merge_fragments(parts)
 
@@ -369,13 +369,13 @@ defmodule ToxicParser.Grammar.Strings do
         end
 
       ast = Builder.Helpers.literal(value)
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
 
   # Build AST for heredocs
   # Note: For heredocs, parts are NOT unescaped yet (to allow proper line continuation handling)
-  defp build_heredoc_ast(parts, kind, start_meta, indentation, state, ctx, log, min_bp) do
+  defp build_heredoc_ast(parts, kind, start_meta, indentation, state, ctx, log, min_bp, opts) do
     delimiter =
       case kind do
         :heredoc_binary -> ~s|"""|
@@ -398,7 +398,7 @@ defmodule ToxicParser.Grammar.Strings do
             {{:., start_meta, [List, :to_charlist]}, meta_with_indent, [args]}
         end
 
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     else
       # Unescape and merge fragments
       content = merge_fragments_unescape(parts)
@@ -410,7 +410,7 @@ defmodule ToxicParser.Grammar.Strings do
         end
 
       ast = Builder.Helpers.literal(value)
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
 

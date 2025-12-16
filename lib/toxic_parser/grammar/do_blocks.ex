@@ -197,7 +197,11 @@ defmodule ToxicParser.Grammar.DoBlocks do
     case TokenAdapter.peek(state) do
       {:ok, next_tok, _} ->
         if allow_no_parens?(token, next_tok) do
-          parse_no_parens.(token, state, ctx, log, min_bp)
+          # For op_identifier or adjacent identifier calls (no whitespace),
+          # use min_bp=0 to include all operators in the argument
+          # Example: %{c!s|n => 1} should parse c!(s|n) not c!(s)
+          effective_min_bp = if adjacent_call?(token, next_tok), do: 0, else: min_bp
+          parse_no_parens.(token, state, ctx, log, effective_min_bp)
         else
           {:ok, ast, state, log}
         end
@@ -217,5 +221,14 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   defp starts_no_parens_arg?(next_tok) do
     NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)
+  end
+
+  # Check if identifier token is adjacent to next token (no whitespace between them)
+  # op_identifier always qualifies, regular identifiers only when adjacent
+  defp adjacent_call?(%{kind: :op_identifier}, _next_tok), do: true
+
+  defp adjacent_call?(token, next_tok) do
+    token.metadata.range.end.column == next_tok.metadata.range.start.column and
+      token.metadata.range.end.line == next_tok.metadata.range.start.line
   end
 end

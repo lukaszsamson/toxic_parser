@@ -1226,10 +1226,31 @@ defmodule ToxicParser.Grammar.Stabs do
             {:ok, nil_ast, state, log}
 
           {:ok, _, _} ->
-            # More content after leading semicolon - parse next expression and collect
-            with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
-              # Now collect more expressions (if any), starting with [next_expr, nil_ast]
-              collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+            # More content after leading semicolon - check if it's a new stab clause
+            # For `fn x when e->;e -> 1 end`, after `;` we have `e -> 1` which is a new clause
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case try_parse_stab_clause(checkpoint_state, :unmatched, log, terminator) do
+              {:ok, _clause, _state2, _log2} ->
+                # This is a new stab clause - return just nil, rewind state
+                {:ok, nil_ast, TokenAdapter.rewind(checkpoint_state, ref), log}
+
+              {:not_stab, _state2, _log2} ->
+                # Not a stab clause - parse as more body expressions
+                state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+
+                with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+                  # Now collect more expressions (if any), starting with [next_expr, nil_ast]
+                  collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+                end
+
+              {:error, _diag, _state2, _log2} ->
+                # Error - parse as more body expressions
+                state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+
+                with {:ok, next_expr, state, log} <- Expressions.expr(state, :unmatched, log) do
+                  collect_stab_body_exprs([next_expr, nil_ast], state, :unmatched, log, terminator)
+                end
             end
 
           {:eof, state} ->

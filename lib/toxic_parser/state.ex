@@ -3,10 +3,10 @@ defmodule ToxicParser.State do
   Parser state carrier for streaming tokens and parser options.
   """
 
-  alias ToxicParser.Error
+  alias ToxicParser.{Context, Error}
 
   @type mode :: :strict | :tolerant
-  @type expression_context :: :matched | :unmatched | :no_parens
+  @type expression_context :: :matched | :unmatched | :no_parens | Context.t()
 
   @type checkpoint :: %{
           ref: reference(),

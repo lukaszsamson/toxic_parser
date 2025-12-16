@@ -18,9 +18,10 @@ defmodule ToxicParser.Grammar.Dots do
   """
   @spec parse_chain(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_chain(left, %State{} = state, ctx, %EventLog{} = log) do
-    {:ok, _dot, state} = TokenAdapter.next(state)
+    {:ok, dot, state} = TokenAdapter.next(state)
+    dot_meta = Builder.Helpers.token_meta(dot.metadata)
 
-    with {:ok, rhs, state, log} <- parse_member(state, ctx, log) do
+    with {:ok, rhs, state, log} <- parse_member(state, ctx, log, dot_meta) do
       combined = Builder.Helpers.dot(left, rhs)
 
       case TokenAdapter.peek(state) do
@@ -66,9 +67,14 @@ defmodule ToxicParser.Grammar.Dots do
   For simple identifiers, also returns `:no_parens_call` flag when the identifier
   was classified as :op_identifier or :dot_op_identifier, indicating that a
   no-parens call is expected.
+
+  The optional `dot_meta` parameter provides the dot's metadata for curly calls
+  where the call metadata should use the dot's position.
   """
-  @spec parse_member(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_member(%State{} = state, ctx, %EventLog{} = log) do
+  @spec parse_member(State.t(), Pratt.context(), EventLog.t(), keyword()) :: result()
+  def parse_member(state, ctx, log, dot_meta \\ [])
+
+  def parse_member(%State{} = state, ctx, %EventLog{} = log, dot_meta) do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         case Identifiers.classify(tok.kind) do
@@ -79,9 +85,31 @@ defmodule ToxicParser.Grammar.Dots do
                  :dot_identifier,
                  :dot_do_identifier
                ] ->
-            # Return {member_atom, member_meta} tuple so caller can build proper AST
-            # Regular identifier - bracket access NOT allowed (whitespace before [)
-            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+            # Check if next token can start a no-parens argument AND is adjacent
+            # This handles cases like `d.*r` where `*` is an identifier and `r` is adjacent
+            case TokenAdapter.peek(state) do
+              {:ok, next_tok, _} ->
+                tok_end_col = tok.metadata.range.end.column
+                next_start_col = next_tok.metadata.range.start.column
+                is_adjacent = next_start_col == tok_end_col
+
+                # Adjacent no-parens argument - return with :no_parens_call flag
+                # BUT: exclude dual_op (+/-) because `a.b-c` should be `(a.b) - c` (binary)
+                # not `a.b(-c)` (unary arg). dual_op can be unary, but without explicit
+                # space it should be treated as binary operator in this context.
+                if is_adjacent and ToxicParser.NoParens.can_start_no_parens_arg?(next_tok) and
+                     next_tok.kind != :dual_op do
+                  {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :no_parens_call},
+                   state, log}
+                else
+                  # Regular identifier - bracket access NOT allowed (whitespace before [)
+                  {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+                end
+
+              _ ->
+                # No next token - regular identifier
+                {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+            end
 
           :bracket_identifier ->
             # Bracket identifier - bracket access IS allowed (no whitespace before [)
@@ -96,17 +124,43 @@ defmodule ToxicParser.Grammar.Dots do
 
           :alias ->
             # Alias needs to be wrapped as __aliases__
-            {:ok, Builder.Helpers.from_token(tok), state, log}
+            # Check if [ follows immediately (no whitespace) - if so, allow bracket access
+            alias_ast = Builder.Helpers.from_token(tok)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"["} = bracket_tok, _} ->
+                # Check if bracket is adjacent (no whitespace between alias and [)
+                alias_end_col = tok.metadata.range.end.column
+                bracket_start_col = bracket_tok.metadata.range.start.column
+
+                if bracket_start_col == alias_end_col do
+                  # No whitespace - bracket access is allowed
+                  {:ok, {alias_ast, :allows_bracket}, state, log}
+                else
+                  # Whitespace - no bracket access
+                  {:ok, alias_ast, state, log}
+                end
+
+              _ ->
+                {:ok, alias_ast, state, log}
+            end
 
           kind when kind in [:paren_identifier, :dot_call_identifier, :dot_paren_identifier] ->
             parse_paren_call(tok, state, ctx, log)
 
           _ ->
-            # Check for quoted identifier: D."foo"
-            if tok.kind == :quoted_identifier_start do
-              parse_quoted_identifier(tok, state, ctx, log)
-            else
-              {:error, {:expected, :dot_member, got: tok.kind}, state, log}
+            cond do
+              # Check for quoted identifier: D."foo"
+              tok.kind == :quoted_identifier_start ->
+                parse_quoted_identifier(tok, state, ctx, log)
+
+              # Handle curly container call: n.{} or n.{a, b}
+              # Grammar: dot_alias -> matched_expr dot_op open_curly container_args close_curly
+              tok.kind == :"{" ->
+                parse_curly_call(tok, state, ctx, log, dot_meta)
+
+              true ->
+                {:error, {:expected, :dot_member, got: tok.kind}, state, log}
             end
         end
 
@@ -134,6 +188,70 @@ defmodule ToxicParser.Grammar.Dots do
       {:ok, {callee, meta, Enum.reverse(args)}, state, log}
     else
       other -> Result.normalize_error(other, log)
+    end
+  end
+
+  # Parse curly container call: n.{} or n.{a, b}
+  # Grammar: dot_alias -> matched_expr dot_op open_curly container_args close_curly
+  # Returns {:ok, {:{}, meta, args}, state, log} where :{} is the atom function name
+  # The dot_meta parameter provides the dot's metadata for the call metadata (column should be dot's position)
+  defp parse_curly_call(open_tok, state, ctx, log, dot_meta) do
+    # Skip leading EOE and count newlines
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
+    with {:ok, args, state, log} <- parse_curly_args([], state, ctx, log),
+         {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :"}") do
+      total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+      # Use dot's metadata for the call column (not the curly's position)
+      # If dot_meta is empty (no dot context), fall back to open_tok metadata
+      base_meta = if dot_meta == [], do: Builder.Helpers.token_meta(open_tok.metadata), else: dot_meta
+      meta = Meta.closing_meta(base_meta, close_meta, total_newlines)
+
+      # Return call format with :{} as the function name
+      # This matches {name, meta, args} pattern in the caller
+      {:ok, {:{}, meta, Enum.reverse(args)}, state, log}
+    else
+      other -> Result.normalize_error(other, log)
+    end
+  end
+
+  # Parse arguments inside curly braces for dot curly call
+  defp parse_curly_args(acc, state, ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"}"}, _} ->
+        {:ok, acc, state, log}
+
+      {:ok, _tok, _} ->
+        # Parse expression
+        with {:ok, expr, state, log} <- Pratt.parse(state, ctx, log) do
+          # Skip any newlines after expression
+          {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :","}, _} ->
+              {:ok, _, state} = TokenAdapter.next(state)
+              {state, _newlines} = EOE.skip_count_newlines(state, 0)
+              parse_curly_args([expr | acc], state, ctx, log)
+
+            {:ok, %{kind: :"}"}, _} ->
+              {:ok, [expr | acc], state, log}
+
+            {:ok, tok, _} ->
+              {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
     end
   end
 

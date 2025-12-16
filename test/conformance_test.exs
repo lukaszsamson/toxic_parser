@@ -2810,6 +2810,86 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 14" do
       assert_conforms("foo \n; bar")
     end
+
+    test "repro 15" do
+      assert_conforms("foo do f[d\n] end")
+    end
+
+    test "repro 16" do
+      assert_conforms("%@i(){}")
+    end
+
+    test "repro 17" do
+      assert_conforms("%f[d\n]{}")
+    end
+
+    test "repro 18" do
+      assert_conforms("%n.{}{}")
+    end
+
+    test "repro 19" do
+      assert_conforms("~s\"\"\"\nfoo\#{@A[f]}\n\"\"\"")
+    end
+
+    test "repro 20" do
+      assert_conforms("def foo @''[e] do 1 end")
+    end
+
+    test "repro 21" do
+      assert_conforms("def foo(e.A[e]) do :ok end")
+    end
+
+    test "repro 22" do
+      assert_conforms("'foo\#{e.A[e]}'")
+    end
+
+    test "repro 23" do
+      assert_conforms("%{c!s|n => 1}")
+    end
+
+    test "repro 24" do
+      assert_conforms("for x <- n't', do: x")
+    end
+
+    test "repro 25" do
+      assert_conforms("%{d.*r => 1}")
+    end
+
+    test "repro 26" do
+      assert_conforms("foo.A[t]")
+    end
+
+    test "repro 27" do
+      assert_conforms("foo.\\\n\nf")
+    end
+
+    test "repro 28" do
+      assert_conforms("for x <- e'r', do: x")
+    end
+
+    test "repro 29" do
+      assert_conforms("%{x'' => 1, a: u}")
+    end
+
+    test "repro 30" do
+      assert_conforms("fn x when e->;e -> 1 end")
+    end
+
+    test "repro 31" do
+      assert_conforms("%{x | e.+i => 1}")
+    end
+
+    test "repro 32" do
+      assert_conforms("%{n.!f => 1}")
+    end
+
+    test "repro 33" do
+      assert_conforms("%{w.^b => 1}")
+    end
+
+    test "repro 34" do
+      assert_conforms("%{a!d=d => 1, a: f}")
+    end
   end
 
   # =============================================================================

@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Expressions do
   Expression dispatcher for matched/unmatched/no-parens contexts.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, Recovery, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, Recovery, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE}
 
   @type result ::
@@ -57,18 +57,16 @@ defmodule ToxicParser.Grammar.Expressions do
   @doc """
   Dispatches to the Pratt parser based on expression context.
   """
-  @spec expr(State.t(), Pratt.context(), EventLog.t()) :: result()
+  @spec expr(State.t(), Pratt.context() | Context.t(), EventLog.t()) :: result()
   def expr(%State{} = state, ctx, %EventLog{} = log) do
     case ctx do
       :matched -> matched_expr(state, log)
       :unmatched -> unmatched_expr(state, log)
       :no_parens -> no_parens_expr(state, log)
+      %Context{} -> parse_with_layers(state, ctx, log)
       _ -> matched_expr(state, log)
     end
   end
-
-  defp keyword_value_ctx(:no_parens), do: :matched
-  defp keyword_value_ctx(ctx), do: ctx
 
   @doc "Parses a matched expression (no trailing do-block attachment)."
   @spec matched_expr(State.t(), EventLog.t()) :: result()
@@ -115,7 +113,7 @@ defmodule ToxicParser.Grammar.Expressions do
                 # Skip EOE (newlines) after the colon before parsing value
                 state = EOE.skip(state)
 
-                with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
+                with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
                   {:ok, [{key_atom, value_ast}], state, log}
                 end
 
@@ -124,7 +122,7 @@ defmodule ToxicParser.Grammar.Expressions do
                 # Skip EOE (newlines) after the colon before parsing value
                 state = EOE.skip(state)
 
-                with {:ok, value_ast, state, log} <- expr(state, keyword_value_ctx(ctx), log) do
+                with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
                   {:ok, [{key_ast, value_ast}], state, log}
                 end
@@ -267,4 +265,14 @@ defmodule ToxicParser.Grammar.Expressions do
         [ast]
     end)
   end
+
+  # Determine keyword value context based on whether outer context allows do-blocks.
+  # In paren calls (allow_do_block: true), use container_expr which allows do-blocks.
+  # In no-parens calls (allow_do_block: false), use kw_no_parens_value to prevent
+  # do-blocks from attaching to the keyword value (they belong to outer call).
+  defp keyword_value_context(%Context{allow_do_block: true}), do: Context.container_expr()
+  defp keyword_value_context(%Context{allow_do_block: false}), do: Context.kw_no_parens_value()
+  defp keyword_value_context(:matched), do: Context.kw_no_parens_value()
+  defp keyword_value_context(:no_parens), do: Context.kw_no_parens_value()
+  defp keyword_value_context(_), do: Context.container_expr()
 end

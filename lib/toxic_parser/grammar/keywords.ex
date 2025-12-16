@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Keywords do
   Recursive-descent helpers for keyword lists in call and data contexts.
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{EOE, Expressions, Strings}
 
   @type result ::
@@ -20,7 +20,8 @@ defmodule ToxicParser.Grammar.Keywords do
   @quoted_kw_start [:bin_string_start, :list_string_start]
 
   @doc "Checks if an expression result is a keyword list (from quoted keyword parsing)"
-  defguard is_keyword_list_result(arg) when is_list(arg) and arg != []
+  # Must check that first element is a tuple to distinguish from charlists like [114]
+  defguard is_keyword_list_result(arg) when is_list(arg) and arg != [] and is_tuple(hd(arg))
 
   @doc "Returns true if the token kind starts a keyword pair."
   @spec starts_kw?(map()) :: boolean()
@@ -48,22 +49,23 @@ defmodule ToxicParser.Grammar.Keywords do
   @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_call(%State{} = state, ctx, %EventLog{} = log) do
     # kw_call in elixir_parser.yrl ultimately parses kw_eol container_expr
-    # (container_expr includes unmatched_expr, which includes block_expr).
-    parse_kw_list([], state, ctx, log, 0, :unmatched)
+    # (container_expr allows do-blocks but not no_parens extension).
+    parse_kw_list([], state, ctx, log, 0, Context.container_expr())
   end
 
   @doc "Parses a keyword list with a minimum binding power constraint."
   @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
           result()
   def parse_kw_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
-    parse_kw_list([], state, ctx, log, min_bp, :unmatched)
+    parse_kw_list([], state, ctx, log, min_bp, Context.container_expr())
   end
 
   @doc "Parses a keyword list usable in no-parens call argument position (call_args_no_parens_kw)."
   @spec parse_kw_no_parens_call(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_no_parens_call(%State{} = state, ctx, %EventLog{} = log) do
     # call_args_no_parens_kw_expr in elixir_parser.yrl parses kw_eol matched_expr.
-    parse_kw_list([], state, ctx, log, 0, :matched)
+    # We use kw_no_parens_value to allow no_parens extension but not do-blocks.
+    parse_kw_list([], state, ctx, log, 0, Context.kw_no_parens_value())
   end
 
   @doc "Parses no-parens call keyword list with a minimum binding power constraint."
@@ -75,13 +77,14 @@ defmodule ToxicParser.Grammar.Keywords do
         ) ::
           result()
   def parse_kw_no_parens_call_with_min_bp(%State{} = state, ctx, %EventLog{} = log, min_bp) do
-    parse_kw_list([], state, ctx, log, min_bp, :matched)
+    parse_kw_list([], state, ctx, log, min_bp, Context.kw_no_parens_value())
   end
 
   @doc "Parses a keyword list usable in data (container) position."
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_data(%State{} = state, ctx, %EventLog{} = log) do
-    parse_kw_list([], state, ctx, log, 0, :unmatched)
+    # Data/container context allows do-blocks but not no_parens extension.
+    parse_kw_list([], state, ctx, log, 0, Context.container_expr())
   end
 
   defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx) do

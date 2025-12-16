@@ -12,6 +12,7 @@ defmodule ToxicParser.Pratt do
 
   alias ToxicParser.{
     Builder,
+    Context,
     EventLog,
     Identifiers,
     NoParens,
@@ -25,13 +26,47 @@ defmodule ToxicParser.Pratt do
   alias ToxicParser.Grammar.{Blocks, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
-  @type context :: :matched | :unmatched | :no_parens
+  # Legacy atom context type (for backward compatibility during migration)
+  @type context :: :matched | :unmatched | :no_parens | Context.t()
+
+  # Operators that can extend matched_expr to no_parens_expr
+  # From elixir_parser.yrl no_parens_op_expr rules (lines 230-250)
+  # EXCLUDED: :dot_op, :dot_call_op (via access_expr), :stab_op (handled separately), :assoc_op (map-only)
+  @no_parens_op_expr_operators [
+    :match_op,
+    :dual_op,
+    :mult_op,
+    :power_op,
+    :concat_op,
+    :range_op,
+    :ternary_op,
+    :xor_op,
+    :and_op,
+    :or_op,
+    :in_op,
+    :in_match_op,
+    :type_op,
+    :when_op,
+    :pipe_op,
+    :comp_op,
+    :rel_op,
+    :arrow_op
+  ]
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
           | {:keyword_key, term(), term(), term()}
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
+
+  # Context helper functions (support both legacy atoms and Context structs)
+  defp allow_do_block?(%Context{allow_do_block: v}), do: v
+  defp allow_do_block?(ctx) when is_atom(ctx), do: ctx != :matched
+
+  defp allow_no_parens_expr?(%Context{allow_no_parens_expr: v}), do: v
+  defp allow_no_parens_expr?(ctx) when is_atom(ctx), do: ctx == :no_parens
+
+  defp is_no_parens_op_expr?(kind), do: kind in @no_parens_op_expr_operators
 
   @doc """
   Parses an expression in the given context.
@@ -126,8 +161,11 @@ defmodule ToxicParser.Pratt do
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer(), keyword()) ::
           result()
   def parse_with_min_bp(%State{} = state, context, %EventLog{} = log, min_bp, opts \\ []) do
+    # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
+    nud_opts = Keyword.merge([min_bp: min_bp], opts)
+
     with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, left, state, log} <- nud(token, state, context, log, min_bp: min_bp) do
+         {:ok, left, state, log} <- nud(token, state, context, log, nud_opts) do
       led(left, state, log, min_bp, context, opts)
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
@@ -166,6 +204,8 @@ defmodule ToxicParser.Pratt do
     allow_containers = Keyword.get(opts, :allow_containers, true)
     allow_do_blocks = Keyword.get(opts, :allow_do_blocks, true)
     string_min_bp = Keyword.get(opts, :string_min_bp, min_bp)
+    # Pass through options like stop_at_assoc to string parsing
+    led_opts = Keyword.take(opts, [:stop_at_assoc])
 
     case token.kind do
       :error_token ->
@@ -199,7 +239,7 @@ defmodule ToxicParser.Pratt do
       kind when kind in [:atom_unsafe_start, :atom_safe_start] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Strings
-        Strings.parse(state, context, log, string_min_bp)
+        Strings.parse(state, context, log, string_min_bp, led_opts)
 
       # Other string/sigil tokens - always parse strings, they're not containers
       # This allows %''{}` (struct with empty charlist) to work
@@ -213,7 +253,7 @@ defmodule ToxicParser.Pratt do
            ] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Strings
-        Strings.parse(state, context, log, min_bp)
+        Strings.parse(state, context, log, min_bp, led_opts)
 
       # fn tokens need to be handled by Blocks.parse unless restricted
       :fn ->
@@ -298,9 +338,11 @@ defmodule ToxicParser.Pratt do
       callee = callee_tok.value
       base_meta = Builder.Helpers.token_meta(callee_tok.metadata)
 
-      # Check if there's a do-block following (but don't consume it yet)
+      # Check if there's a do-block following that will attach to this call.
+      # Only counts as "has do-block" if context allows do-block attachment.
+      # When context has allow_do_block: false, the do-block belongs to an outer call.
       has_do_block =
-        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and context != :matched
+        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and allow_do_block?(context)
 
       # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
@@ -597,10 +639,28 @@ defmodule ToxicParser.Pratt do
             #
             # For other unary ops, use the unary op's precedence as min_bp.
             # This implements the standard Pratt parser precedence model.
-            operand_min_bp = if op_token.kind in [:ellipsis_op, :range_op], do: 100, else: min_bp
+            # - unary_op (300): "+a[e]" -> "+(a[e])" since bracket (310) > 300
+            # Exception: @ (at_op) should capture full expressions including low-precedence
+            # operators like `when` for module attributes (@spec foo() when ...).
+            # Bracket access for @ is handled separately in led_bracket.
+            operand_min_bp =
+              case op_token.kind do
+                kind when kind in [:ellipsis_op, :range_op] -> 100
+                _ ->
+                  case Precedence.unary(op_token.kind) do
+                    {bp, _assoc} -> bp
+                    nil -> min_bp
+                  end
+              end
+
+            # Unary operator operands must NOT allow no_parens_expr extension.
+            # The extension bypasses min_bp which would break "-1 + 2" (making it "-(1+2)").
+            # Restrict the context to disable extension inside the operand.
+            # The outer context is preserved for led() after the unary is built.
+            operand_context = restrict_no_parens_extension(context)
 
             with {:ok, operand, state, log} <-
-                   parse_rhs(operand_token, state, context, log, operand_min_bp,
+                   parse_rhs(operand_token, state, operand_context, log, operand_min_bp,
                      unary_operand: true
                    ) do
               op = op_token.value
@@ -732,11 +792,11 @@ defmodule ToxicParser.Pratt do
         alias ToxicParser.Grammar.Strings
 
         # Call Strings.parse with min_bp to preserve operator precedence
-        Strings.parse(state, context, log, min_bp)
+        Strings.parse(state, context, log, min_bp, opts)
 
       true ->
         with {:ok, right, state, log} <- nud(token, state, context, log) do
-          led(right, state, log, min_bp, context)
+          led(right, state, log, min_bp, context, opts)
         end
     end
   end
@@ -763,7 +823,9 @@ defmodule ToxicParser.Pratt do
         state = TokenAdapter.pushback(state, token)
 
         with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
-          led_min_bp = if has_do_block?(right) and unary_operand, do: 0, else: min_bp
+          # For unary operands: ALL binary ops should attach (min_bp=0)
+          # For binary RHS: preserve min_bp for associativity
+          led_min_bp = if unary_operand, do: 0, else: min_bp
           led(right, state, log, led_min_bp, context, opts)
         end
 
@@ -811,11 +873,10 @@ defmodule ToxicParser.Pratt do
             state = TokenAdapter.pushback(state, token)
 
             with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
-              # For unary operands with do-blocks: ALL binary ops should attach
-              # For binary RHS with do-blocks: preserve min_bp for associativity
-              # For non-do-block expressions: always preserve min_bp
-              led_min_bp =
-                if has_do_block?(right) and unary_operand, do: 0, else: min_bp
+              # For unary operands: ALL binary ops should attach (min_bp=0)
+              # This ensures @spec foo() when a: term parses correctly
+              # For binary RHS: preserve min_bp for associativity
+              led_min_bp = if unary_operand, do: 0, else: min_bp
 
               led(right, state, log, led_min_bp, context, opts)
             end
@@ -833,9 +894,13 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Parse a paren call without calling led at the end
-  # Used by parse_rhs_identifier to preserve min_bp for associativity
-  defp parse_paren_call_base(callee_tok, state, context, log) do
+  @doc """
+  Parse a paren call without calling led at the end.
+  Used by parse_rhs_identifier to preserve min_bp for associativity.
+  Also used by Maps.parse_unary_operand for %@i(){} patterns.
+  """
+  @spec parse_paren_call_base(map(), State.t(), context(), EventLog.t()) :: result()
+  def parse_paren_call_base(callee_tok, state, context, log) do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
     # Skip leading EOE and count newlines
@@ -902,10 +967,12 @@ defmodule ToxicParser.Pratt do
         led_dot(left, state, log, min_bp, context, opts)
 
       # Bracket access: expr[key]
+      # Bracket access has precedence 310 (same as dot_op)
       # NOTE: Only treat as bracket access if:
-      # 1. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
-      # 2. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
-      {:"[", _} when eoe_tokens == [] ->
+      # 1. Bracket precedence (310) >= min_bp
+      # 2. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
+      # 3. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
+      {:"[", _} when 310 >= min_bp and eoe_tokens == [] ->
         led_bracket(left, state, log, min_bp, context, opts)
 
       # Special case: ternary_op :"//" following range_op :".."
@@ -956,6 +1023,20 @@ defmodule ToxicParser.Pratt do
 
       {_, {bp, assoc}} when bp >= min_bp ->
         led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+
+      # no_parens_expr extension: when context allows it, operators in @no_parens_op_expr_operators
+      # can extend matched_expr to no_parens_expr REGARDLESS of min_bp.
+      # This implements the grammar rule: no_parens_expr -> matched_expr no_parens_op_expr
+      # Example: @spec foo() when a: term - the `when` (bp=50) can extend `spec foo()`
+      # even though @ has bp=320, because the operand context allows no_parens extension.
+      {kind, {bp, assoc}} when is_tuple({bp, assoc}) ->
+        if is_no_parens_op_expr?(kind) and allow_no_parens_expr?(context) do
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+        else
+          # No continuation operator found - push back EOE tokens
+          state = pushback_eoe_tokens(state, eoe_tokens)
+          {:ok, left, state, log}
+        end
 
       _ ->
         # No continuation operator found - push back EOE tokens
@@ -1014,6 +1095,9 @@ defmodule ToxicParser.Pratt do
     {:ok, dot_tok, state} = TokenAdapter.next(state)
     dot_meta = build_meta(dot_tok.metadata)
 
+    # Skip EOE after dot (allows newlines between dot and member: foo.\n bar)
+    {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
     # Check for dot_container: expr.{...}
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"{"}, _} ->
@@ -1028,7 +1112,8 @@ defmodule ToxicParser.Pratt do
         end
 
       _ ->
-        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+        # Pass dot_meta for curly calls where the call metadata uses the dot's position
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
           # Check if rhs indicates a no-parens call (from op_identifier/dot_op_identifier)
           # or bracket access (from bracket_identifier)
           {combined, expects_no_parens_call, allows_bracket} =
@@ -1051,6 +1136,10 @@ defmodule ToxicParser.Pratt do
               {member, member_meta} when is_atom(member) ->
                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
                  false}
+
+              # Alias on RHS with bracket access allowed (no whitespace before [)
+              {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
+                {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, true}
 
               # Alias on RHS - build combined __aliases__ (dot_alias rule)
               # Must come before the general {name, meta, args} pattern
@@ -1262,7 +1351,8 @@ defmodule ToxicParser.Pratt do
           min_bp,
           effective_newlines,
           context,
-          log
+          log,
+          opts
         )
     end
   end
@@ -1302,10 +1392,10 @@ defmodule ToxicParser.Pratt do
         end
 
       {:ok, %{kind: :do}, _} ->
-        # In :matched context (used when parsing no-parens call arguments), do-blocks
+        # When allow_do_block is false (e.g. parsing no-parens call arguments), do-blocks
         # belong to the outer call (e.g. `foo bar do ... end`) and must NOT attach to
         # the final argument expression (e.g. `bar do ... end`).
-        if context == :matched do
+        if not allow_do_block?(context) do
           led(ast, state, log, min_bp, context)
         else
           # Do-block - parse and attach to call
@@ -1605,11 +1695,15 @@ defmodule ToxicParser.Pratt do
   # Helper to parse RHS of `when` binary operator
   # Handles both regular RHS and keyword_key returns from quoted keywords
   defp parse_when_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log) do
+    # Restrict context for RHS parsing to prevent nested operator bypass
+    rhs_context = restrict_no_parens_extension(context)
+
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
-        case parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
+        case parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp) do
           {:ok, right, state, log} ->
             combined = build_binary_op(op_token, left, right, newlines)
+            # Continuation uses original context
             led(combined, state, log, min_bp, context)
 
           # String was a quoted keyword key - parse value and handle as keyword list RHS
@@ -1617,7 +1711,7 @@ defmodule ToxicParser.Pratt do
             state = EOE.skip(state)
 
             with {:ok, value_ast, state, log} <-
-                   parse_with_min_bp(state, context, log, rhs_min_bp) do
+                   parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
               kw_list = [{key_atom, value_ast}]
               # Check for more keywords after comma
               handle_when_keyword_continuation(
@@ -1636,7 +1730,7 @@ defmodule ToxicParser.Pratt do
             state = EOE.skip(state)
 
             with {:ok, value_ast, state, log} <-
-                   parse_with_min_bp(state, context, log, rhs_min_bp) do
+                   parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
               key_ast =
                 Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
 
@@ -1732,12 +1826,19 @@ defmodule ToxicParser.Pratt do
   end
 
   # Helper to parse RHS of binary operator
-  defp parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log) do
+  defp parse_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log, opts \\ []) do
+    # For RHS parsing, we don't want to allow no_parens_expr extension.
+    # The allow_no_parens_expr flag should only affect the TOP level of expression parsing,
+    # not nested operands. This ensures proper precedence handling in chains like
+    # "for x when is_integer(x) <- xs" where <- should NOT be consumed inside when's RHS.
+    rhs_context = restrict_no_parens_extension(context)
+
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
-        with {:ok, right, state, log} <- parse_rhs(rhs_token, state, context, log, rhs_min_bp) do
+        with {:ok, right, state, log} <- parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp, opts) do
           combined = build_binary_op(op_token, left, right, newlines)
-          led(combined, state, log, min_bp, context)
+          # Continuation uses original context to allow further extension at outer level
+          led(combined, state, log, min_bp, context, opts)
         end
 
       {:eof, state} ->
@@ -1747,6 +1848,11 @@ defmodule ToxicParser.Pratt do
         {:error, diag, state, log}
     end
   end
+
+  # Restrict context to prevent no_parens_expr extension in nested operands
+  defp restrict_no_parens_extension(%Context{} = ctx), do: %{ctx | allow_no_parens_expr: false}
+  defp restrict_no_parens_extension(:no_parens), do: :matched
+  defp restrict_no_parens_extension(ctx), do: ctx
 
   # Build binary operation AST, with special handling for "not in" rewrite
   # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
@@ -1940,9 +2046,14 @@ defmodule ToxicParser.Pratt do
           # container_expr case - parse expression
           case parse(state, ctx, log) do
             {:ok, expr, state, log} ->
+              # Skip any newlines after expression before checking for ] or ,
+              {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :","}, _} ->
                   {:ok, _comma, state} = TokenAdapter.next(state)
+                  # Skip any newlines after comma
+                  {state, _newlines} = EOE.skip_count_newlines(state, 0)
                   # After comma, check if next is keyword list
                   case TokenAdapter.peek(state) do
                     {:ok, kw_tok, _} ->
@@ -2085,9 +2196,14 @@ defmodule ToxicParser.Pratt do
         dot_meta = build_meta(dot_tok.metadata)
 
         # Parse the RHS of dot - must be an alias or identifier
-        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+        # Pass dot_meta for curly calls where the call metadata uses the dot's position
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
           combined =
             case rhs do
+              # Alias on RHS with bracket access (ignored here, just unwrap)
+              {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
+                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
               # Alias on RHS - build combined __aliases__ (dot_alias rule)
               {:__aliases__, rhs_meta, [rhs_alias]} ->
                 build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
@@ -2129,9 +2245,14 @@ defmodule ToxicParser.Pratt do
         dot_meta = build_meta(dot_tok.metadata)
 
         # Parse the RHS of dot - must be an alias or identifier
-        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log) do
+        # Pass dot_meta for curly calls where the call metadata uses the dot's position
+        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
           combined =
             case rhs do
+              # Alias on RHS with bracket access (unwrap the flag, bracket handled separately)
+              {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
+                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
+
               # Alias on RHS - build combined __aliases__ (dot_alias rule)
               {:__aliases__, rhs_meta, [rhs_alias]} ->
                 build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
@@ -2140,6 +2261,15 @@ defmodule ToxicParser.Pratt do
               # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
               {name, meta, args} when is_atom(name) and is_list(args) ->
                 {{:., dot_meta, [left, name]}, meta, args}
+
+              # Simple identifier with :no_parens_call flag - treat same as simple identifier
+              # In struct base context, { is the struct body, not a no-parens call argument
+              {member, member_meta, :no_parens_call} when is_atom(member) ->
+                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+
+              # Simple identifier with :allows_bracket flag
+              {member, member_meta, :allows_bracket} when is_atom(member) ->
+                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
 
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->

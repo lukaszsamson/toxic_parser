@@ -201,6 +201,12 @@ defmodule ToxicParser.Grammar.Maps do
         alias ToxicParser.Grammar.Containers
         Containers.parse(state, ctx, log)
 
+      # Paren call as operand (e.g., %@i(){} where i() is the operand)
+      # Parse identifier then consume () as a paren call
+      {:ok, %{kind: :paren_identifier} = tok, _} ->
+        {:ok, _tok, state} = TokenAdapter.next(state)
+        Pratt.parse_paren_call_base(tok, state, ctx, log)
+
       # Base expression (literal, identifier, etc.) - parse without dots
       _ ->
         Pratt.parse_base(state, ctx, log)
