@@ -545,7 +545,8 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse arguments inside stab_parens_many: call_args_no_parens_kw or call_args_no_parens_many
   defp parse_stab_parens_args(state, ctx, log) do
-    min_bp = Precedence.when_op_bp() + 1
+    # Stop keyword values before `->` (but allow `when` inside values, including `when` with kw RHS).
+    min_bp = Precedence.stab_op_bp() + 1
 
     case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log, min_bp: min_bp) do
       {:ok, kw_list, state, log} ->
@@ -570,7 +571,8 @@ defmodule ToxicParser.Grammar.Stabs do
             {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
             state = EOE.skip(state)
             # Check for keyword list tail after comma.
-            min_bp = Precedence.when_op_bp() + 1
+            # Stop keyword values before `->`, but allow nested `when` inside values.
+            min_bp = Precedence.stab_op_bp() + 1
 
             case Keywords.try_parse_call_args_no_parens_kw(state, Context.matched_expr(), log,
                    min_bp: min_bp

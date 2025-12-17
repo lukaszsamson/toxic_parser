@@ -2823,7 +2823,7 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("(() -> x when y: z, z: w)")
     # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
     assert_conforms("(() when foo -> x when y: z, z: w)")
-    assert_conforms("(() when foo: 1 -> x when y: z, z: w)")
+    assert_conforms("(() when a when foo: 1 -> x when y: z, z: w)")
     # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
     assert_conforms("(a -> x when y: z, z: w)")
     assert_conforms("(a, b -> x when y: z, z: w)")
@@ -2853,7 +2853,7 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("fn () -> x when y: z, z: w end")
     # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
     assert_conforms("fn () when foo -> x when y: z, z: w end")
-    assert_conforms("fn () when foo: 1 -> x when y: z, z: w end")
+    assert_conforms("fn () when a when foo: 1 -> x when y: z, z: w end")
     # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
     assert_conforms("fn a -> x when y: z, z: w end")
     assert_conforms("fn a, b -> x when y: z, z: w end")
@@ -2864,6 +2864,23 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("fn (a) when 1 -> x when y: z, z: w end")
     assert_conforms("fn (a, b) when 1 -> x when y: z, z: w end")
     assert_conforms("fn (a) when foo: 1 -> x when y: z, z: w end")
+  end
+
+  test "when keyword in do-block" do
+    assert_conforms("a do x when y: z, z: w end")
+    assert_conforms("if a do 1 else x when y: z, z: w end")
+  end
+
+  test "when keyword in call_args_no_parens_kw" do
+    assert_conforms("a foo: x when y: z, z: w when q1: m, q2: n")
+
+    assert_conforms("a foo: x when y: z, z: w")
+    assert_conforms("a 1, 2, foo: x when y: z, z: w")
+    assert_conforms("a 1, 2, foo: 0, bar: x when y: z, z: w")
+    assert_conforms("a 1, 2, foo: x when y: z, z: w do :ok end")
+
+    assert_conforms("((foo: x when y: z, z: w) -> 1)")
+    assert_conforms("((a, foo: x when y: z, z: w) -> 1)")
   end
 
   describe "newlines" do
