@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{EOE, Keywords}
+  alias ToxicParser.Grammar.{Delimited, EOE, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -523,32 +523,17 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, update_ast, close_meta, state, log}
 
       {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # Parse trailing keywords
-          with {:ok, kw_list, state, log} <-
-                 Keywords.parse_kw_data(state, Context.container_expr(), log) do
-            state = EOE.skip(state)
+        _tok = tok
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"} = close_tok, _} ->
-                {:ok, _close, state} = TokenAdapter.next(state)
-                close_meta = token_meta(close_tok.metadata)
-                all_entries = initial_entries ++ kw_list
-                update_ast = {:|, pipe_meta, [base, all_entries]}
-                {:ok, update_ast, close_meta, state, log}
-
-              _ ->
-                {:not_update, state}
-            end
-          end
-        else
-          # Parse more assoc expressions
-          with {:ok, more_entries, close_meta, state, log} <-
-                 parse_map_close(state, Context.container_expr(), log) do
-            all_entries = initial_entries ++ more_entries
-            update_ast = {:|, pipe_meta, [base, all_entries]}
-            {:ok, update_ast, close_meta, state, log}
-          end
+        # map_close already handles:
+        # - kw_data close_curly
+        # - assoc close_curly
+        # - assoc_base ',' kw_data close_curly
+        with {:ok, more_entries, close_meta, state, log} <-
+               parse_map_close(state, Context.container_expr(), log) do
+          all_entries = initial_entries ++ more_entries
+          update_ast = {:|, pipe_meta, [base, all_entries]}
+          {:ok, update_ast, close_meta, state, log}
         end
 
       {:eof, state} ->
@@ -591,35 +576,31 @@ defmodule ToxicParser.Grammar.Maps do
   # Parse the RHS of a map update (after the |)
   # Can be kw_data or assoc_expr(s)
   defp parse_map_update_rhs(base, pipe_meta, state, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # kw_data: %{base | a: 1, b: 2}
-          with {:ok, kw_list, state, log} <-
-                 Keywords.parse_kw_data(state, Context.container_expr(), log) do
-            state = EOE.skip(state)
+    container_ctx = Context.container_expr()
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"} = close_tok, _} ->
-                {:ok, _close, state} = TokenAdapter.next(state)
-                close_meta = token_meta(close_tok.metadata)
-                update_ast = {:|, pipe_meta, [base, kw_list]}
-                {:ok, update_ast, close_meta, state, log}
+    case Keywords.try_parse_kw_data(state, container_ctx, log) do
+      {:ok, kw_list, state, log} ->
+        # assoc_update_kw -> matched_expr pipe_op_eol kw_data
+        # assoc_update_kw -> unmatched_expr pipe_op_eol kw_data
+        state = EOE.skip(state)
 
-              _ ->
-                {:not_update, state}
-            end
-          end
-        else
-          # assoc_expr(s): %{base | k => v, ...}
-          parse_map_update_assoc_entries(base, pipe_meta, [], state, log)
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :"}"} = close_tok, _} ->
+            {:ok, _close, state} = TokenAdapter.next(state)
+            close_meta = token_meta(close_tok.metadata)
+            update_ast = {:|, pipe_meta, [base, kw_list]}
+            {:ok, update_ast, close_meta, state, log}
+
+          _ ->
+            {:not_update, state}
         end
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:no_kw, state, log} ->
+        # assoc_expr(s): %{base | k => v, ...}
+        parse_map_update_assoc_entries(base, pipe_meta, [], state, log)
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
     end
   end
 
@@ -644,7 +625,6 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, _comma, state} = TokenAdapter.next(state)
               state = EOE.skip(state)
 
-              # Check for kw_data after comma
               case TokenAdapter.peek(state) do
                 {:ok, %{kind: :"}"} = close_tok, _} ->
                   # Trailing comma
@@ -654,34 +634,13 @@ defmodule ToxicParser.Grammar.Maps do
                   update_ast = {:|, pipe_meta, [base, entries]}
                   {:ok, update_ast, close_meta, state, log}
 
-                {:ok, tok, _} ->
-                  if Keywords.starts_kw?(tok) do
-                    # Switch to kw_data
-                    with {:ok, kw_list, state, log} <-
-                           Keywords.parse_kw_data(state, Context.container_expr(), log) do
-                      state = EOE.skip(state)
-
-                      case TokenAdapter.peek(state) do
-                        {:ok, %{kind: :"}"} = close_tok, _} ->
-                          {:ok, _close, state} = TokenAdapter.next(state)
-                          close_meta = token_meta(close_tok.metadata)
-                          entries = Enum.reverse([{key, value} | acc]) ++ kw_list
-                          update_ast = {:|, pipe_meta, [base, entries]}
-                          {:ok, update_ast, close_meta, state, log}
-
-                        _ ->
-                          {:not_update, state}
-                      end
-                    end
-                  else
-                    # More assoc entries
-                    parse_map_update_assoc_entries(
-                      base,
-                      pipe_meta,
-                      [{key, value} | acc],
-                      state,
-                      log
-                    )
+                {:ok, _tok, _} ->
+                  # Parse the remaining entries using map_close (assoc and/or kw tail)
+                  with {:ok, more_entries, close_meta, state, log} <-
+                         parse_map_close(state, Context.container_expr(), log) do
+                    entries = Enum.reverse([{key, value} | acc]) ++ more_entries
+                    update_ast = {:|, pipe_meta, [base, entries]}
+                    {:ok, update_ast, close_meta, state, log}
                   end
 
                 {:eof, state} ->
@@ -726,34 +685,13 @@ defmodule ToxicParser.Grammar.Maps do
                   update_ast = {:|, pipe_meta, [base, entries]}
                   {:ok, update_ast, close_meta, state, log}
 
-                {:ok, tok, _} ->
-                  if Keywords.starts_kw?(tok) do
-                    # Switch to kw_data
-                    with {:ok, kw_list, state, log} <-
-                           Keywords.parse_kw_data(state, Context.container_expr(), log) do
-                      state = EOE.skip(state)
-
-                      case TokenAdapter.peek(state) do
-                        {:ok, %{kind: :"}"} = close_tok, _} ->
-                          {:ok, _close, state} = TokenAdapter.next(state)
-                          close_meta = token_meta(close_tok.metadata)
-                          entries = Enum.reverse([map_base_expr | acc]) ++ kw_list
-                          update_ast = {:|, pipe_meta, [base, entries]}
-                          {:ok, update_ast, close_meta, state, log}
-
-                        _ ->
-                          {:not_update, state}
-                      end
-                    end
-                  else
-                    # More assoc entries after map_base_expr - need to check if it's assoc
-                    parse_map_update_assoc_entries(
-                      base,
-                      pipe_meta,
-                      [map_base_expr | acc],
-                      state,
-                      log
-                    )
+                {:ok, _tok, _} ->
+                  # Parse the remaining entries using map_close (assoc and/or kw tail)
+                  with {:ok, more_entries, close_meta, state, log} <-
+                         parse_map_close(state, Context.container_expr(), log) do
+                    entries = Enum.reverse([map_base_expr | acc]) ++ more_entries
+                    update_ast = {:|, pipe_meta, [base, entries]}
+                    {:ok, update_ast, close_meta, state, log}
                   end
 
                 {:eof, state} ->
@@ -773,9 +711,8 @@ defmodule ToxicParser.Grammar.Maps do
   # Check if we should skip map update parsing (starts with definite keyword)
   defp starts_with_kw?(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _}
-      when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
-        true
+      {:ok, tok, _} ->
+        Keywords.starts_kw_or_quoted_key?(tok)
 
       _ ->
         false
@@ -784,86 +721,19 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Parse map_close: kw_data close_curly | assoc close_curly | assoc_base ',' kw_data close_curly
   defp parse_map_close(state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          # kw_data close_curly
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            state = EOE.skip(state)
-
-            case TokenAdapter.next(state) do
-              {:ok, %{kind: :"}"} = close_tok, state} ->
-                close_meta = token_meta(close_tok.metadata)
-                {:ok, kw_list, close_meta, state, log}
-
-              {:ok, tok, state} ->
-                {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
-
-              {:error, diag, state} ->
-                {:error, diag, state, log}
-            end
-          end
-        else
-          # assoc or assoc_base ',' kw_data
-          parse_assoc_entries([], state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Parse assoc entries (key => value pairs)
-  defp parse_assoc_entries(acc, state, ctx, log) do
-    with {:ok, entry, state, log} <- parse_assoc_expr(state, ctx, log) do
-      state = EOE.skip(state)
-
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :"}"} = close_tok, _} ->
-          {:ok, _close, state} = TokenAdapter.next(state)
-          close_meta = token_meta(close_tok.metadata)
-          {:ok, Enum.reverse([entry | acc]), close_meta, state, log}
-
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
+    item_fun = fn state, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, ctx, log) do
+        {:ok, kw_list, state, log} ->
+          # Keyword data must come last in maps. Only accept it if the closing
+          # curly follows (kw_data close_curly).
           state = EOE.skip(state)
-          # Check for trailing comma, kw_data, or more assoc_expr
+
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"} = close_tok, _} ->
-              {:ok, _close, state} = TokenAdapter.next(state)
-              close_meta = token_meta(close_tok.metadata)
-              {:ok, Enum.reverse([entry | acc]), close_meta, state, log}
+            {:ok, %{kind: :"}"}, _} ->
+              {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, tok, _} ->
-              if Keywords.starts_kw?(tok) do
-                # assoc_base ',' kw_data
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                  state = EOE.skip(state)
-
-                  case TokenAdapter.next(state) do
-                    {:ok, %{kind: :"}"} = close_tok, state} ->
-                      close_meta = token_meta(close_tok.metadata)
-                      {:ok, Enum.reverse([entry | acc]) ++ kw_list, close_meta, state, log}
-
-                    {:ok, tok, state} ->
-                      {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-                    {:eof, state} ->
-                      {:error, :unexpected_eof, state, log}
-
-                    {:error, diag, state} ->
-                      {:error, diag, state, log}
-                  end
-                end
-              else
-                parse_assoc_entries([entry | acc], state, ctx, log)
-              end
+            {:ok, %{kind: kind}, state} ->
+              {:error, {:expected, :"}", got: kind}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -872,8 +742,27 @@ defmodule ToxicParser.Grammar.Maps do
               {:error, diag, state, log}
           end
 
+        {:no_kw, state, log} ->
+          with {:ok, entry, state, log} <- parse_assoc_expr(state, ctx, log) do
+            {:ok, {:entry, entry}, state, log}
+          end
+
+        {:error, reason, state, log} ->
+          {:error, reason, state, log}
+      end
+    end
+
+    with {:ok, tagged_items, state, log} <-
+           Delimited.parse_comma_separated(state, ctx, log, :"}", item_fun) do
+      state = EOE.skip(state)
+
+      case TokenAdapter.next(state) do
+        {:ok, %{kind: :"}"} = close_tok, state} ->
+          close_meta = token_meta(close_tok.metadata)
+          {:ok, finalize_map_close_items(tagged_items), close_meta, state, log}
+
         {:ok, tok, state} ->
-          {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
+          {:error, {:expected, :"}", got: tok.kind}, state, log}
 
         {:eof, state} ->
           {:error, :unexpected_eof, state, log}
@@ -881,6 +770,21 @@ defmodule ToxicParser.Grammar.Maps do
         {:error, diag, state} ->
           {:error, diag, state, log}
       end
+    end
+  end
+
+  defp finalize_map_close_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        entries =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:entry, entry} -> entry end)
+
+        entries ++ kw_list
+
+      _ ->
+        Enum.map(tagged_items, fn {:entry, entry} -> entry end)
     end
   end
 
