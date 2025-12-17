@@ -386,47 +386,6 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  # Check if a list is a keyword-like list (list of {key, value} tuples)
-  # The key can be an atom (standard keyword) or an AST (interpolated keyword)
-  defp is_keyword_list?([{_key, _value} | rest]), do: is_keyword_list?(rest)
-  defp is_keyword_list?([]), do: true
-  defp is_keyword_list?(_), do: false
-
-  defp tuple_element_container_literal?(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, state} when kind in [:"[", :"{"] -> {true, state}
-      {:ok, _tok, state} -> {false, state}
-      {:eof, state} -> {false, state}
-      {:error, _diag, state} -> {false, state}
-    end
-  end
-
-  defp merge_tuple_keyword_tail(tagged_elements) do
-    {tail_rev, head_rev} =
-      tagged_elements
-      |> Enum.reverse()
-      |> Enum.split_while(fn {expr, is_container_literal} ->
-        not is_container_literal and is_list(expr) and is_keyword_list?(expr)
-      end)
-
-    if length(tail_rev) >= 2 do
-      merged_kw =
-        tail_rev
-        |> Enum.reverse()
-        |> Enum.flat_map(fn {expr, _flag} -> expr end)
-
-      Enum.reverse(head_rev) ++ [{merged_kw, false}]
-    else
-      tagged_elements
-    end
-  end
-
-  defp finalize_tuple_elements(tagged_elements) do
-    tagged_elements
-    |> merge_tuple_keyword_tail()
-    |> Enum.map(fn {expr, _flag} -> expr end)
-  end
-
   defp parse_tuple(state, ctx, log, min_bp) do
     with {:ok, ast, state, log} <- parse_tuple_base(state, ctx, log) do
       # Continue with Pratt's led() to handle trailing operators like <-, =, etc.
@@ -458,199 +417,47 @@ defmodule ToxicParser.Grammar.Containers do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    case TokenAdapter.peek(state) do
-      # Empty tuple
-      {:ok, %{kind: :"}"} = close_tok, _} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        close_meta = token_meta(close_tok.metadata)
-        {:ok, [], leading_newlines, close_meta, state, log}
+    container_ctx = Context.container_expr()
 
-      {:ok, tok, _} ->
-        # Tuple args follow container_args in elixir_parser.yrl.
-        # Importantly, a keyword tail like `{1, foo: 1, bar: 2}` is a 2-tuple:
-        # `{1, [foo: 1, bar: 2]}`.
-        # Also, a tuple may start with keyword data, e.g. `{foo: 1, bar: 2}`,
-        # which is parsed as a 1-tuple whose sole element is a keyword list.
-
-        # For definite keywords (kw_identifier), parse as keyword list
-        # For potential quoted keywords (string_start), try keyword parsing with checkpoint
-        cond do
-          # TODO: no coverage
-          Keywords.starts_kw?(tok) ->
-            # Definite keyword - parse as keyword list
-            with {:ok, kw_list, state, log} <-
-                   Keywords.parse_kw_data(state, Context.container_expr(), log) do
-              {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-              case TokenAdapter.next(state) do
-                {:ok, %{kind: :"}"} = close_tok, state} ->
-                  close_meta = token_meta(close_tok.metadata)
-                  {:ok, [kw_list], leading_newlines, close_meta, state, log}
-
-                {:ok, tok, state} ->
-                  {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-                {:eof, state} ->
-                  {:error, :unexpected_eof, state, log}
-
-                {:error, diag, state} ->
-                  {:error, diag, state, log}
-              end
-            end
-
-          Keywords.starts_kw_or_quoted_key?(tok) ->
-            # Potential quoted keyword - checkpoint and try keyword parsing
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
-
-            case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
-              {:ok, kw_list, state, log} ->
-                state = TokenAdapter.drop_checkpoint(state, ref)
-                {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-                case TokenAdapter.next(state) do
-                  {:ok, %{kind: :"}"} = close_tok, state} ->
-                    close_meta = token_meta(close_tok.metadata)
-                    {:ok, [kw_list], leading_newlines, close_meta, state, log}
-
-                  {:ok, tok, state} ->
-                    {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
-
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
-                end
-
-              {:error, _reason, _state, _log} ->
-                # Not a keyword - rewind and parse as expression
-                state = TokenAdapter.rewind(checkpoint_state, ref)
-                parse_tuple_first_element(state, log, leading_newlines)
-            end
-
-          true ->
-            parse_tuple_first_element(state, log, leading_newlines)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Parse the first element of a tuple when it's not a keyword-only tuple
-  defp parse_tuple_first_element(state, log, leading_newlines) do
-    {first_is_container_literal, state} = tuple_element_container_literal?(state)
-
-    with {:ok, first, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :"}"} = close_tok, _} ->
-          {:ok, _close, state} = TokenAdapter.next(state)
-          close_meta = token_meta(close_tok.metadata)
-          {:ok, [first], leading_newlines, close_meta, state, log}
-
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
+    item_fun = fn state, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, container_ctx, log) do
+        {:ok, kw_list, state, log} ->
+          # container_args allows a keyword tail as the final element. We only
+          # treat this as kw_data if the close curly follows.
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"} = close_tok, _} ->
-              # Trailing comma: {1,}
-              {:ok, _close, state} = TokenAdapter.next(state)
-              close_meta = token_meta(close_tok.metadata)
-              {:ok, [first], leading_newlines, close_meta, state, log}
+            {:ok, %{kind: :"}"}, _} ->
+              {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, next_tok, _} ->
-              # For keyword tail, check both regular and quoted keyword starts
-              # For quoted keywords, use checkpoint since it may be a regular string
-              cond do
-                # TODO: no coverage?
-                Keywords.starts_kw?(next_tok) ->
-                  # Definite keyword tail
-                  parse_tuple_keyword_tail(first, state, log, leading_newlines)
+            {:ok, %{kind: kind}, state} ->
+              {:error, {:expected, :"}", got: kind}, state, log}
 
-                Keywords.starts_kw_or_quoted_key?(next_tok) ->
-                  # Potential quoted keyword - checkpoint and try
-                  {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
 
-                  case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
-                    {:ok, kw_list, state, log} ->
-                      state = TokenAdapter.drop_checkpoint(state, ref)
-                      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-                      case TokenAdapter.next(state) do
-                        {:ok, %{kind: :"}"} = close_tok, state} ->
-                          close_meta = token_meta(close_tok.metadata)
-                          {:ok, [first, kw_list], leading_newlines, close_meta, state, log}
-
-                        {:ok, tok, state} ->
-                          {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-                        {:eof, state} ->
-                          {:error, :unexpected_eof, state, log}
-
-                        {:error, diag, state} ->
-                          {:error, diag, state, log}
-                      end
-
-                    {:error, _reason, _state, _log} ->
-                      # Not a keyword - rewind and continue as general tuple
-                      state = TokenAdapter.rewind(checkpoint_state, ref)
-
-                      parse_tuple_rest(
-                        [{first, first_is_container_literal}],
-                        state,
-                        log,
-                        leading_newlines
-                      )
-                  end
-
-                true ->
-                  # General tuple (3+ elements or 2 elements without kw tail)
-                  parse_tuple_rest(
-                    [{first, first_is_container_literal}],
-                    state,
-                    log,
-                    leading_newlines
-                  )
-              end
-
-            _ ->
-              # General tuple (3+ elements or 2 elements without kw tail)
-              parse_tuple_rest(
-                [{first, first_is_container_literal}],
-                state,
-                log,
-                leading_newlines
-              )
+            {:error, diag, state} ->
+              {:error, diag, state, log}
           end
 
-        {:ok, tok, state} ->
-          {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
+        {:no_kw, state, log} ->
+          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+            {:ok, {:expr, expr}, state, log}
+          end
 
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
+        {:error, reason, state, log} ->
+          {:error, reason, state, log}
       end
     end
-  end
 
-  # Parse keyword tail for tuple like {first, foo: 1, bar: 2}
-  defp parse_tuple_keyword_tail(first, state, log, leading_newlines) do
-    with {:ok, kw_list, state, log} <-
-           Keywords.parse_kw_data(state, Context.container_expr(), log) do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
+    with {:ok, tagged_items, state, log} <-
+           Delimited.parse_comma_separated(state, container_ctx, log, :"}", item_fun,
+             allow_empty?: true
+           ) do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :"}"} = close_tok, state} ->
           close_meta = token_meta(close_tok.metadata)
-          {:ok, [first, kw_list], leading_newlines, close_meta, state, log}
+          {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, log}
 
         {:ok, tok, state} ->
           {:error, {:expected, :"}", got: tok.kind}, state, log}
@@ -664,112 +471,20 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_tuple_rest(tagged_acc, state, log, leading_newlines) do
-    {expr_is_container_literal, state} = tuple_element_container_literal?(state)
+  defp finalize_tuple_items([]), do: []
 
-    with {:ok, expr, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-      new_tagged_acc = [{expr, expr_is_container_literal} | tagged_acc]
+  defp finalize_tuple_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        exprs =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:expr, expr} -> expr end)
 
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
-          {state, _newlines} = EOE.skip_count_newlines(state, 0)
+        exprs ++ [kw_list]
 
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"} = close_tok, _} ->
-              # Trailing comma
-              {:ok, _close, state} = TokenAdapter.next(state)
-              close_meta = token_meta(close_tok.metadata)
-              elements = Enum.reverse(new_tagged_acc) |> finalize_tuple_elements()
-              {:ok, elements, leading_newlines, close_meta, state, log}
-
-            {:ok, next_tok, _} ->
-              # Check for keyword tail (e.g., {1, 2, 3, foo: :bar})
-              cond do
-                # TODO: no coverage?
-                Keywords.starts_kw?(next_tok) ->
-                  # Definite keyword tail
-                  parse_tuple_rest_keyword_tail(new_tagged_acc, state, log, leading_newlines)
-
-                Keywords.starts_kw_or_quoted_key?(next_tok) ->
-                  # Potential quoted keyword - checkpoint and try
-                  {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
-
-                  case Keywords.parse_kw_data(checkpoint_state, Context.container_expr(), log) do
-                    {:ok, kw_list, state, log} ->
-                      state = TokenAdapter.drop_checkpoint(state, ref)
-                      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-                      case TokenAdapter.next(state) do
-                        {:ok, %{kind: :"}"} = close_tok, state} ->
-                          close_meta = token_meta(close_tok.metadata)
-                          elements = Enum.reverse(new_tagged_acc) |> finalize_tuple_elements()
-                          {:ok, elements ++ [kw_list], leading_newlines, close_meta, state, log}
-
-                        {:ok, tok, state} ->
-                          {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-                        {:eof, state} ->
-                          {:error, :unexpected_eof, state, log}
-
-                        {:error, diag, state} ->
-                          {:error, diag, state, log}
-                      end
-
-                    {:error, _reason, _state, _log} ->
-                      # Not a keyword - rewind and continue
-                      state = TokenAdapter.rewind(checkpoint_state, ref)
-                      parse_tuple_rest(new_tagged_acc, state, log, leading_newlines)
-                  end
-
-                true ->
-                  parse_tuple_rest(new_tagged_acc, state, log, leading_newlines)
-              end
-
-            _ ->
-              parse_tuple_rest(new_tagged_acc, state, log, leading_newlines)
-          end
-
-        {:ok, %{kind: :"}"} = close_tok, _} ->
-          {:ok, _close, state} = TokenAdapter.next(state)
-          close_meta = token_meta(close_tok.metadata)
-          elements = Enum.reverse(new_tagged_acc) |> finalize_tuple_elements()
-          {:ok, elements, leading_newlines, close_meta, state, log}
-
-        {:ok, tok, state} ->
-          {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
-      end
-    end
-  end
-
-  # Parse keyword tail for 3+ element tuple like {1, 2, 3, foo: :bar}
-  defp parse_tuple_rest_keyword_tail(tagged_acc, state, log, leading_newlines) do
-    with {:ok, kw_list, state, log} <-
-           Keywords.parse_kw_data(state, Context.container_expr(), log) do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :"}"} = close_tok, state} ->
-          close_meta = token_meta(close_tok.metadata)
-          elements = Enum.reverse(tagged_acc) |> finalize_tuple_elements()
-          {:ok, elements ++ [kw_list], leading_newlines, close_meta, state, log}
-
-        {:ok, tok, state} ->
-          {:error, {:expected, :"}", got: tok.kind}, state, log}
-
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
-
-        {:error, diag, state} ->
-          {:error, diag, state, log}
-      end
+      _ ->
+        Enum.map(tagged_items, fn {:expr, expr} -> expr end)
     end
   end
 end
