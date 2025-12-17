@@ -164,11 +164,11 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse expressions in parens, handling semicolons as separators
   # Grammar: paren_expr -> expr (';' expr)* ')'
   # Multiple expressions become a __block__
-  # NOTE: Inside parens, we always use :unmatched context because parens create
-  # a new expression boundary - do-blocks inside belong to the inner call.
+  # NOTE: Inside parens, we parse full `expr` (matched/unmatched/no_parens).
+  # This matches `elixir_parser.yrl` via `stab_expr -> expr` under `stab_eoe`
+  # and is required for forms like `x when y: z`.
   defp parse_expr_in_paren_impl(open_meta, acc, state, ctx, log, min_bp) do
-    # Use :unmatched inside parens to allow do-blocks on inner calls
-    with {:ok, expr, state, log} <- Expressions.expr(state, Context.unmatched_expr(), log) do
+    with {:ok, expr, state, log} <- Expressions.expr(state, Context.expr(), log) do
       # Check for EOE (semicolon) or close paren
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :eoe} = eoe_tok, _} ->

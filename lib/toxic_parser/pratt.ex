@@ -1249,9 +1249,8 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
-      # This applies regardless of context (not just :no_parens)
+      # This only applies when `no_parens_expr` extension is enabled.
       {:ok, _rhs_tok, _} when op_token.kind == :when_op and context.allow_no_parens_expr ->
-        dbg(context)
         case Keywords.try_parse_call_args_no_parens_kw(state, context, log) do
           {:ok, kw_list, state, log} ->
             op = op_token.value

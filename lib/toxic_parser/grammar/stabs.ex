@@ -200,8 +200,17 @@ defmodule ToxicParser.Grammar.Stabs do
         fallback_fun.(state, log)
 
       {:error, reason, state, log} ->
-        # Error during stab parsing - could try expression fallback
-        {:error, reason, state, log}
+        # Error during stab parsing - this may still be a valid parenthesized expression
+        # (e.g. `x when y: z`), so try the expression fallback before returning the error.
+        fallback_state = TokenAdapter.rewind(checkpoint_state, ref)
+
+        case fallback_fun.(fallback_state, log) do
+          {:ok, _ast, _state, _log} = ok ->
+            ok
+
+          _ ->
+            {:error, reason, state, log}
+        end
     end
   end
 
@@ -617,51 +626,67 @@ defmodule ToxicParser.Grammar.Stabs do
         when_meta = token_meta(when_tok.metadata)
         state = EOE.skip(state)
 
-        # Parse guard expression with min_bp > stab_op (10) to stop before ->
-        # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
-        with {:ok, guard, state, log} <-
-               Pratt.parse_with_min_bp(
-                 state,
-                 Context.unmatched_expr(),
-                 log,
-                 Precedence.stab_op_bp() + 1
-               ) do
-          case TokenAdapter.next(state) do
-            {:ok, %{kind: :stab_op} = stab_tok, state} ->
-              stab_base_meta = token_meta(stab_tok.metadata)
-              # Newlines can come from token metadata (before stab) or EOE (after stab)
-              token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-              # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
-              {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-              newlines = max(token_newlines, newlines_after)
+        # If the next token is a keyword pair starter (`y:`), this cannot be a stab guard.
+        # It's the `when` operator with a keyword list RHS (see `no_parens_op_expr`).
+        case TokenAdapter.peek(state) do
+          {:ok, tok, _} ->
+            if Keywords.starts_kw?(tok) do
+              {:not_stab, state, log}
+            else
+              # Parse guard expression with min_bp > stab_op (10) to stop before ->
+              # Use :unmatched context so do-blocks can attach to expressions like `if a do :ok end`
+              with {:ok, guard, state, log} <-
+                     Pratt.parse_with_min_bp(
+                       state,
+                       Context.unmatched_expr(),
+                       log,
+                       Precedence.stab_op_bp() + 1
+                     ) do
+                case TokenAdapter.next(state) do
+                  {:ok, %{kind: :stab_op} = stab_tok, state} ->
+                    stab_base_meta = token_meta(stab_tok.metadata)
+                    # Newlines can come from token metadata (before stab) or EOE (after stab)
+                    token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
 
-              stab_meta =
-                if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
+                    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+                    {state, newlines_after} = EOE.skip_newlines_only(state, 0)
+                    newlines = max(token_newlines, newlines_after)
 
-              with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
-                # unwrap_splice for stab clause patterns
-                unwrapped = unwrap_splice(patterns)
-                # Apply parens meta before wrapping with guard
-                {final_patterns, final_stab_meta} =
-                  apply_parens_meta(unwrapped, parens_meta, stab_meta)
+                    stab_meta =
+                      if newlines > 0,
+                        do: [newlines: newlines] ++ stab_base_meta,
+                        else: stab_base_meta
 
-                # Wrap patterns with guard in a when clause
-                patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
-                clause = {:->, final_stab_meta, [patterns_with_guard, body]}
-                {:ok, clause, state, log}
+                    with {:ok, body, state, log} <- parse_stab_body(state, ctx, log, terminator) do
+                      # unwrap_splice for stab clause patterns
+                      unwrapped = unwrap_splice(patterns)
+                      # Apply parens meta before wrapping with guard
+                      {final_patterns, final_stab_meta} =
+                        apply_parens_meta(unwrapped, parens_meta, stab_meta)
+
+                      # Wrap patterns with guard in a when clause
+                      patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
+                      clause = {:->, final_stab_meta, [patterns_with_guard, body]}
+                      {:ok, clause, state, log}
+                    end
+
+                  {:ok, _token, state} ->
+                    # No stab after when+guard - this is just `when` as a binary operator
+                    # Return :not_stab so we can try parsing as a regular expression
+                    {:not_stab, state, log}
+
+                  {:eof, state} ->
+                    {:not_stab, state, log}
+
+                  {:error, diag, state} ->
+                    {:error, diag, state, log}
+                end
               end
+            end
 
-            {:ok, _token, state} ->
-              # No stab after when+guard - this is just `when` as a binary operator
-              # Return :not_stab so we can try parsing as a regular expression
-              {:not_stab, state, log}
-
-            {:eof, state} ->
-              {:not_stab, state, log}
-
-            {:error, diag, state} ->
-              {:error, diag, state, log}
-          end
+          _ ->
+            # TokenAdapter.peek should not return eof here (terminator inserted), but be defensive.
+            {:not_stab, state, log}
         end
 
       _ ->
