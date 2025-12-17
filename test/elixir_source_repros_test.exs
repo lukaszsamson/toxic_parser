@@ -767,4 +767,32 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "map update with do-block keyword value" do
+    test "map update with if-do keyword value should parse full do-block" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/livebook/lib/livebook/session/data.ex line 1812
+      # Map update where keyword value is an if-do expression
+      # The do-block must be fully consumed as part of the keyword value
+      code = "%{foo | bar: if true do 1 end}"
+
+      assert_conforms(code)
+    end
+
+    test "map update with nested if-else do-block" do
+      # More complex case with else clause
+      code = """
+      %{
+        foo
+        | bar:
+            if true do
+              :a
+            else
+              :b
+            end
+      }
+      """
+
+      assert_conforms(code)
+    end
+  end
 end

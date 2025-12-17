@@ -1453,10 +1453,18 @@ defmodule ToxicParser.Pratt do
       # Special case: pipe_op followed by keyword list (map update: %{base | key: val})
       # This needs special handling like when_op to properly parse the keyword RHS
       # including quoted keywords like 'asd': 1
+      # When context allows do-blocks (e.g., inside maps), use parse_kw_data to allow
+      # do-block expressions as keyword values: %{foo | bar: if true do 1 end}
       {:ok, rhs_tok, _} when op_token.kind == :pipe_op ->
         if Keywords.starts_kw?(rhs_tok) do
-          with {:ok, kw_list, state, log} <-
-                 Keywords.parse_kw_no_parens_call(state, context, log) do
+          kw_result =
+            if Context.allow_do_block?(context) do
+              Keywords.parse_kw_data(state, context, log)
+            else
+              Keywords.parse_kw_no_parens_call(state, context, log)
+            end
+
+          with {:ok, kw_list, state, log} <- kw_result do
             op = op_token.value
             meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
             combined = Builder.Helpers.binary(op, left, kw_list, meta)

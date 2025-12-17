@@ -790,6 +790,11 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("1 |> a 'x': 2, y: 3")
       assert_conforms("1 |> a x: 2, 'y': 3")
       assert_conforms("1 |> a 'x': 2, 'y': 3")
+      assert_conforms("1 |> a x: foo bar, baz")
+      assert_conforms("1 |> a 'x': foo bar, baz")
+      assert_conforms("1 |> a 'x': 2, y: foo bar, baz")
+      assert_conforms("1 |> a x: 2, 'y': foo bar, baz")
+      assert_conforms("1 |> a 'x': 2, 'y': foo bar, baz")
 
       # matched_expr dot_op identifier matched_expr
       assert_conforms("1 |> a.b 2")
@@ -799,6 +804,15 @@ defmodule ToxicParser.ConformanceTest do
 
       # matched_expr dot_op identifier call_args_no_parens_kw
       assert_conforms("1 |> a.b x: 2")
+      assert_conforms("1 |> a.b 'x': 2")
+      assert_conforms("1 |> a.b x: 2, y: 1")
+      assert_conforms("1 |> a.b 'x': 2, y: 1")
+      assert_conforms("1 |> a.b x: 2, 'y': 1")
+      assert_conforms("1 |> a.b x: foo bar, baz")
+      assert_conforms("1 |> a.b 'x': foo bar, baz")
+      assert_conforms("1 |> a.b x: 2, y: foo bar, baz")
+      assert_conforms("1 |> a.b 'x': 2, y: foo bar, baz")
+      assert_conforms("1 |> a.b x: 2, 'y': foo bar, baz")
     end
   end
 
@@ -879,6 +893,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("bar 'a': 1, b: 2")
       assert_conforms("bar a: 1, 'b': 2")
       assert_conforms("bar 'a': 1, 'b': 2")
+      assert_conforms("foo x: bar t, r")
+      assert_conforms("foo 'x': bar t, r")
+      assert_conforms("bar a: 1, b: bar t, r")
+      assert_conforms("bar 'a': 1, b: bar t, r")
+      assert_conforms("bar a: 1, 'b': bar t, r")
+      assert_conforms("bar 'a': 1, 'b': bar t, r")
     end
 
     test "dot_identifier with keyword arg" do
@@ -889,6 +909,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo.bar.baz 'a': 1, b: 2")
       assert_conforms("foo.bar.baz a: 1, 'b': 2")
       assert_conforms("foo.bar.baz 'a': 1, 'b': 2")
+      assert_conforms("foo.bar x: bar t, r")
+      assert_conforms("foo.bar.baz a: 1, b: bar t, r")
+      assert_conforms("foo.bar 'x': bar t, r")
+      assert_conforms("foo.bar.baz 'a': 1, b: bar t, r")
+      assert_conforms("foo.bar.baz a: 1, 'b': bar t, r")
+      assert_conforms("foo.bar.baz 'a': 1, 'b': bar t, r")
     end
   end
 
@@ -1064,6 +1090,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn x(), a: 1 -> foo() end")
       assert_conforms("fn x, \na: 1 -> foo() end")
       assert_conforms("fn x, a:\n 1 -> foo() end")
+      assert_conforms("fn x, 'a': 1 -> foo() end")
+      assert_conforms("fn x, a: b c, d -> foo() end")
       # call_args_no_parens_many -> call_args_no_parens_comma_expr
       # call_args_no_parens_comma_expr -> matched_expr ',' call_args_no_parens_expr
       # call_args_no_parens_comma_expr -> call_args_no_parens_comma_expr ',' call_args_no_parens_expr
@@ -1077,11 +1105,15 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn x, y(), z: 1 -> foo() end")
       assert_conforms("fn x, y(),\nz: 1 -> foo() end")
       assert_conforms("fn x, y(), z:\n1 -> foo() end")
+      assert_conforms("fn x, y(), 'z': 1 -> foo() end")
+      assert_conforms("fn x, y(), z: a b, c -> foo() end")
 
       # stab_expr -> stab_parens_many stab_op_eol_and_expr
       # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
       assert_conforms("fn (a: 1) -> foo() end")
       assert_conforms("fn (a:\n1, b: :ok) -> foo() end")
+      assert_conforms("fn ('a': 1) -> foo() end")
+      assert_conforms("fn (a: b c, d) -> foo() end")
       # stab_parens_many -> open_paren call_args_no_parens_many close_paren
       assert_conforms("fn (x, a: 1) -> foo() end")
       assert_conforms("fn (\nx, a: 1) -> foo() end")
@@ -1090,13 +1122,16 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn (x(), a: 1) -> foo() end")
       assert_conforms("fn (x, \na: 1) -> foo() end")
       assert_conforms("fn (x, a:\n 1) -> foo() end")
+      assert_conforms("fn (x(), 'a': 1) -> foo() end")
 
       # stab_expr -> stab_parens_many when_op expr stab_op_eol_and_expr
       assert_conforms("fn (a: 1) when x() -> foo() end")
+      assert_conforms("fn ('a': 1) when x() -> foo() end")
       assert_conforms("fn (a: 1) when if z do\n:ok\nend -> foo() end")
       assert_conforms("fn (a: 1) when x 4, 5, 6 -> foo() end")
       assert_conforms("fn (a:\n1, b: :ok) when x() -> foo() end")
       assert_conforms("fn (x, a: 1) when x() -> foo() end")
+      assert_conforms("fn (x, 'a': 1) when x() -> foo() end")
       assert_conforms("fn (\nx, a: 1) when x() -> foo() end")
 
       assert_conforms("fn 1 -> ;-> end")
@@ -1187,6 +1222,8 @@ defmodule ToxicParser.ConformanceTest do
 
       # call_args_no_parens_many -> matched_expr ',' call_args_no_parens_kw
       assert_conforms("(x, a: 1 -> foo())")
+      assert_conforms("(x, 'a': 1 -> foo())")
+      assert_conforms("(x, a: b c, d -> foo())")
       assert_conforms("(x,\na: 1 -> foo())")
       assert_conforms("(x(), a: 1 -> foo())")
       assert_conforms("(x, \na: 1 -> foo())")
@@ -1201,6 +1238,8 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("(x(), y(), 1 -> foo())")
       # call_args_no_parens_many -> call_args_no_parens_comma_expr ',' call_args_no_parens_kw
       assert_conforms("(x, y: 1 -> foo())")
+      assert_conforms("(x, 'y': 1 -> foo())")
+      assert_conforms("(x, y: a b, c -> foo())")
       assert_conforms("(x, y(), z: 1 -> foo())")
       assert_conforms("(x, y(),\nz: 1 -> foo())")
       assert_conforms("(x, y(), z:\n1 -> foo())")
@@ -1210,6 +1249,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("((a: 1) -> foo())")
       assert_conforms("(('a': 1) -> foo())")
       assert_conforms("((a:\n1, b: :ok) -> foo())")
+      assert_conforms("((a: b c, d) -> foo())")
       # stab_parens_many -> open_paren call_args_no_parens_many close_paren
       assert_conforms("((x, a: 1) -> foo())")
       assert_conforms("((\nx, a: 1) -> foo())")
@@ -2013,6 +2053,13 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("x when 'foo': 1, bar: 2")
       assert_conforms("x when foo: 1, 'bar': 2")
       assert_conforms("x when 'foo': 1, 'bar': 2")
+
+      # call_args_no_parens_kw allows no_parens_expr as last item
+      assert_conforms("x when foo: bar 1, 2")
+      assert_conforms("x when 'foo': bar 1, 2")
+      assert_conforms("x when abc: 1, foo: bar 1, 2")
+      assert_conforms("x when 'abc': 1, foo: bar 1, 2")
+      assert_conforms("x when abc: 1, 'foo': bar 1, 2")
     end
   end
 
@@ -2101,6 +2148,14 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("foo 1, 2, a: 3, 'b': 4")
       assert_conforms("foo 1, 2, 'a': 3, b: 4")
       assert_conforms("foo 1, 2, 'a': 3, 'b': 4")
+
+      # no_parens_expr as last item
+      assert_conforms("foo 1, a: foo x, y")
+      assert_conforms("foo 1, 'a': foo x, y")
+      assert_conforms("foo 1, 2, a: 3, b: foo x, y")
+      assert_conforms("foo 1, 2, a: 3, 'b': foo x, y")
+      assert_conforms("foo 1, 2, 'a': 3, b: foo x, y")
+      assert_conforms("foo 1, 2, 'a': 3, 'b': foo x, y")
     end
 
     test "dot call with multiple args" do

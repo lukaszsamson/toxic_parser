@@ -65,7 +65,8 @@ defmodule ToxicParser.ConformanceCorpusTest do
     "/Users/lukaszsamson/claude_fun/elixir_oss/projects/timex/test/comparable_test.exs",
     "/Users/lukaszsamson/claude_fun/elixir_oss/projects/timex/test/timex_test.exs",
     "/Users/lukaszsamson/claude_fun/elixir_oss/projects/phoenix_live_view/lib/phoenix_component.ex",
-    "/Users/lukaszsamson/claude_fun/elixir_oss/projects/phoenix_live_view/lib/phoenix_live_view/engine.ex"
+    "/Users/lukaszsamson/claude_fun/elixir_oss/projects/phoenix_live_view/lib/phoenix_live_view/engine.ex",
+    "/Users/lukaszsamson/claude_fun/elixir_oss/projects/livebook/lib/livebook/session/data.ex"
   ]
 
   test "selected files" do
