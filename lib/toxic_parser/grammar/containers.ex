@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Containers do
 
   alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Bitstrings, EOE, Expressions, Keywords, Maps, Stabs}
+  alias ToxicParser.Grammar.{Bitstrings, Delimited, EOE, Expressions, Keywords, Maps, Stabs}
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -312,103 +312,53 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   # Parse list without calling Pratt.led - used when caller controls led binding
-  defp parse_list_base(state, ctx, log) do
+  defp parse_list_base(state, _ctx, log) do
     {:ok, _open, state} = TokenAdapter.next(state)
 
-    # Skip leading EOE
-    {state, _newlines} = EOE.skip_count_newlines(state, 0)
+    # In elixir_parser.yrl, list elements use container_expr (not the surrounding ctx).
+    container_ctx = Context.container_expr()
 
-    case TokenAdapter.peek(state) do
-      # Empty list
-      {:ok, %{kind: :"]"}, _} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        {:ok, [], state, log}
-
-      {:ok, _, _} ->
-        parse_list_elements_base([], state, ctx, log)
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Parse list elements without calling Pratt.led - used when caller controls led binding
-  defp parse_list_elements_base(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if Keywords.starts_kw?(tok) do
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-            case TokenAdapter.next(state) do
-              {:ok, %{kind: :"]"}, state} ->
-                {:ok, Enum.reverse(acc) ++ kw_list, state, log}
-
-              {:ok, tok, state} ->
-                {:error, {:expected, :"]", got: tok.kind}, state, log}
-
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
-
-              {:error, diag, state} ->
-                {:error, diag, state, log}
-            end
-          end
-        else
-          parse_list_element_base(acc, state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_list_element_base(acc, state, ctx, log) do
-    # Check if this element starts with [ or { - if so, it's a list/tuple literal
-    # and should NOT be flattened even if it looks like a keyword list
-    is_container_literal =
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: kind}, _} when kind in [:"[", :"{"] -> true
-        _ -> false
-      end
-
-    with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-      # Check if expr is a keyword list (from quoted keyword parsing like "": 1)
-      # If so, we should merge it rather than wrap it as a single element
-      # BUT: if it started as a container literal ([...] or {...}), don't merge
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
+    item_fun = fn state, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, container_ctx, log) do
+        {:ok, kw_list, state, log} ->
+          # Keyword data must come last in lists. If it's not followed by a close bracket,
+          # raise an error at the next token (typically a comma).
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
             {:ok, %{kind: :"]"}, _} ->
-              {:ok, _close, state} = TokenAdapter.next(state)
-              {:ok, merge_keyword_expr(acc, expr, is_container_literal), state, log}
+              {:ok, {:kw_data, kw_list}, state, log}
 
-            _ ->
-              parse_list_elements_base(
-                prepend_expr(acc, expr, is_container_literal),
-                state,
-                ctx,
-                log
-              )
+            {:ok, %{kind: kind}, state} ->
+              {:error, {:expected, :"]", got: kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
           end
 
-        {:ok, %{kind: :"]"}, _} ->
-          {:ok, _close, state} = TokenAdapter.next(state)
-          {:ok, merge_keyword_expr(acc, expr, is_container_literal), state, log}
+        {:no_kw, state, log} ->
+          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+            {:ok, {:expr, expr}, state, log}
+          end
+
+        {:error, reason, state, log} ->
+          {:error, reason, state, log}
+      end
+    end
+
+    with {:ok, tagged_items, state, log} <-
+           Delimited.parse_comma_separated(state, container_ctx, log, :"]", item_fun,
+             allow_empty?: true
+           ) do
+      case TokenAdapter.next(state) do
+        {:ok, %{kind: :"]"}, state} ->
+          {:ok, finalize_list_items(tagged_items), state, log}
 
         {:ok, tok, state} ->
-          {:error, {:expected_comma_or, :"]", got: tok.kind}, state, log}
+          {:error, {:expected, :"]", got: tok.kind}, state, log}
 
         {:eof, state} ->
           {:error, :unexpected_eof, state, log}
@@ -419,50 +369,28 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  # Check if expr is a keyword list (list of {atom, value} tuples)
-  # If so, merge it into the result; otherwise prepend as single element
-  # BUT: if is_container_literal is true, the list came from a [...] or {...}
-  # literal and should NOT be flattened
-  defp merge_keyword_expr(acc, expr, is_container_literal)
+  defp finalize_list_items([]), do: []
 
-  defp merge_keyword_expr(acc, expr, is_container_literal) when is_list(expr) do
-    if not is_container_literal and is_non_empty_keyword_list?(expr) do
-      Enum.reverse(acc) ++ expr
-    else
-      Enum.reverse([expr | acc])
+  defp finalize_list_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        exprs =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:expr, expr} -> expr end)
+
+        exprs ++ kw_list
+
+      _ ->
+        Enum.map(tagged_items, fn {:expr, expr} -> expr end)
     end
   end
-
-  defp merge_keyword_expr(acc, expr, _is_container_literal) do
-    Enum.reverse([expr | acc])
-  end
-
-  # Prepend expr to acc, handling keyword lists specially
-  # BUT: if is_container_literal is true, the list came from a [...] or {...}
-  # literal and should NOT be flattened
-  defp prepend_expr(acc, expr, is_container_literal)
-
-  defp prepend_expr(acc, expr, is_container_literal) when is_list(expr) do
-    if not is_container_literal and is_non_empty_keyword_list?(expr) do
-      # Reverse keyword list and prepend each element to acc
-      Enum.reduce(Enum.reverse(expr), acc, fn elem, acc -> [elem | acc] end)
-    else
-      [expr | acc]
-    end
-  end
-
-  defp prepend_expr(acc, expr, _is_container_literal), do: [expr | acc]
 
   # Check if a list is a keyword-like list (list of {key, value} tuples)
   # The key can be an atom (standard keyword) or an AST (interpolated keyword)
   defp is_keyword_list?([{_key, _value} | rest]), do: is_keyword_list?(rest)
   defp is_keyword_list?([]), do: true
   defp is_keyword_list?(_), do: false
-
-  # Check if a list is a NON-EMPTY keyword list (for merging purposes)
-  # Empty lists should never be merged - they should be kept as elements (e.g., [''] -> [[]])
-  defp is_non_empty_keyword_list?([_ | _] = list), do: is_keyword_list?(list)
-  defp is_non_empty_keyword_list?(_), do: false
 
   defp tuple_element_container_literal?(state) do
     case TokenAdapter.peek(state) do
