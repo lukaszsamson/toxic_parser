@@ -1,7 +1,7 @@
 defmodule ToxicParser.PrattPrecedenceTest do
   use ExUnit.Case, async: true
 
-  alias ToxicParser.{Precedence, Pratt, TokenAdapter, EventLog}
+  alias ToxicParser.{Context, Precedence, Pratt, TokenAdapter, EventLog}
   alias ToxicParser.Grammar
 
   test "binary binding powers are ordered and include dot/not_in" do
@@ -28,7 +28,7 @@ defmodule ToxicParser.PrattPrecedenceTest do
     state = TokenAdapter.new("1 + 2")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} = Pratt.parse(state, :matched, log)
+    assert {:ok, ast, _state, %EventLog{}} = Pratt.parse(state, Context.matched_expr(), log)
     assert match?({_, _, _}, ast)
   end
 
@@ -36,7 +36,7 @@ defmodule ToxicParser.PrattPrecedenceTest do
     state = TokenAdapter.new("1 + 2\n3")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr_list(state, :matched, log)
+    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr_list(state, Context.matched_expr(), log)
     assert {:__block__, [], [_a, _b]} = ast
   end
 
@@ -44,7 +44,7 @@ defmodule ToxicParser.PrattPrecedenceTest do
     state = TokenAdapter.new("foo")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr(state, :matched, log)
+    assert {:ok, ast, _state, %EventLog{}} = Grammar.Expressions.expr(state, Context.matched_expr(), log)
     assert {:foo, _, nil} = ast
   end
 end

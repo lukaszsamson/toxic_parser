@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Keywords}
 
@@ -344,13 +344,23 @@ defmodule ToxicParser.Grammar.Maps do
   # Try to parse assoc_update: matched_expr pipe_op_eol assoc_expr
   # Returns {:ok, update_ast, close_meta, state, log} or :not_update or {:error, ...}
   #
-  # The grammar rule is: assoc_update -> matched_expr pipe_op_eol assoc_expr
+  # Grammar rules:
+  #   assoc_update -> matched_expr pipe_op_eol assoc_expr
+  #   assoc_update -> unmatched_expr pipe_op_eol assoc_expr
+  #   assoc_update_kw -> matched_expr pipe_op_eol kw_data
+  #   assoc_update_kw -> unmatched_expr pipe_op_eol kw_data
   #
-  # Strategy: Parse potential base expression with min_bp > pipe_op (70),
-  # then check if | follows. This prevents consuming | as part of assoc value.
-  # Important: If the base_expr contains =>, it's an assoc expr not an update base.
+  # Strategy:
+  # 1. Parse the base expression (matched_expr/unmatched_expr)
+  # 2. Check for pipe_op token (|)
+  # 3. If | found, check what follows:
+  #    - kw_data (keyword list) -> map update with keywords
+  #    - assoc_expr (k => v) -> map update with assoc expressions
+  # 4. op_identifier calls (like c!) consume | as part of their argument,
+  #    so if we still see | after parsing base, it's the map update separator
   defp try_parse_map_update(state, ctx, log) do
-    if starts_with_kw_or_string?(state) do
+    # Keywords start a definite non-update (just kw_data)
+    if starts_with_kw?(state) do
       {:not_update, state}
     else
       {checkpoint_id, checkpoint_state} = TokenAdapter.checkpoint(state)
@@ -368,31 +378,192 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp parse_map_update_candidate(state, ctx, log) do
-    with {:ok, base_expr, state, log} <- parse_map_update_base(state, ctx, log),
-         :ok <- validate_map_update_base(base_expr),
-         {:ok, pipe_meta, state} <- parse_map_update_pipe(state, log),
-         {:ok, update_ast, close_meta, state, log} <-
-           parse_map_update_rhs(base_expr, pipe_meta, state, ctx, log) do
-      {:ok, update_ast, close_meta, state, log}
-    else
-      :not_update -> {:not_update, state}
-      {:not_update, state} -> {:not_update, state}
-      {:error, _, _, _} = err -> err
+  # Binding power just above pipe_op (70) to prevent | from being consumed
+  @pipe_op_bp 70
+
+  defp parse_map_update_candidate(state, _ctx, log) do
+    # First, try parsing the full expression without restricting |
+    # This allows op_identifier calls (like c!) to consume | as part of their argument
+    # e.g., %{c!s|n => 1} should parse as c!(s|n) => 1, not c!s | n => 1
+    case Pratt.parse(state, Context.container_expr(), log) do
+      {:ok, base_expr, state, log} ->
+        # Check if the parsed expression IS a pipe expression with valid map update RHS
+        # e.g., map | :a => 1 parses as {:|, _, [map, {:"=>", _, [:a, 1]}]}
+        case check_embedded_map_update(base_expr) do
+          {:update, base, pipe_meta, rhs_entries} ->
+            # The expression itself was a map update pattern
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"} = close_tok, _} ->
+                {:ok, _close, state} = TokenAdapter.next(state)
+                close_meta = token_meta(close_tok.metadata)
+                update_ast = {:|, pipe_meta, [base, rhs_entries]}
+                {:ok, update_ast, close_meta, state, log}
+
+              {:ok, %{kind: :","}, _} ->
+                # More entries after initial: %{base | k => v, more...}
+                {:ok, _comma, state} = TokenAdapter.next(state)
+                state = EOE.skip(state)
+                parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, log)
+
+              _ ->
+                {:not_update, state}
+            end
+
+          :not_update ->
+            # Check for | token AFTER the expression
+            {state, newlines} = EOE.skip_count_newlines(state, 0)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
+                # Found | - this is potentially a map update
+                {:ok, _pipe, state} = TokenAdapter.next(state)
+                state = EOE.skip(state)
+                pipe_meta_kw = token_meta_with_newlines(pipe_meta, newlines)
+                parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
+
+              _ ->
+                # No | found - not a map update
+                {:not_update, state}
+            end
+        end
+
+      {:keyword_key, _, state, _} ->
+        {:not_update, state}
+
+      {:keyword_key_interpolated, _, _, _, _, state, _} ->
+        {:not_update, state}
+
+      {:error, _diag, _state, _log} ->
+        # Parsing failed - likely due to keyword after |
+        # Retry with min_bp above pipe_op to not consume |
+        parse_map_update_with_min_bp(state, log)
     end
   end
 
-  defp parse_map_update_base(state, _ctx, log) do
-    # Use min_bp above pipe_op (70) to stop before |.
-    # This ensures that in %{base | entries}, we parse base correctly.
-    case Pratt.parse_with_min_bp(
-           state,
-           Context.unmatched_expr(),
-           log,
-           Precedence.pipe_op_bp() + 1
-         ) do
+  # Check if an expression is a pipe expression with valid map update RHS
+  # e.g., map | :a => 1 parses as {:|, meta, [map, {:"=>", _, [:a, 1]}]}
+  # Returns {:update, base, pipe_meta, entries} or :not_update
+  defp check_embedded_map_update({:|, pipe_meta, [base, rhs]}) do
+    case classify_pipe_rhs_for_map_update(rhs) do
+      {:valid, entries} -> {:update, base, pipe_meta, entries}
+      :invalid -> :not_update
+    end
+  end
+
+  defp check_embedded_map_update(_), do: :not_update
+
+  # Check if RHS of | is valid for map update
+  # Valid: single assoc {:"=>", _, [k, v]} or keyword list
+  # Annotates keys with :assoc metadata indicating the position of =>
+  defp classify_pipe_rhs_for_map_update({:"=>", assoc_meta, [key, value]} = _assoc) do
+    annotated_key = annotate_assoc(key, assoc_meta)
+    {:valid, [{annotated_key, value}]}
+  end
+
+  # Handle nested pipe in map update RHS: a | b | c => d
+  # Pratt produces: {:|, _, [a, {:|, _, [b, {:"=>", _, [c, d]}]}]}
+  # The RHS of first | is: {:|, _, [b, {:"=>", _, [c, d]}]}
+  # This should become: [{(b | c), d}] - key is b | c, value is d
+  # Use extract_assoc to properly handle any level of nesting
+  defp classify_pipe_rhs_for_map_update({:|, _, _} = expr) do
+    case extract_assoc(expr) do
+      {:assoc, key, value, assoc_meta} ->
+        annotated_key = annotate_assoc(key, assoc_meta)
+        {:valid, [{annotated_key, value}]}
+
+      :not_assoc ->
+        :invalid
+    end
+  end
+
+  defp classify_pipe_rhs_for_map_update(list) when is_list(list) do
+    if Enum.all?(list, &is_keyword_or_assoc_entry?/1) do
+      # Annotate keys in assoc entries with :assoc metadata
+      annotated = Enum.map(list, &annotate_assoc_entry/1)
+      {:valid, annotated}
+    else
+      :invalid
+    end
+  end
+
+  defp classify_pipe_rhs_for_map_update(_), do: :invalid
+
+  # Annotate a single assoc entry with :assoc metadata
+  defp annotate_assoc_entry({:"=>", assoc_meta, [key, value]}) do
+    {annotate_assoc(key, assoc_meta), value}
+  end
+
+  defp annotate_assoc_entry(entry), do: entry
+
+  defp is_keyword_or_assoc_entry?({key, _value}) when is_atom(key), do: true
+  defp is_keyword_or_assoc_entry?({{_expr, _meta, _args}, _value}), do: true
+  defp is_keyword_or_assoc_entry?({:"=>", _meta, [_k, _v]}), do: true
+  defp is_keyword_or_assoc_entry?(_), do: false
+
+  # Parse trailing entries after map update: %{base | k => v, more...}
+  defp parse_map_update_trailing_entries(base, pipe_meta, initial_entries, state, log) do
+    case TokenAdapter.peek(state) do
+      # Trailing comma case: %{base | k => v,}
+      {:ok, %{kind: :"}"} = close_tok, _} ->
+        {:ok, _close, state} = TokenAdapter.next(state)
+        close_meta = token_meta(close_tok.metadata)
+        update_ast = {:|, pipe_meta, [base, initial_entries]}
+        {:ok, update_ast, close_meta, state, log}
+
+      {:ok, tok, _} ->
+        if Keywords.starts_kw?(tok) do
+          # Parse trailing keywords
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"} = close_tok, _} ->
+                {:ok, _close, state} = TokenAdapter.next(state)
+                close_meta = token_meta(close_tok.metadata)
+                all_entries = initial_entries ++ kw_list
+                update_ast = {:|, pipe_meta, [base, all_entries]}
+                {:ok, update_ast, close_meta, state, log}
+
+              _ ->
+                {:not_update, state}
+            end
+          end
+        else
+          # Parse more assoc expressions
+          with {:ok, more_entries, close_meta, state, log} <- parse_map_close(state, Context.container_expr(), log) do
+            all_entries = initial_entries ++ more_entries
+            update_ast = {:|, pipe_meta, [base, all_entries]}
+            {:ok, update_ast, close_meta, state, log}
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  # Fallback: parse with min_bp restriction to handle cases like %{map | a: 1}
+  # where | is followed by keyword data (not valid as binary operator RHS)
+  defp parse_map_update_with_min_bp(state, log) do
+    case Pratt.parse_with_min_bp(state, Context.container_expr(), log, @pipe_op_bp + 1) do
       {:ok, base_expr, state, log} ->
-        {:ok, base_expr, state, log}
+        {state, newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
+            {:ok, _pipe, state} = TokenAdapter.next(state)
+            state = EOE.skip(state)
+            pipe_meta_kw = token_meta_with_newlines(pipe_meta, newlines)
+            parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
+
+          _ ->
+            {:not_update, state}
+        end
 
       {:keyword_key, _, state, _} ->
         {:not_update, state}
@@ -405,48 +576,30 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp validate_map_update_base(base_expr) do
-    cond do
-      is_assoc_expr?(base_expr) ->
-        :not_update
-
-      # Grammar rule: unmatched_expr -> unary_op_eol expr
-      # A unary operator with an unmatched operand consumes the following expr, including |.
-      is_unary_with_unmatched_operand?(base_expr) ->
-        :not_update
-
-      true ->
-        :ok
-    end
-  end
-
-  defp parse_map_update_pipe(state, log) do
-    state = EOE.skip(state)
-
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :pipe_op} = pipe_tok, _} ->
-        {:ok, _pipe, state} = TokenAdapter.next(state)
-        {state, newlines_after_pipe} = EOE.skip_count_newlines(state, 0)
-        {:ok, build_pipe_meta(pipe_tok, newlines_after_pipe), state}
-
-      {:ok, _tok, _} ->
-        :not_update
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp parse_map_update_rhs(base_expr, pipe_meta, state, ctx, log) do
+  # Parse the RHS of a map update (after the |)
+  # Can be kw_data or assoc_expr(s)
+  defp parse_map_update_rhs(base, pipe_meta, state, log) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
-          parse_map_update_keyword_rhs(base_expr, pipe_meta, state, ctx, log)
+          # kw_data: %{base | a: 1, b: 2}
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+            state = EOE.skip(state)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"} = close_tok, _} ->
+                {:ok, _close, state} = TokenAdapter.next(state)
+                close_meta = token_meta(close_tok.metadata)
+                update_ast = {:|, pipe_meta, [base, kw_list]}
+                {:ok, update_ast, close_meta, state, log}
+
+              _ ->
+                {:not_update, state}
+            end
+          end
         else
-          parse_map_update_assoc_rhs(base_expr, pipe_meta, state, ctx, log)
+          # assoc_expr(s): %{base | k => v, ...}
+          parse_map_update_assoc_entries(base, pipe_meta, [], state, log)
         end
 
       {:eof, state} ->
@@ -457,127 +610,88 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp parse_map_update_keyword_rhs(base_expr, pipe_meta, state, ctx, log) do
-    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-      state = EOE.skip(state)
+  # Parse assoc entries for map update RHS
+  defp parse_map_update_assoc_entries(base, pipe_meta, acc, state, log) do
+    with {:ok, entry, state, log} <- parse_assoc_expr(state, Context.container_expr(), log) do
+      # Verify it's actually an assoc (has =>)
+      case entry do
+        {key, value} ->
+          # It's a proper assoc entry
+          state = EOE.skip(state)
 
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :"}"} = close_tok, state} ->
-          close_meta = token_meta(close_tok.metadata)
-          {:ok, {:|, pipe_meta, [base_expr, kw_list]}, close_meta, state, log}
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"}"} = close_tok, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              close_meta = token_meta(close_tok.metadata)
+              entries = Enum.reverse([{key, value} | acc])
+              update_ast = {:|, pipe_meta, [base, entries]}
+              {:ok, update_ast, close_meta, state, log}
 
-        {:ok, tok, state} ->
-          {:error, {:expected, :"}", got: tok.kind}, state, log}
+            {:ok, %{kind: :","}, _} ->
+              {:ok, _comma, state} = TokenAdapter.next(state)
+              state = EOE.skip(state)
 
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
+              # Check for kw_data after comma
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :"}"} = close_tok, _} ->
+                  # Trailing comma
+                  {:ok, _close, state} = TokenAdapter.next(state)
+                  close_meta = token_meta(close_tok.metadata)
+                  entries = Enum.reverse([{key, value} | acc])
+                  update_ast = {:|, pipe_meta, [base, entries]}
+                  {:ok, update_ast, close_meta, state, log}
 
-        {:error, diag, state} ->
-          {:error, diag, state, log}
+                {:ok, tok, _} ->
+                  if Keywords.starts_kw?(tok) do
+                    # Switch to kw_data
+                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+                      state = EOE.skip(state)
+
+                      case TokenAdapter.peek(state) do
+                        {:ok, %{kind: :"}"} = close_tok, _} ->
+                          {:ok, _close, state} = TokenAdapter.next(state)
+                          close_meta = token_meta(close_tok.metadata)
+                          entries = Enum.reverse([{key, value} | acc]) ++ kw_list
+                          update_ast = {:|, pipe_meta, [base, entries]}
+                          {:ok, update_ast, close_meta, state, log}
+
+                        _ ->
+                          {:not_update, state}
+                      end
+                    end
+                  else
+                    # More assoc entries
+                    parse_map_update_assoc_entries(base, pipe_meta, [{key, value} | acc], state, log)
+                  end
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+
+            _ ->
+              {:not_update, state}
+          end
+
+        _not_assoc ->
+          # Not an assoc expression - not a valid map update
+          {:not_update, state}
       end
     end
   end
 
-  defp parse_map_update_assoc_rhs(base_expr, pipe_meta, state, ctx, log) do
-    with {:ok, entries, close_meta, state, log} <- parse_map_close(state, ctx, log) do
-      first_key = get_first_entry_key(entries)
-
-      if first_key != nil and key_has_lower_precedence_op?(first_key) do
-        :not_update
-      else
-        {:ok, {:|, pipe_meta, [base_expr, entries]}, close_meta, state, log}
-      end
-    end
-  end
-
-  # Check if we should skip map update parsing and go directly to keyword/assoc parsing.
-  # Only skip for definite keywords (kw_identifier).
-  # String literals can be map update bases (e.g., %{'' | x: y}) OR keyword keys (e.g., %{"": 1}),
-  # so don't short-circuit for strings - let parse_map_update_candidate handle them via checkpoint.
-  defp starts_with_kw_or_string?(state) do
+  # Check if we should skip map update parsing (starts with definite keyword)
+  defp starts_with_kw?(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :kw_identifier}, _} ->
+      {:ok, %{kind: kind}, _} when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
         true
 
       _ ->
         false
     end
   end
-
-  defp build_pipe_meta(pipe_tok, newlines_after_pipe) do
-    token_newlines = Map.get(pipe_tok.metadata, :newlines, 0)
-    effective_newlines = max(token_newlines, newlines_after_pipe)
-    token_meta_with_newlines(pipe_tok.metadata, effective_newlines)
-  end
-
-  # Check if an expression is an assoc expression (has => at top level)
-  defp is_assoc_expr?({:"=>", _, _}), do: true
-  defp is_assoc_expr?(_), do: false
-
-  # Check if expression is a unary operator with an unmatched operand (has do-block)
-  # In Elixir grammar: unmatched_expr -> unary_op_eol expr
-  # This means the unary operator consumes the full `expr` including any following |
-  # So %{+ foo do end | b => c} should NOT be a map update
-  #
-  # Unary operators: +, -, !, ^, not, ~~~, &
-  @unary_ops [:+, :-, :!, :^, :not, :"~~~", :&]
-
-  defp is_unary_with_unmatched_operand?({op, _meta, [operand]}) when op in @unary_ops do
-    has_do_block?(operand)
-  end
-
-  defp is_unary_with_unmatched_operand?(_), do: false
-
-  # Check if an expression has a do-block (making it "unmatched")
-  # Do-blocks appear as a keyword list with :do key in the args
-  defp has_do_block?({_name, meta, args}) when is_list(meta) and is_list(args) do
-    Keyword.has_key?(meta, :do) or
-      (length(args) > 0 and is_list(List.last(args)) and has_do_keyword?(List.last(args)))
-  end
-
-  defp has_do_block?(_), do: false
-
-  defp has_do_keyword?(args) when is_list(args) do
-    Enum.any?(args, fn
-      {:do, _} -> true
-      {key, _} when is_atom(key) -> key == :do
-      _ -> false
-    end)
-  end
-
-  defp has_do_keyword?(_), do: false
-
-  # Get the key of the first entry in a list of map entries
-  # Entries can be {key, value} tuples or keyword pairs
-  defp get_first_entry_key([{key, _value} | _]), do: key
-  defp get_first_entry_key(_), do: nil
-
-  # Check if the KEY of an assoc entry contains operators with precedence lower than pipe_op (70).
-  # If so, the | we saw should have been part of the key, not the map update separator.
-  # This handles cases like %{a | b :: c => d} where :: (bp=60) < | (bp=70), meaning
-  # the | is part of the key expression (a | b) :: c, not a map update separator.
-  #
-  # Operators with precedence < 70:
-  # - type_op (::): 60
-  # - when_op: 50
-  # - in_match_op (<-): 40
-  # - stab_op (->): 10
-  defp key_has_lower_precedence_op?({op, _, args}) when is_atom(op) and is_list(args) do
-    # Check if this node's operator has precedence < 70
-    op_has_low_precedence?(op) or
-      Enum.any?(args, &key_has_lower_precedence_op?/1)
-  end
-
-  defp key_has_lower_precedence_op?(_), do: false
-
-  # Check if operator has precedence lower than pipe_op (70)
-  # Operators with precedence < 70:
-  # - type_op (::): 60
-  # - when_op: 50
-  # - in_match_op (<-, \\): 40
-  # - stab_op (->): 10
-  defp op_has_low_precedence?(op) when op in [:"::", :when, :<-, :\\, :",", :->, :do], do: true
-  defp op_has_low_precedence?(_), do: false
 
   # Parse map_close: kw_data close_curly | assoc close_curly | assoc_base ',' kw_data close_curly
   defp parse_map_close(state, ctx, log) do

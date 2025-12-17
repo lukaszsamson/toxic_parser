@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, EventLog, Pratt, Precedence, Result, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, Precedence, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Stabs}
 

@@ -65,7 +65,7 @@ defmodule ToxicParser.State do
 
     {terminators, stream} = Toxic.current_terminators(stream)
 
-    ctx = Context.normalize(Keyword.get(opts, :expression_context, Context.expr()))
+    ctx = Keyword.get(opts, :expression_context, Context.expr())
 
     %__MODULE__{
       stream: stream,

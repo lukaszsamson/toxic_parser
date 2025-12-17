@@ -83,23 +83,6 @@ defmodule ToxicParser.Context do
   @spec kw_no_parens_value() :: t()
   def kw_no_parens_value, do: %__MODULE__{allow_do_block: false, allow_no_parens_expr: true}
 
-  @doc """
-  Convert legacy atom context to Context struct.
-
-  For backward compatibility during migration.
-  """
-  @spec from_atom(:matched | :unmatched | :no_parens) :: t()
-  def from_atom(:matched), do: matched_expr()
-  def from_atom(:unmatched), do: unmatched_expr()
-  def from_atom(:no_parens), do: no_parens_expr()
-  def from_atom(_), do: matched_expr()
-
-  @doc "Normalize legacy atom or nil contexts to a Context struct."
-  @spec normalize(t() | :matched | :unmatched | :no_parens | nil) :: t()
-  def normalize(%__MODULE__{} = ctx), do: ctx
-  def normalize(ctx) when is_atom(ctx), do: from_atom(ctx)
-  def normalize(_), do: matched_expr()
-
   @doc "Whether the context allows attaching do/end blocks."
   @spec allow_do_block?(t()) :: boolean()
   def allow_do_block?(%__MODULE__{} = ctx), do: ctx.allow_do_block

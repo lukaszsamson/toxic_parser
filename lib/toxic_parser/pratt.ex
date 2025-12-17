@@ -90,14 +90,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base(State.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, %Context{} = context, %EventLog{} = log) do
-    context = normalize_context(context)
-
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
             nud(token, state, context, log,
              min_bp: 10000,
-             allow_containers: false,
-             allow_do_blocks: false
+             allow_containers: false
            ) do
       {:ok, ast, state, log}
     else
@@ -119,14 +116,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots(%State{} = state, %Context{} = context, %EventLog{} = log) do
-    context = normalize_context(context)
-
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
             nud(token, state, context, log,
              min_bp: 10000,
-             allow_containers: false,
-             allow_do_blocks: false
+             allow_containers: false
            ) do
       led_dot_only(ast, state, log, context)
     else
@@ -141,14 +135,11 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base_with_dots_and_calls(State.t(), context(), EventLog.t()) :: result()
   def parse_base_with_dots_and_calls(%State{} = state, %Context{} = context, %EventLog{} = log) do
-    context = normalize_context(context)
-
     with {:ok, token, state} <- TokenAdapter.next(state),
          {:ok, ast, state, log} <-
             nud(token, state, context, log,
              min_bp: 10000,
-             allow_containers: false,
-             allow_do_blocks: false
+             allow_containers: false
            ) do
       led_dots_and_calls(ast, state, log, context)
     else
@@ -165,8 +156,6 @@ defmodule ToxicParser.Pratt do
   @spec parse_with_min_bp(State.t(), context(), EventLog.t(), non_neg_integer(), keyword()) ::
           result()
   def parse_with_min_bp(%State{} = state, %Context{} = context, %EventLog{} = log, min_bp, opts \\ []) do
-    context = normalize_context(context)
-
     # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
     nud_opts = Keyword.merge([min_bp: min_bp], opts)
 
@@ -208,7 +197,6 @@ defmodule ToxicParser.Pratt do
   defp nud(token, state, context, log, opts) do
     min_bp = Keyword.get(opts, :min_bp, 0)
     allow_containers = Keyword.get(opts, :allow_containers, true)
-    allow_do_blocks = Keyword.get(opts, :allow_do_blocks, true)
     string_min_bp = Keyword.get(opts, :string_min_bp, min_bp)
     # Pass through options like stop_at_assoc to string parsing
     led_opts = Keyword.take(opts, [:stop_at_assoc])
@@ -238,7 +226,7 @@ defmodule ToxicParser.Pratt do
           alias ToxicParser.Grammar.Containers
           Containers.parse(state, context, log, min_bp)
         else
-          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+          nud_literal_or_unary(token, state, context, log, min_bp, false)
         end
 
       # Quoted atoms need to be handled by Strings.parse even in restricted mode
@@ -268,7 +256,7 @@ defmodule ToxicParser.Pratt do
           alias ToxicParser.Grammar.Blocks
           Blocks.parse(state, context, log)
         else
-          nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+          nud_literal_or_unary(token, state, context, log, min_bp, false)
         end
 
       # kw_identifier at expression position is a syntax error
@@ -276,28 +264,65 @@ defmodule ToxicParser.Pratt do
         {:error, syntax_error_before(build_meta(token.metadata), token.value), state, log}
 
       _ ->
-        nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks)
+        nud_literal_or_unary(token, state, context, log, min_bp, allow_containers)
     end
   end
 
-  defp nud_literal_or_unary(token, state, context, log, min_bp, allow_do_blocks) do
+  # allow_containers: when false (e.g., struct base parsing), don't parse no-parens calls
+  # The grammar's map_base_expr only produces bare identifiers via sub_matched_expr
+  defp nud_literal_or_unary(token, state, context, log, min_bp, allow_containers \\ true) do
     case Precedence.unary(token.kind) do
-      {bp, _assoc} ->
-        parse_unary(token, state, context, log, bp)
+      {_bp, _assoc} ->
+        # Pass outer min_bp for trailing led(), not the unary's own precedence.
+        # The operand_min_bp is computed inside parse_unary from the operator's precedence.
+        parse_unary(token, state, context, log, min_bp)
 
       nil ->
         cond do
           token.kind == :dual_op ->
-            parse_unary(token, state, context, log, 300)
+            # Pass outer min_bp for trailing led()
+            parse_unary(token, state, context, log, min_bp)
 
           # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
           token.kind == :ternary_op and token.value == :"//" ->
             parse_ternary_unary(token, state, context, log)
 
           true ->
-            ast = literal_to_ast(token)
-            maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
+            nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers)
         end
+    end
+  end
+
+  defp nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers) do
+    allow_do_blocks = Context.allow_do_block?(context)
+
+    case TokenAdapter.peek(state) do
+      {:ok, next_tok, _} ->
+        binary_bp = bp(next_tok.kind)
+
+        allow_no_parens =
+          token.kind == :op_identifier or
+            (is_nil(binary_bp) and
+               (NoParens.can_start_no_parens_arg?(next_tok) or
+                  Keywords.starts_kw?(next_tok)))
+
+        # Container tokens ({, [, <<, %{}) CAN be no-parens call arguments
+        # e.g., `foo {:ok, a}` or `with {:ok, a} <- b, do: c`
+        # Aliases cannot have no-parens call syntax - `Foo x` is invalid
+        # bracket_identifier means tokenizer determined this is bracket access (foo[x])
+        # not a no-parens call - let led_bracket handle it
+        # When allow_containers is false, don't parse no-parens calls
+        if token.kind not in [:paren_identifier, :alias, :bracket_identifier] and allow_no_parens and
+             allow_containers do
+          parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+        else
+          ast = literal_to_ast(token)
+          maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
+        end
+
+      _ ->
+        ast = literal_to_ast(token)
+        maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
     end
   end
 
@@ -348,7 +373,7 @@ defmodule ToxicParser.Pratt do
       # Only counts as "has do-block" if context allows do-block attachment.
       # When context has allow_do_block: false, the do-block belongs to an outer call.
       has_do_block =
-        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and allow_do_block?(context)
+        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and Context.allow_do_block?(context)
 
       # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
@@ -441,14 +466,13 @@ defmodule ToxicParser.Pratt do
                 end
 
               true ->
-                # Parse arg with min_bp constraint
-                # Use parse_with_min_bp directly - keyword_key bubbles up as error
-                # Pass stop_at_assoc: true to prevent => from being consumed
-                # This ensures %{n&n=>1|e} parses as n(&n) => (1|e), not n(&(n=>1|e))
+                # Parse arg with min_bp constraint using no_parens_expr context to allow
+                # nested no-parens calls, but disallow do-blocks inside argument parsing.
+                # Pass stop_at_assoc: true to prevent => from being consumed.
                 with {:ok, arg, state, log} <-
                        parse_with_min_bp(
                          state,
-                         Context.matched_expr(),
+                         Context.no_parens_expr(),
                          log,
                          min_bp,
                          stop_at_assoc: true
@@ -511,7 +535,7 @@ defmodule ToxicParser.Pratt do
          log,
          min_bp
        ) do
-    case parse_no_parens_arg_with_min_bp(state, Context.matched_expr(), log, min_bp) do
+    case parse_no_parens_arg_with_min_bp(state, Context.no_parens_expr(), log, min_bp) do
       {:ok, kw_list, state, log} when is_list(kw_list) and length(kw_list) > 0 ->
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :","}, _} ->
@@ -663,19 +687,19 @@ defmodule ToxicParser.Pratt do
 
             operand_min_bp =
               cond do
-                operand_token.kind == :do_identifier and allow_do_block?(context) ->
+                operand_token.kind == :do_identifier and Context.allow_do_block?(context) ->
                   0
 
                 operand_token.kind == :identifier and next_token_kind == :do_identifier and
-                    allow_do_block?(context) ->
+                    Context.allow_do_block?(context) ->
                   0
 
                 operand_token.kind == :identifier and next_token_kind == :identifier and
-                    next_token_value in @do_block_keywords and allow_do_block?(context) ->
+                    next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
                 operand_token.kind in [:identifier, :dot_identifier] and
-                    operand_token.value in @do_block_keywords and allow_do_block?(context) ->
+                    operand_token.value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
                 op_token.kind in [:ellipsis_op, :range_op] ->
@@ -701,7 +725,11 @@ defmodule ToxicParser.Pratt do
               op = op_token.value
               meta = build_meta(op_token.metadata)
               ast = Builder.Helpers.unary(op, operand, meta)
-              {:ok, ast, state, log}
+              # After building the unary, continue with led() to handle trailing operators.
+              # Use the unary's precedence (operand_min_bp) so only higher-precedence operators
+              # can attach. E.g., `+ a ** b` parses as `(+a) ** b` since ** bp=230 < + bp=300.
+              # For ellipsis/range with operand_min_bp=100, `... a ** b` -> `... (a ** b)`.
+              led(ast, state, log, operand_min_bp, context)
             end
           end
         end
@@ -972,11 +1000,11 @@ end
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
-    {state, eoe_tokens, _newlines_before_op} = peek_past_eoe(state)
+    {state, eoe_tokens, newlines_before_op} = peek_past_eoe(state)
 
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
-        led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens)
+        led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens, newlines_before_op)
 
       {:eof, state} ->
         # At EOF, push back EOE tokens so they're available for expr_list
@@ -988,7 +1016,7 @@ end
     end
   end
 
-  defp led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens) do
+  defp led_dispatch(left, next_token, state, log, min_bp, context, opts, eoe_tokens, newlines_before_op \\ 0) do
     precedence = Precedence.binary(next_token.kind)
 
     case {next_token.kind, precedence} do
@@ -1061,11 +1089,11 @@ end
           state = pushback_eoe_tokens(state, eoe_tokens)
           {:ok, left, state, log}
         else
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
         end
 
       {_, {bp, assoc}} when bp >= min_bp ->
-        led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+        led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
 
       # no_parens_expr extension: when context allows it, operators in @no_parens_op_expr_operators
       # can extend matched_expr to no_parens_expr REGARDLESS of min_bp.
@@ -1076,8 +1104,8 @@ end
         allow_extension? = Keyword.get(opts, :allow_no_parens_extension?, true)
 
         if allow_extension? and min_bp == 0 and
-             is_no_parens_op_expr?(kind) and allow_no_parens_expr?(context) do
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+              is_no_parens_op_expr?(kind) and Context.allow_no_parens_expr?(context) do
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
         else
           # No continuation operator found - push back EOE tokens
           state = pushback_eoe_tokens(state, eoe_tokens)
@@ -1346,7 +1374,7 @@ end
     end
   end
 
-  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc) do
+  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op \\ 0) do
     {:ok, op_token, state} = TokenAdapter.next(state)
     # For right associativity, use same bp to allow chaining at same level
     # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
@@ -1356,10 +1384,11 @@ end
     # Newlines can come from:
     # 1. EOE after the operator (continuation: "1 +\n2")
     # 2. The operator token itself (continuation operator: "a\n|> b")
-    # We take the max of both
+    # 3. EOE before the operator (for pipe_op in map update: "%{base\n| key: val}")
+    # We take the max of all sources
     {state, newlines_after_op} = EOE.skip_count_newlines(state, 0)
     token_newlines = Map.get(op_token.metadata, :newlines, 0)
-    effective_newlines = max(newlines_after_op, token_newlines)
+    effective_newlines = Enum.max([newlines_after_op, token_newlines, newlines_before_op])
 
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list
@@ -1387,6 +1416,49 @@ end
             log
           )
         end
+
+      # Special case: pipe_op followed by keyword list (map update: %{base | key: val})
+      # This needs special handling like when_op to properly parse the keyword RHS
+      # including quoted keywords like 'asd': 1
+      {:ok, rhs_tok, _} when op_token.kind == :pipe_op ->
+        if Keywords.starts_kw?(rhs_tok) do
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_no_parens_call(state, context, log) do
+            op = op_token.value
+            meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
+            combined = Builder.Helpers.binary(op, left, kw_list, meta)
+            led(combined, state, log, min_bp, context, opts)
+          end
+        else
+          # Use parse_when_binary_rhs which handles {:keyword_key, ...} for quoted keys
+          parse_when_binary_rhs(
+            state,
+            left,
+            op_token,
+            rhs_min_bp,
+            min_bp,
+            effective_newlines,
+            context,
+            log
+          )
+        end
+
+      # Special case: assoc_op (=>) in map context needs to parse full expression as value
+      # Grammar rule: assoc_expr -> container_expr assoc_op_eol container_expr
+      # The value of => should be a container_expr which includes pipe_op
+      # So use min_bp=0 to allow | and other low-precedence operators in the value
+      {:ok, _rhs_tok, _} when op_token.kind == :assoc_op ->
+        parse_binary_rhs(
+          state,
+          left,
+          op_token,
+          0,  # min_bp=0 to allow full expression as value
+          min_bp,
+          effective_newlines,
+          context,
+          log,
+          opts
+        )
 
       _ ->
         parse_binary_rhs(
@@ -1441,7 +1513,7 @@ end
         # When allow_do_block is false (e.g. parsing no-parens call arguments), do-blocks
         # belong to the outer call (e.g. `foo bar do ... end`) and must NOT attach to
         # the final argument expression (e.g. `bar do ... end`).
-        if not allow_do_block?(context) do
+        if not Context.allow_do_block?(context) do
           led(ast, state, log, min_bp, context)
         else
           # Do-block - parse and attach to call
@@ -1454,7 +1526,7 @@ end
           # Per Elixir's grammar, block_expr (call + do-block) can appear as operand
           # in unmatched_expr, so min_bp doesn't affect do-block attachment.
           should_attach =
-            case ast do
+             case ast do
               # Call with args list (including empty args [])
               {_name, meta, args} when is_list(args) ->
                 # Don't attach to parenthesized expressions like `(x)` which have
@@ -1466,12 +1538,12 @@ end
                 false
             end
 
-          if should_attach do
+               if should_attach do
             with {:ok, {block_meta, sections}, state, log} <-
                    Blocks.parse_do_block(state, context, log) do
               combined =
                 case ast do
-                  {name, meta, args} when is_list(args) ->
+                   {name, meta, args} when is_list(args) ->
                     # Prepend do/end metadata to the call's existing metadata
                     # Remove no_parens: true as it doesn't apply with do-blocks
                     clean_meta = Keyword.delete(meta, :no_parens)
@@ -1485,10 +1557,10 @@ end
                     Builder.Helpers.call(other, [sections], block_meta)
                 end
 
-              # For unary operands (like `& b_do \\ c`), ALL binary ops should attach.
-              # For binary RHS (like `a ** b_do ** c`), preserve min_bp for associativity.
-              led_min_bp = if unary_operand, do: 0, else: min_bp
-              led(combined, state, log, led_min_bp, context)
+              # After attaching do-block, continue with led using original min_bp.
+              # This preserves operator precedence - e.g., in `~~~B.b do y end => C`
+              # the => should NOT be consumed as part of the unary operand.
+              led(combined, state, log, min_bp, context)
             end
           else
             led(ast, state, log, min_bp, context)

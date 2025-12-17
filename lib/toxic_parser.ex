@@ -39,10 +39,7 @@ defmodule ToxicParser do
     mode = Keyword.get(opts, :mode, :strict)
     emit_events? = Keyword.get(opts, :emit_events, false)
     emit_env? = Keyword.get(opts, :emit_env, false)
-    ctx =
-      opts
-      |> Keyword.get(:expression_context, Context.expr())
-      |> Context.normalize()
+    ctx = Keyword.get(opts, :expression_context, Context.expr())
 
     state = TokenAdapter.new(source, opts)
     log = EventLog.new()

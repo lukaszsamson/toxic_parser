@@ -10,6 +10,11 @@ defmodule ToxicParser.Grammar.Keywords do
           {:ok, [Macro.t()], State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
 
+  @type try_result ::
+          {:ok, [Macro.t()], State.t(), EventLog.t()}
+          | {:no_kw, State.t(), EventLog.t()}
+          | {:error, term(), State.t(), EventLog.t()}
+
   # Keyword-pair starters (foo:).
   #
   # Note: `do:`/`else:` keyword keys are tokenized as `:kw_identifier` with value
@@ -85,6 +90,55 @@ defmodule ToxicParser.Grammar.Keywords do
   def parse_kw_data(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # Data/container context allows do-blocks but not no_parens extension.
     parse_kw_list([], state, ctx, log, 0, Context.container_expr())
+  end
+
+  @doc """
+  Tries to parse `kw_data` without consuming tokens if it is not present.
+
+  This is intended for container contexts where quoted keyword keys may be
+  ambiguous at the token level (e.g. `'foo': 1` vs `'foo'`).
+
+  Returns:
+
+  - `{:ok, kw_list, state, log}` when keyword data is present
+  - `{:no_kw, state, log}` when the next token does not start `kw_data`
+  - `{:error, reason, state, log}` for real syntax errors while parsing keyword data
+  """
+  @spec try_parse_kw_data(State.t(), Pratt.context(), EventLog.t(), keyword()) :: try_result()
+  def try_parse_kw_data(%State{} = state, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
+    allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
+
+    case TokenAdapter.peek(state) do
+      {:ok, tok, state} ->
+        cond do
+          starts_kw?(tok) ->
+            parse_kw_data(state, ctx, log)
+
+          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case parse_kw_data(checkpoint_state, ctx, log) do
+              {:ok, kw_list, state, log} ->
+                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                {:no_kw, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, attempt_log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+            end
+
+          true ->
+            {:no_kw, state, log}
+        end
+
+      {:eof, state} ->
+        {:no_kw, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
   end
 
   defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx) do

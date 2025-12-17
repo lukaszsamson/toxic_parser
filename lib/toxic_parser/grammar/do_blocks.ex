@@ -10,7 +10,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   @spec maybe_do_block(Macro.t(), State.t(), any(), EventLog.t(), keyword()) :: result
   def maybe_do_block(ast, %State{} = state, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
-    allow_do_block? = allow_do_block?(ctx, opts)
+    allow_do_block? = Context.allow_do_block?(ctx)
     clean_meta? = Keyword.get(opts, :clean_meta?, true)
     token = Keyword.get(opts, :token)
     min_bp = Keyword.get(opts, :min_bp)
