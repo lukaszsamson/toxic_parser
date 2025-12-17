@@ -6,7 +6,6 @@ defmodule ToxicParser.Grammar.Dots do
   alias ToxicParser.{Builder, Context, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
-  import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -48,7 +47,7 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       call_meta = Meta.closing_meta(dot_meta, close_meta, total_newlines)
@@ -178,7 +177,7 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_paren_args([], state, ctx, log),
+    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = Builder.Helpers.token_meta(tok.metadata)
@@ -356,7 +355,7 @@ defmodule ToxicParser.Grammar.Dots do
           {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
           with {:ok, args, state, log} <-
-                 parse_paren_args([], state, Context.matched_expr(), log),
+                 ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, Context.matched_expr(), log),
                {:ok, close_meta, trailing_newlines, state} <-
                  Meta.consume_closing(state, :")") do
             total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
@@ -418,134 +417,4 @@ defmodule ToxicParser.Grammar.Dots do
   defp delimiter_from_value(?'), do: "'"
   defp delimiter_from_value(_), do: "\""
 
-  defp parse_paren_args(acc, state, _ctx, log) do
-    # Skip EOE before checking for close paren or next arg
-    state = EOE.skip(state)
-
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :")"}, _} ->
-        {:ok, acc, state, log}
-
-      {:ok, tok, _} ->
-        cond do
-          Keywords.starts_kw?(tok) ->
-            # Keyword argument like foo: 1 - parse entire keyword list
-            with {:ok, kw_list, state, log} <-
-                   Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
-              {:ok, [kw_list | acc], state, log}
-            end
-
-          true ->
-            # Check if this argument starts with [ or { - if so, it's a container literal
-            # and should NOT be merged with following keywords even if it's a keyword list
-            is_container_literal =
-              case tok.kind do
-                # NOTE: only [ and ( seem relevant here
-                kind when kind in [:"[", :"<<", :"(", :"{"] -> true
-                _ -> false
-              end
-
-            # Inside parentheses, use :unmatched context so do_identifiers (case, if, etc.)
-            # can consume their do-blocks. This is correct because when inside parens,
-            # the do-block clearly belongs to the inner expression, not an outer call.
-            # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
-            with {:ok, arg, state, log} <- Expressions.expr(state, Context.unmatched_expr(), log) do
-              # Skip EOE after arg before checking for comma
-              state = EOE.skip(state)
-
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, _} ->
-                  {:ok, _comma, state} = TokenAdapter.next(state)
-                  # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
-                  # If so, and next is also a keyword, merge them
-                  # BUT: if it started as a container literal ([...] or {...}), don't merge
-                  state = EOE.skip(state)
-
-                  case TokenAdapter.peek(state) do
-                    {:ok, next_tok, _}
-                    when is_keyword_list_result(arg) and not is_container_literal ->
-                      cond do
-                        Keywords.starts_kw?(next_tok) ->
-                          # Continue collecting keywords into this list
-                          with {:ok, more_kw, state, log} <-
-                                 Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
-                            merged_kw = arg ++ more_kw
-                            {:ok, [merged_kw | acc], state, log}
-                          end
-
-                        next_tok.kind in [:list_string_start, :bin_string_start] ->
-                          # Another quoted keyword - parse via expression and merge
-                          parse_paren_args_quoted_kw_continuation(arg, acc, state, log)
-
-                        true ->
-                          parse_paren_args([arg | acc], state, Context.unmatched_expr(), log)
-                      end
-
-                    _ ->
-                      parse_paren_args([arg | acc], state, Context.unmatched_expr(), log)
-                  end
-
-                _ ->
-                  # No comma - we're done with args
-                  {:ok, [arg | acc], state, log}
-              end
-            end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Parse continuation of keyword list in paren args context when we encounter another quoted keyword
-  defp parse_paren_args_quoted_kw_continuation(acc_kw, acc, state, log) do
-    # Parse the quoted keyword via expression
-    case Expressions.expr(state, Context.unmatched_expr(), log) do
-      {:ok, expr, state, log} when is_keyword_list_result(expr) ->
-        state = EOE.skip(state)
-
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, _} ->
-            {:ok, _comma, state} = TokenAdapter.next(state)
-            state = EOE.skip(state)
-
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :")"}, _} ->
-                # Trailing comma
-                {:ok, [acc_kw ++ expr | acc], state, log}
-
-              {:ok, tok, _} ->
-                cond do
-                  Keywords.starts_kw?(tok) ->
-                    with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_call(state, Context.unmatched_expr(), log) do
-                      {:ok, [acc_kw ++ expr ++ more_kw | acc], state, log}
-                    end
-
-                  tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_paren_args_quoted_kw_continuation(acc_kw ++ expr, acc, state, log)
-
-                  true ->
-                    {:ok, [acc_kw ++ expr | acc], state, log}
-                end
-
-              _ ->
-                {:ok, [acc_kw ++ expr | acc], state, log}
-            end
-
-          _ ->
-            {:ok, [acc_kw ++ expr | acc], state, log}
-        end
-
-      {:ok, _expr, state, log} ->
-        # Not a keyword
-        {:error, {:expected, :keyword}, state, log}
-
-      {:error, _, _, _} = error ->
-        error
-    end
-  end
 end

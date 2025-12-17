@@ -146,6 +146,48 @@ defmodule ToxicParser.Grammar.Keywords do
     end
   end
 
+  @doc """
+  Tries to parse `kw_call` without consuming tokens if it is not present.
+
+  Intended for `call_args_parens` contexts, including quoted keys like `'a': 1`.
+  """
+  @spec try_parse_kw_call(State.t(), Pratt.context(), EventLog.t(), keyword()) :: try_result()
+  def try_parse_kw_call(%State{} = state, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
+    allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
+
+    case TokenAdapter.peek(state) do
+      {:ok, tok, state} ->
+        cond do
+          starts_kw?(tok) ->
+            parse_kw_call(state, ctx, log)
+
+          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case parse_kw_call(checkpoint_state, ctx, log) do
+              {:ok, kw_list, state, log} ->
+                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                {:no_kw, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, attempt_log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+            end
+
+          true ->
+            {:no_kw, state, log}
+        end
+
+      {:eof, state} ->
+        {:no_kw, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
   defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx) do
     case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
       {:ok, pair, state, log} ->

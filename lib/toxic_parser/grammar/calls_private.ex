@@ -2,9 +2,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   @moduledoc false
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
-  alias ToxicParser.{Context, EventLog, Pratt, State, TokenAdapter}
-  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
-  import Keywords, only: [{:is_keyword_list_result, 1}]
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @spec expect(State.t(), atom()) :: {:ok, atom(), State.t()} | {:error, term(), State.t()}
   def expect(%State{} = state, kind) do
@@ -19,71 +18,17 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_paren_args(acc, %State{} = state, %Context{}, log) do
-    # Skip EOE before checking for close paren or next arg
+    container_ctx = Context.container_expr()
+
     state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"}, _} ->
         {:ok, acc, state, log}
 
-      {:ok, tok, _state} ->
-        cond do
-          Keywords.starts_kw?(tok) ->
-            # Inside parens, use :unmatched so do_identifiers can consume do-blocks
-            with {:ok, kw_list, state, log} <-
-                   Keywords.parse_kw_call(state, Context.container_expr(), log) do
-              {:ok, [kw_list | acc], state, log}
-            end
-
-          true ->
-            # Check if this argument starts with [ or { - if so, it's a container literal
-            # and should NOT be merged with following keywords even if it's a keyword list
-            is_container_literal =
-              case tok.kind do
-                kind when kind in [:"[", :"{"] -> true
-                _ -> false
-              end
-
-            # Inside parens, use container_expr so do-blocks are allowed but no_parens
-            # extensions are rejected per call_args_parens_expr grammar.
-            # can consume their do-blocks. This is correct because when inside parens,
-            # the do-block clearly belongs to the inner expression, not an outer call.
-            # e.g., foo(case a do x -> y end) - the do belongs to case, not foo
-            with {:ok, arg, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
-              # Skip EOE after arg before checking for comma
-              state = EOE.skip(state)
-
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, _} ->
-                  {:ok, _comma, state} = TokenAdapter.next(state)
-                  # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
-                  # If so, and next is also a keyword, merge them
-                  # BUT: if it started as a container literal ([...] or {...}), don't merge
-                  state = EOE.skip(state)
-
-                  case TokenAdapter.peek(state) do
-                    {:ok, next_tok, _}
-                    when is_keyword_list_result(arg) and not is_container_literal ->
-                      if Keywords.starts_kw_or_quoted_key?(next_tok) do
-                        # Continue collecting keywords into this list
-                        # This handles both standard keywords (foo:) and quoted keywords ("foo":)
-                        with {:ok, more_kw, state, log} <-
-                               Keywords.parse_kw_call(state, Context.container_expr(), log) do
-                          merged_kw = arg ++ more_kw
-                          {:ok, [merged_kw | acc], state, log}
-                        end
-                      else
-                        parse_paren_args([arg | acc], state, Context.container_expr(), log)
-                      end
-
-                    _ ->
-                      parse_paren_args([arg | acc], state, Context.container_expr(), log)
-                  end
-
-                _ ->
-                  {:ok, [arg | acc], state, log}
-              end
-            end
+      {:ok, _tok, _} ->
+        with {:ok, args, state, log} <- parse_call_args_parens(state, container_ctx, log) do
+          {:ok, Enum.reverse(args) ++ acc, state, log}
         end
 
       {:eof, state} ->
@@ -92,5 +37,121 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       {:error, diag, state} ->
         {:error, diag, state, log}
     end
+  end
+
+  defp parse_call_args_parens(state, container_ctx, log) do
+    case Keywords.try_parse_kw_call(state, container_ctx, log) do
+      {:ok, kw_list, state, log} ->
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :")"}, state} ->
+            {:ok, [kw_list], state, log}
+
+          {:ok, %{kind: kind}, state} ->
+            {:error, {:expected, :")", got: kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
+      {:no_kw, state, log} ->
+        try_single_no_parens_arg(state, log, fn state, log ->
+          parse_call_args_parens_list(state, container_ctx, log)
+        end)
+
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
+    end
+  end
+
+  defp try_single_no_parens_arg(state, log, fallback) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+    case Expressions.expr(checkpoint_state, Context.no_parens_expr(), log) do
+      {:ok, expr, state, log} ->
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :")"}, state} ->
+            {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), log}
+
+          _ ->
+            fallback.(TokenAdapter.rewind(state, ref), log)
+        end
+
+      {:error, _reason, state, log} ->
+        fallback.(TokenAdapter.rewind(state, ref), log)
+    end
+  end
+
+  defp parse_call_args_parens_list(state, container_ctx, log) do
+    item_fun = fn state, _ctx, log ->
+      case Keywords.try_parse_kw_call(state, container_ctx, log) do
+        {:ok, kw_list, state, log} ->
+          state = EOE.skip(state)
+
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :")"}, state} ->
+              {:ok, {:kw_call, kw_list}, state, log}
+
+            {:ok, %{kind: :","} = comma_tok, state} ->
+              meta = Builder.Helpers.token_meta(comma_tok.metadata)
+              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
+
+            {:ok, %{kind: kind}, state} ->
+              {:error, {:expected, :")", got: kind}, state, log}
+
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
+
+        {:no_kw, state, log} ->
+          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+            {:ok, {:expr, expr}, state, log}
+          end
+
+        {:error, reason, state, log} ->
+          {:error, reason, state, log}
+      end
+    end
+
+    with {:ok, tagged_items, state, log} <-
+           Delimited.parse_comma_separated(state, container_ctx, log, :")", item_fun,
+             allow_empty?: false,
+             allow_trailing_comma?: false
+           ) do
+      {:ok, finalize_call_args_parens_items(tagged_items), state, log}
+    end
+  end
+
+  defp finalize_call_args_parens_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_call, kw_list} ->
+        exprs =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:expr, expr} -> expr end)
+
+        exprs ++ [kw_list]
+
+      _ ->
+        Enum.map(tagged_items, fn {:expr, expr} -> expr end)
+    end
+  end
+
+  defp unexpected_expression_after_kw_call_message do
+    "unexpected expression after keyword list. Keyword lists must always come as the last argument. " <>
+      "Therefore, this is not allowed:\n\n" <>
+      "    function_call(1, some: :option, 2)\n\n" <>
+      "Instead, wrap the keyword in brackets:\n\n" <>
+      "    function_call(1, [some: :option], 2)\n\n" <>
+      "Syntax error after: "
   end
 end
