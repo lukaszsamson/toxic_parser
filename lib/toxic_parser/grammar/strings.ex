@@ -13,6 +13,9 @@ defmodule ToxicParser.Grammar.Strings do
   @atom_start [:atom_unsafe_start, :atom_safe_start]
   # TODO: atom_safe_start
 
+  # Max atom length is 255 bytes
+  @max_atom_length 255
+
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
@@ -68,8 +71,13 @@ defmodule ToxicParser.Grammar.Strings do
           {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log}
         else
           content = merge_fragments(parts)
-          atom = String.to_atom(content)
-          {:keyword_key, atom, state, log}
+
+          if byte_size(content) > @max_atom_length do
+            {:error, {:atom_too_long, content, start_tok.metadata}, state, log}
+          else
+            atom = String.to_atom(content)
+            {:keyword_key, atom, state, log}
+          end
         end
       else
         build_string_ast(
@@ -200,9 +208,14 @@ defmodule ToxicParser.Grammar.Strings do
         Pratt.led(ast, state, log, min_bp, ctx, opts)
       else
         content = merge_fragments(parts)
-        atom = String.to_atom(content)
-        ast = Builder.Helpers.literal(atom)
-        Pratt.led(ast, state, log, min_bp, ctx, opts)
+
+        if byte_size(content) > @max_atom_length do
+          {:error, {:atom_too_long, content, start_tok.metadata}, state, log}
+        else
+          atom = String.to_atom(content)
+          ast = Builder.Helpers.literal(atom)
+          Pratt.led(ast, state, log, min_bp, ctx, opts)
+        end
       end
     end
   end
@@ -223,9 +236,19 @@ defmodule ToxicParser.Grammar.Strings do
         else
           case end_kind do
             :string_fragment ->
-              {:ok, %{value: fragment}, state} = TokenAdapter.next(state)
-              content = if should_unescape, do: unescape(fragment), else: fragment
-              collect_parts([{:fragment, content} | acc], state, target_ends, kind, log)
+              {:ok, %{value: fragment} = frag_tok, state} = TokenAdapter.next(state)
+
+              if should_unescape do
+                case safe_unescape(fragment) do
+                  {:ok, content} ->
+                    collect_parts([{:fragment, content} | acc], state, target_ends, kind, log)
+
+                  {:error, reason} ->
+                    {:error, {:unescape_error, reason, frag_tok.metadata}, state, log}
+                end
+              else
+                collect_parts([{:fragment, fragment} | acc], state, target_ends, kind, log)
+              end
 
             :begin_interpolation ->
               with {:ok, interp_ast, state, log} <- parse_interpolation(state, kind, log) do
@@ -418,31 +441,39 @@ defmodule ToxicParser.Grammar.Strings do
 
     if has_interpolations?(parts) do
       # Unescape fragments now (after indentation trimming)
-      args = build_interpolated_parts_unescape(parts, kind)
+      case build_interpolated_parts_unescape(parts, kind) do
+        {:ok, args} ->
+          ast =
+            case kind do
+              :heredoc_binary ->
+                {:<<>>, meta_with_indent, args}
 
-      ast =
-        case kind do
-          :heredoc_binary ->
-            {:<<>>, meta_with_indent, args}
+              :heredoc_charlist ->
+                # Charlist heredoc with interpolation: List.to_charlist(meta, [parts])
+                {{:., start_meta, [List, :to_charlist]}, meta_with_indent, [args]}
+            end
 
-          :heredoc_charlist ->
-            # Charlist heredoc with interpolation: List.to_charlist(meta, [parts])
-            {{:., start_meta, [List, :to_charlist]}, meta_with_indent, [args]}
-        end
+          Pratt.led(ast, state, log, min_bp, ctx, opts)
 
-      Pratt.led(ast, state, log, min_bp, ctx, opts)
+        {:error, reason} ->
+          {:error, {:unescape_error, reason, start_meta}, state, log}
+      end
     else
       # Unescape and merge fragments
-      content = merge_fragments_unescape(parts)
+      case merge_fragments_unescape(parts) do
+        {:ok, content} ->
+          value =
+            case kind do
+              :heredoc_binary -> content
+              :heredoc_charlist -> String.to_charlist(content)
+            end
 
-      value =
-        case kind do
-          :heredoc_binary -> content
-          :heredoc_charlist -> String.to_charlist(content)
-        end
+          ast = Builder.Helpers.literal(value)
+          Pratt.led(ast, state, log, min_bp, ctx, opts)
 
-      ast = Builder.Helpers.literal(value)
-      Pratt.led(ast, state, log, min_bp, ctx, opts)
+        {:error, reason} ->
+          {:error, {:unescape_error, reason, start_meta}, state, log}
+      end
     end
   end
 
@@ -457,12 +488,25 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Build list of parts for heredoc with interpolation (with unescaping)
+  # Returns {:ok, parts} or {:error, reason}
   defp build_interpolated_parts_unescape(parts, _kind) do
-    for part <- parts do
-      case part do
-        {:fragment, content} -> unescape(content)
-        {:interpolation, ast} -> ast
-      end
+    result =
+      Enum.reduce_while(parts, {:ok, []}, fn part, {:ok, acc} ->
+        case part do
+          {:fragment, content} ->
+            case safe_unescape(content) do
+              {:ok, unescaped} -> {:cont, {:ok, [unescaped | acc]}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+
+          {:interpolation, ast} ->
+            {:cont, {:ok, [ast | acc]}}
+        end
+      end)
+
+    case result do
+      {:ok, reversed} -> {:ok, Enum.reverse(reversed)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -478,14 +522,27 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Merge all fragments into a single string with unescaping (for heredocs)
+  # Returns {:ok, string} or {:error, reason}
   defp merge_fragments_unescape(parts) do
-    parts
-    |> Enum.filter(fn
-      {:fragment, _} -> true
-      _ -> false
-    end)
-    |> Enum.map(fn {:fragment, content} -> unescape(content) end)
-    |> Enum.join("")
+    fragments =
+      parts
+      |> Enum.filter(fn
+        {:fragment, _} -> true
+        _ -> false
+      end)
+
+    result =
+      Enum.reduce_while(fragments, {:ok, []}, fn {:fragment, content}, {:ok, acc} ->
+        case safe_unescape(content) do
+          {:ok, unescaped} -> {:cont, {:ok, [unescaped | acc]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+
+    case result do
+      {:ok, reversed} -> {:ok, reversed |> Enum.reverse() |> Enum.join("")}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp has_interpolations?(parts) do
@@ -642,7 +699,13 @@ defmodule ToxicParser.Grammar.Strings do
   defp count_leading_backslashes(_), do: 0
 
   # Unescape string escape sequences like \n, \t, etc.
-  defp unescape(string), do: Macro.unescape_string(string)
+  # Returns {:ok, string} or {:error, reason}
+  defp safe_unescape(string) do
+    {:ok, :elixir_interpolation.unescape_string(string)}
+  rescue
+    e in ArgumentError ->
+      {:error, Exception.message(e)}
+  end
 
   defp token_to_meta(%{range: %{start: %{line: line, column: column}}}) do
     [line: line, column: column]
