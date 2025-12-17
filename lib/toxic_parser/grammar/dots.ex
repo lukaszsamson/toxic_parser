@@ -47,7 +47,8 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
+    with {:ok, args, state, log} <-
+           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       call_meta = Meta.closing_meta(dot_meta, close_meta, total_newlines)
@@ -177,7 +178,8 @@ defmodule ToxicParser.Grammar.Dots do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
+    with {:ok, args, state, log} <-
+           ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = Builder.Helpers.token_meta(tok.metadata)
@@ -355,7 +357,12 @@ defmodule ToxicParser.Grammar.Dots do
           {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
           with {:ok, args, state, log} <-
-                 ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, Context.matched_expr(), log),
+                 ToxicParser.Grammar.CallsPrivate.parse_paren_args(
+                   [],
+                   state,
+                   Context.matched_expr(),
+                   log
+                 ),
                {:ok, close_meta, trailing_newlines, state} <-
                  Meta.consume_closing(state, :")") do
             total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
@@ -416,5 +423,4 @@ defmodule ToxicParser.Grammar.Dots do
   defp delimiter_from_value(?"), do: "\""
   defp delimiter_from_value(?'), do: "'"
   defp delimiter_from_value(_), do: "\""
-
 end

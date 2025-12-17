@@ -359,22 +359,23 @@ defmodule ToxicParser.Grammar.Maps do
   # 4. op_identifier calls (like c!) consume | as part of their argument,
   #    so if we still see | after parsing base, it's the map update separator
   defp try_parse_map_update(state, ctx, log) do
-    # Keywords start a definite non-update (just kw_data)
-    if starts_with_kw?(state) do
-      {:not_update, state}
-    else
-      {checkpoint_id, checkpoint_state} = TokenAdapter.checkpoint(state)
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :kw_identifier}, _} ->
+        {:not_update, state}
 
-      case parse_map_update_candidate(checkpoint_state, ctx, log) do
-        {:ok, update_ast, close_meta, state, log} ->
-          {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id), log}
+      _ ->
+        {checkpoint_id, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-        {:not_update, state} ->
-          {:not_update, TokenAdapter.rewind(state, checkpoint_id)}
+        case parse_map_update_candidate(checkpoint_state, ctx, log) do
+          {:ok, update_ast, close_meta, state, log} ->
+            {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id), log}
 
-        {:error, diag, state, log} ->
-          {:error, diag, TokenAdapter.rewind(state, checkpoint_id), log}
-      end
+          {:not_update, state} ->
+            {:not_update, TokenAdapter.rewind(state, checkpoint_id)}
+
+          {:error, diag, state, log} ->
+            {:error, diag, TokenAdapter.rewind(state, checkpoint_id), log}
+        end
     end
   end
 
@@ -382,6 +383,12 @@ defmodule ToxicParser.Grammar.Maps do
   @pipe_op_bp 70
 
   defp parse_map_update_candidate(state, _ctx, log) do
+    starts_with_quoted_kw_key? =
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: kind}, _} when kind in [:bin_string_start, :list_string_start] -> true
+        _ -> false
+      end
+
     # First, try parsing the full expression without restricting |
     # This allows op_identifier calls (like c!) to consume | as part of their argument
     # e.g., %{c!s|n => 1} should parse as c!(s|n) => 1, not c!s | n => 1
@@ -429,11 +436,19 @@ defmodule ToxicParser.Grammar.Maps do
             end
         end
 
-      {:keyword_key, _, state, _} ->
-        {:not_update, state}
+      {:keyword_key, _, _state, _} ->
+        if starts_with_quoted_kw_key? do
+          {:not_update, state}
+        else
+          parse_map_update_with_min_bp(state, log)
+        end
 
-      {:keyword_key_interpolated, _, _, _, _, state, _} ->
-        {:not_update, state}
+      {:keyword_key_interpolated, _, _, _, _, _state, _} ->
+        if starts_with_quoted_kw_key? do
+          {:not_update, state}
+        else
+          parse_map_update_with_min_bp(state, log)
+        end
 
       {:error, _diag, _state, _log} ->
         # Parsing failed - likely due to keyword after |
@@ -708,17 +723,6 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  # Check if we should skip map update parsing (starts with definite keyword)
-  defp starts_with_kw?(state) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        Keywords.starts_kw_or_quoted_key?(tok)
-
-      _ ->
-        false
-    end
-  end
-
   # Parse map_close: kw_data close_curly | assoc close_curly | assoc_base ',' kw_data close_curly
   defp parse_map_close(state, ctx, log) do
     item_fun = fn state, _ctx, log ->
@@ -908,11 +912,18 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp annotate_assoc(other, _assoc_meta), do: other
 
-  # Build token metadata with explicit newlines count
-  defp token_meta_with_newlines(meta, 0), do: token_meta(meta)
+  # Build token metadata with explicit newlines count.
+  # Some tokens (notably `|` in map updates) carry their own `:newlines` count,
+  # so we take the max of the skipped EOE newlines and the token's own newlines.
+  defp token_meta_with_newlines(meta, newlines) when is_map(meta) and is_integer(newlines) do
+    token_newlines = Map.get(meta, :newlines, 0)
+    effective_newlines = max(newlines, token_newlines)
 
-  defp token_meta_with_newlines(meta, newlines) when is_integer(newlines) and newlines > 0 do
-    [newlines: newlines] ++ Builder.Helpers.token_meta(meta)
+    if effective_newlines > 0 do
+      [newlines: effective_newlines] ++ token_meta(meta)
+    else
+      token_meta(meta)
+    end
   end
 
   defp token_meta_with_newlines(_, _), do: []

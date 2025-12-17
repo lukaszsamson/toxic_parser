@@ -23,6 +23,17 @@ defmodule ToxicParser.Grammar.Keywords do
 
   # String start tokens that could be quoted keyword keys like "foo": or 'bar':
   @quoted_kw_start [:bin_string_start, :list_string_start]
+  @no_parens_kw_terminators [
+    :eoe,
+    :")",
+    :"]",
+    :"}",
+    :do,
+    :end,
+    :end_interpolation,
+    :when_op,
+    :stab_op
+  ]
 
   @doc "Checks if an expression result is a keyword list (from quoted keyword parsing)"
   # Must check that first element is a tuple to distinguish from charlists like [114]
@@ -68,9 +79,7 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list usable in no-parens call argument position (call_args_no_parens_kw)."
   @spec parse_kw_no_parens_call(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_no_parens_call(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    # call_args_no_parens_kw_expr in elixir_parser.yrl parses kw_eol matched_expr.
-    # We use kw_no_parens_value to allow no_parens extension but not do-blocks.
-    parse_kw_list([], state, ctx, log, 0, Context.kw_no_parens_value())
+    parse_call_args_no_parens_kw(state, ctx, log, 0)
   end
 
   @doc "Parses no-parens call keyword list with a minimum binding power constraint."
@@ -87,7 +96,7 @@ defmodule ToxicParser.Grammar.Keywords do
         %EventLog{} = log,
         min_bp
       ) do
-    parse_kw_list([], state, ctx, log, min_bp, Context.kw_no_parens_value())
+    parse_call_args_no_parens_kw(state, ctx, log, min_bp)
   end
 
   @doc "Parses a keyword list usable in data (container) position."
@@ -186,6 +195,168 @@ defmodule ToxicParser.Grammar.Keywords do
       {:error, diag, state} ->
         {:error, diag, state, log}
     end
+  end
+
+  @doc """
+  Tries to parse `call_args_no_parens_kw` without consuming tokens if it is not present.
+
+  This is used for:
+
+  - `no_parens_op_expr -> when_op_eol call_args_no_parens_kw`
+  - no-parens call args (`foo a: 1`)
+  - stab parens args (`fn (a: 1) -> ... end`)
+  """
+  @spec try_parse_kw_no_parens_call(State.t(), Pratt.context(), EventLog.t(), keyword()) ::
+          try_result()
+  def try_parse_kw_no_parens_call(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        opts \\ []
+      ) do
+    allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
+    min_bp = Keyword.get(opts, :min_bp, 0)
+
+    case TokenAdapter.peek(state) do
+      {:ok, tok, state} ->
+        cond do
+          starts_kw?(tok) ->
+            parse_call_args_no_parens_kw(state, ctx, log, min_bp)
+
+          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case parse_call_args_no_parens_kw(checkpoint_state, ctx, log, min_bp) do
+              {:ok, kw_list, state, log} ->
+                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                {:no_kw, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, attempt_log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+            end
+
+          true ->
+            {:no_kw, state, log}
+        end
+
+      {:eof, state} ->
+        {:no_kw, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  @spec parse_call_args_no_parens_kw(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
+          result()
+  defp parse_call_args_no_parens_kw(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
+    value_ctx = Context.kw_no_parens_value()
+
+    with {:ok, pair, state, log} <- parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+      parse_call_args_no_parens_kw_pairs([pair], state, ctx, log, min_bp, value_ctx)
+    end
+  end
+
+  defp parse_call_args_no_parens_kw_pairs(acc, state, ctx, log, min_bp, value_ctx) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :","} = comma_tok, _} ->
+        {:ok, _comma, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: kind}, _} when kind in @no_parens_kw_terminators ->
+            meta = Builder.Helpers.token_meta(comma_tok.metadata)
+            {:error, syntax_error_before(meta), state, log}
+
+          {:ok, _tok, _} ->
+            case try_parse_no_parens_kw_pair(state, ctx, log, min_bp, value_ctx) do
+              {:ok, pair, state, log} ->
+                parse_call_args_no_parens_kw_pairs(
+                  [pair | acc],
+                  state,
+                  ctx,
+                  log,
+                  min_bp,
+                  value_ctx
+                )
+
+              {:no_kw, state, log} ->
+                meta = Builder.Helpers.token_meta(comma_tok.metadata)
+                {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
+            end
+
+          {:eof, state} ->
+            meta = Builder.Helpers.token_meta(comma_tok.metadata)
+            {:error, syntax_error_before(meta), state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
+      {:ok, _tok, state} ->
+        {:ok, Enum.reverse(acc), state, log}
+
+      {:eof, state} ->
+        {:ok, Enum.reverse(acc), state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp try_parse_no_parens_kw_pair(state, ctx, log, min_bp, value_ctx) do
+    case TokenAdapter.peek(state) do
+      {:ok, tok, state} ->
+        cond do
+          starts_kw?(tok) ->
+            parse_kw_pair(state, ctx, log, min_bp, value_ctx)
+
+          tok.kind in @quoted_kw_start ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case parse_kw_pair(checkpoint_state, ctx, log, min_bp, value_ctx) do
+              {:ok, pair, state, log} ->
+                {:ok, pair, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                {:no_kw, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, attempt_log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+            end
+
+          true ->
+            {:no_kw, state, log}
+        end
+
+      {:eof, state} ->
+        {:no_kw, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp syntax_error_before(meta) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", ""}
+  end
+
+  defp unexpected_expression_after_kw_call_message do
+    "unexpected expression after keyword list. Keyword lists must always come as the last argument. " <>
+      "Therefore, this is not allowed:\n\n" <>
+      "    function_call(1, some: :option, 2)\n\n" <>
+      "Instead, wrap the keyword in brackets:\n\n" <>
+      "    function_call(1, [some: :option], 2)\n\n" <>
+      "Syntax error after: "
   end
 
   defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx) do

@@ -23,6 +23,7 @@ defmodule ToxicParser.Pratt do
   }
 
   alias ToxicParser.Builder.Meta
+
   alias ToxicParser.Grammar.{
     Blocks,
     Brackets,
@@ -34,6 +35,7 @@ defmodule ToxicParser.Pratt do
     Expressions,
     Keywords
   }
+
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type context :: Context.t()
@@ -385,7 +387,7 @@ defmodule ToxicParser.Pratt do
   # This version uses min_bp to stop argument parsing before certain operators
   defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp) do
     with {:ok, args, state, log} <-
-           parse_no_parens_args_with_min_bp([], state, context, log, min_bp) do
+           Calls.parse_no_parens_args([], state, context, log, min_bp) do
       callee = callee_tok.value
       base_meta = Builder.Helpers.token_meta(callee_tok.metadata)
 
@@ -409,195 +411,6 @@ defmodule ToxicParser.Pratt do
       ast = {callee, meta, args}
       # Check for do-block ONLY, don't call led (caller will do that)
       DoBlocks.maybe_do_block(ast, state, context, log)
-    end
-  end
-
-  # Parse no-parens call arguments with a minimum binding power constraint
-  # This stops parsing before operators with binding power < min_bp
-  defp parse_no_parens_args_with_min_bp(acc, state, ctx, log, min_bp) do
-    case TokenAdapter.peek(state) do
-      # Check for operator that should stop us
-      {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
-        {:ok, Enum.reverse(acc), state, log}
-
-      {:ok, %{kind: kind} = tok, _} ->
-        # Check if we should stop at this operator due to min_bp
-        case Precedence.binary(kind) do
-          {bp, _} when bp < min_bp ->
-            # Stop before this operator (e.g., -> with bp=10 when min_bp=11)
-            {:ok, Enum.reverse(acc), state, log}
-
-          _ ->
-            cond do
-              Keywords.starts_kw?(tok) ->
-                # kw_list is already [x: 1], we need to wrap it once for args: [[x: 1]]
-                with {:ok, kw_list, state, log} <-
-                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                  {:ok, Enum.reverse([kw_list | acc]), state, log}
-                end
-
-              tok.kind in [:list_string_start, :bin_string_start] ->
-                # Potentially a quoted keyword - parse and handle
-                case parse_no_parens_arg_with_min_bp(state, Context.matched_expr(), log, min_bp) do
-                  {:ok, arg, state, log} ->
-                    case TokenAdapter.peek(state) do
-                      {:ok, %{kind: :","}, _} ->
-                        {:ok, _comma, state} = TokenAdapter.next(state)
-                        # Check if arg is a keyword list and next is also keyword
-                        case TokenAdapter.peek(state) do
-                          {:ok, next_tok, _} ->
-                            cond do
-                              is_keyword_list_result(arg) and Keywords.starts_kw?(next_tok) ->
-                                with {:ok, kw_list, state, log} <-
-                                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                                  {:ok, Enum.reverse(acc) ++ [arg ++ kw_list], state, log}
-                                end
-
-                              is_keyword_list_result(arg) and
-                                  next_tok.kind in [:list_string_start, :bin_string_start] ->
-                                parse_no_parens_args_quoted_kw_continuation_with_min_bp(
-                                  arg,
-                                  acc,
-                                  state,
-                                  ctx,
-                                  log,
-                                  min_bp
-                                )
-
-                              true ->
-                                parse_no_parens_args_with_min_bp(
-                                  [arg | acc],
-                                  state,
-                                  ctx,
-                                  log,
-                                  min_bp
-                                )
-                            end
-
-                          _ ->
-                            parse_no_parens_args_with_min_bp([arg | acc], state, ctx, log, min_bp)
-                        end
-
-                      _ ->
-                        {:ok, Enum.reverse([arg | acc]), state, log}
-                    end
-
-                  {:error, reason, state, log} ->
-                    {:error, reason, state, log}
-                end
-
-              true ->
-                # Parse arg with min_bp constraint using no_parens_expr context to allow
-                # nested no-parens calls, but disallow do-blocks inside argument parsing.
-                # Pass stop_at_assoc: true to prevent => from being consumed.
-                with {:ok, arg, state, log} <-
-                       parse_with_min_bp(
-                         state,
-                         Context.no_parens_expr(),
-                         log,
-                         min_bp,
-                         stop_at_assoc: true
-                       ) do
-                  case TokenAdapter.peek(state) do
-                    {:ok, %{kind: :","}, _} ->
-                      {:ok, _comma, state} = TokenAdapter.next(state)
-                      parse_no_parens_args_with_min_bp([arg | acc], state, ctx, log, min_bp)
-
-                    _ ->
-                      {:ok, Enum.reverse([arg | acc]), state, log}
-                  end
-                end
-            end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Parse a single argument with min_bp, handling keyword_key from quoted keywords
-  # Pass stop_at_assoc: true to prevent => from being consumed in map contexts
-  defp parse_no_parens_arg_with_min_bp(state, context, log, min_bp) do
-    case parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
-      {:ok, ast, state, log} ->
-        {:ok, ast, state, log}
-
-      {:keyword_key, key_atom, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
-          {:ok, [{key_atom, value_ast}], state, log}
-        end
-
-      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               parse_with_min_bp(state, context, log, min_bp, stop_at_assoc: true) do
-          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-          {:ok, [{key_ast, value_ast}], state, log}
-        end
-
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
-    end
-  end
-
-  # Continue parsing keyword list in no_parens args context with min_bp
-  defp parse_no_parens_args_quoted_kw_continuation_with_min_bp(
-         acc_kw,
-         acc,
-         state,
-         ctx,
-         log,
-         min_bp
-       ) do
-    case parse_no_parens_arg_with_min_bp(state, Context.no_parens_expr(), log, min_bp) do
-      {:ok, kw_list, state, log} when is_list(kw_list) and length(kw_list) > 0 ->
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, _} ->
-            {:ok, _comma, state} = TokenAdapter.next(state)
-
-            case TokenAdapter.peek(state) do
-              {:ok, tok, _} ->
-                cond do
-                  Keywords.starts_kw?(tok) ->
-                    with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list ++ more_kw], state, log}
-                    end
-
-                  tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_no_parens_args_quoted_kw_continuation_with_min_bp(
-                      acc_kw ++ kw_list,
-                      acc,
-                      state,
-                      ctx,
-                      log,
-                      min_bp
-                    )
-
-                  true ->
-                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
-                end
-
-              _ ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
-            end
-
-          _ ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ kw_list], state, log}
-        end
-
-      {:ok, _ast, state, log} ->
-        {:error, {:expected, :keyword}, state, log}
-
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
     end
   end
 
@@ -1437,61 +1250,29 @@ defmodule ToxicParser.Pratt do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
       # This applies regardless of context (not just :no_parens)
-      {:ok, rhs_tok, _} when op_token.kind == :when_op ->
-        if Keywords.starts_kw?(rhs_tok) do
-          with {:ok, kw_list, state, log} <-
-                 Keywords.parse_kw_no_parens_call(state, context, log) do
+      {:ok, _rhs_tok, _} when op_token.kind == :when_op ->
+        case Keywords.try_parse_kw_no_parens_call(state, context, log) do
+          {:ok, kw_list, state, log} ->
             op = op_token.value
             meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
             combined = Builder.Helpers.binary(op, left, kw_list, meta)
             led(combined, state, log, min_bp, context, opts)
-          end
-        else
-          # Parse RHS normally - handle keyword_key from quoted keywords
-          parse_when_binary_rhs(
-            state,
-            left,
-            op_token,
-            rhs_min_bp,
-            min_bp,
-            effective_newlines,
-            context,
-            log
-          )
-        end
 
-      # Special case: pipe_op followed by keyword list (map update: %{base | key: val})
-      # This needs special handling like when_op to properly parse the keyword RHS
-      # including quoted keywords like 'asd': 1
-      # When context allows do-blocks (e.g., inside maps), use parse_kw_data to allow
-      # do-block expressions as keyword values: %{foo | bar: if true do 1 end}
-      {:ok, rhs_tok, _} when op_token.kind == :pipe_op ->
-        if Keywords.starts_kw?(rhs_tok) do
-          kw_result =
-            if Context.allow_do_block?(context) do
-              Keywords.parse_kw_data(state, context, log)
-            else
-              Keywords.parse_kw_no_parens_call(state, context, log)
-            end
+          {:no_kw, state, log} ->
+            # Parse RHS normally - handle keyword_key from quoted keywords
+            parse_when_binary_rhs(
+              state,
+              left,
+              op_token,
+              rhs_min_bp,
+              min_bp,
+              effective_newlines,
+              context,
+              log
+            )
 
-          with {:ok, kw_list, state, log} <- kw_result do
-            op = op_token.value
-            meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
-            combined = Builder.Helpers.binary(op, left, kw_list, meta)
-            led(combined, state, log, min_bp, context, opts)
-          end
-        else
-          # Use parse_when_binary_rhs which handles {:keyword_key, ...} for quoted keys
-          parse_when_binary_rhs(
-            state,
-            left,
-            op_token,
-            rhs_min_bp,
-            min_bp,
-            effective_newlines,
-            context,
-            log
-          )
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
         end
 
       # Special case: assoc_op (=>) in map context needs to parse full expression as value
@@ -1755,6 +1536,7 @@ defmodule ToxicParser.Pratt do
         case TokenAdapter.next(state) do
           {:ok, %{kind: :"}"} = close_tok, state} ->
             close_meta = build_meta(close_tok.metadata)
+
             {:ok, finalize_dot_container_items(tagged_items), leading_newlines, close_meta, state,
              log}
 

@@ -21,7 +21,6 @@ defmodule ToxicParser.Grammar.Calls do
 
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Brackets, DoBlocks, EOE, Expressions, Keywords}
-  import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -317,7 +316,7 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
         {:ok, Enum.reverse(acc), state, log}
 
-      {:ok, %{kind: kind} = tok, _} ->
+      {:ok, %{kind: kind}, _} ->
         # Check if we should stop at this operator due to min_bp.
         # BUT only for pure binary operators - tokens like dual_op can be unary,
         # so they should be allowed to start no-parens arguments.
@@ -330,15 +329,11 @@ defmodule ToxicParser.Grammar.Calls do
             {:ok, Enum.reverse(acc), state, log}
 
           _ ->
-            cond do
-              Keywords.starts_kw?(tok) ->
-                # kw_list is already [x: 1], wrap once for args: [[x: 1]]
-                with {:ok, kw_list, state, log} <-
-                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                  {:ok, Enum.reverse([kw_list | acc]), state, log}
-                end
+            case Keywords.try_parse_kw_no_parens_call(state, ctx, log) do
+              {:ok, kw_list, state, log} ->
+                {:ok, Enum.reverse([kw_list | acc]), state, log}
 
-              true ->
+              {:no_kw, state, log} ->
                 # Parse args in no_parens_expr context:
                 # - allow_do_block: false - do-blocks belong to outer call, not arguments
                 # - allow_no_parens_expr: true - allows operators like `when` to extend inside args
@@ -352,41 +347,12 @@ defmodule ToxicParser.Grammar.Calls do
                   {:ok, arg, state, log} ->
                     handle_no_parens_arg(arg, acc, state, ctx, log, min_bp)
 
-                  # Handle quoted keyword key - parse value and return as keyword pair
-                  {:keyword_key, key_atom, state, log} ->
-                    state = EOE.skip(state)
-
-                    with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, arg_context, log, 0,
-                             stop_at_assoc: true
-                           ) do
-                      kw_pair = [{key_atom, value_ast}]
-                      handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
-                    end
-
-                  # Handle interpolated keyword key
-                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-                    state = EOE.skip(state)
-
-                    with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, arg_context, log, 0,
-                             stop_at_assoc: true
-                           ) do
-                      key_ast =
-                        Expressions.build_interpolated_keyword_key(
-                          parts,
-                          kind,
-                          start_meta,
-                          delimiter
-                        )
-
-                      kw_pair = [{key_ast, value_ast}]
-                      handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
-                    end
-
                   {:error, reason, state, log} ->
                     {:error, reason, state, log}
                 end
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
             end
         end
 
@@ -402,30 +368,37 @@ defmodule ToxicParser.Grammar.Calls do
   defp handle_no_parens_arg(arg, acc, state, ctx, log, min_bp) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :","}, _} ->
-        {:ok, _comma, state} = TokenAdapter.next(state)
-        # Check if arg was a keyword list from quoted key parsing (e.g., "foo": 1)
-        # If so, and next is also a keyword (regular or quoted), merge them
+        {:ok, comma_tok, state} = TokenAdapter.next(state)
+        state = EOE.skip(state)
+
         case TokenAdapter.peek(state) do
-          {:ok, next_tok, _} when is_keyword_list_result(arg) ->
-            cond do
-              Keywords.starts_kw?(next_tok) ->
-                # Continue collecting keywords into this list
-                with {:ok, more_kw, state, log} <-
-                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                  merged_kw = arg ++ more_kw
-                  {:ok, Enum.reverse([merged_kw | acc]), state, log}
-                end
+          {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+            meta =
+              comma_tok.metadata
+              |> Builder.Helpers.token_meta()
+              |> Keyword.take([:line, :column])
 
-              next_tok.kind in [:list_string_start, :bin_string_start] ->
-                # Another quoted keyword - parse via expression and merge
-                parse_no_parens_quoted_kw_continuation(arg, acc, state, ctx, log, min_bp)
+            {:error, {meta, "syntax error before: ", ""}, state, log}
 
-              true ->
-                parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
-            end
+          {:eof, state} ->
+            meta =
+              comma_tok.metadata
+              |> Builder.Helpers.token_meta()
+              |> Keyword.take([:line, :column])
+
+            {:error, {meta, "syntax error before: ", ""}, state, log}
 
           _ ->
-            parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
+            case Keywords.try_parse_kw_no_parens_call(state, ctx, log) do
+              {:ok, kw_list, state, log} ->
+                {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
+
+              {:no_kw, state, log} ->
+                parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
+            end
         end
 
       _ ->
@@ -574,81 +547,6 @@ defmodule ToxicParser.Grammar.Calls do
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}
       DoBlocks.maybe_do_block(ast, state, ctx, log)
-    end
-  end
-
-  # Parse continuation of keyword list in no-parens context when we encounter another quoted keyword
-  # Used when we have foo 'a': 0, 'b': bar 1, 2
-  defp parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log, min_bp) do
-    # Parse the quoted keyword via expression - should return keyword list
-    # Use min_bp=0 for argument values (see comment in parse_no_parens_args)
-    case Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
-      {:ok, expr, state, log} when is_keyword_list_result(expr) ->
-        # Got another keyword pair, continue accumulating
-        continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
-
-      # Handle keyword_key return - parse value and continue
-      {:keyword_key, key_atom, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
-          expr = [{key_atom, value_ast}]
-          continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
-        end
-
-      # Handle interpolated keyword key
-      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
-          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-          expr = [{key_ast, value_ast}]
-          continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
-        end
-
-      {:ok, _expr, state, log} ->
-        # Not a keyword - error
-        {:error, {:expected, :keyword}, state, log}
-
-      {:error, _, _, _} = error ->
-        error
-    end
-  end
-
-  # Continue accumulating keywords after successfully parsing a keyword pair
-  defp continue_quoted_kw_accumulation(acc_kw, acc, state, ctx, log, min_bp) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, _} ->
-        {:ok, _comma, state} = TokenAdapter.next(state)
-
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
-            # Trailing comma or terminator
-            {:ok, Enum.reverse([acc_kw | acc]), state, log}
-
-          {:ok, kw_tok, _} ->
-            cond do
-              Keywords.starts_kw?(kw_tok) ->
-                with {:ok, more_kw, state, log} <-
-                       Keywords.parse_kw_no_parens_call(state, ctx, log) do
-                  {:ok, Enum.reverse([acc_kw ++ more_kw | acc]), state, log}
-                end
-
-              kw_tok.kind in [:list_string_start, :bin_string_start] ->
-                parse_no_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log, min_bp)
-
-              true ->
-                {:ok, Enum.reverse([acc_kw | acc]), state, log}
-            end
-
-          _ ->
-            {:ok, Enum.reverse([acc_kw | acc]), state, log}
-        end
-
-      _ ->
-        {:ok, Enum.reverse([acc_kw | acc]), state, log}
     end
   end
 end

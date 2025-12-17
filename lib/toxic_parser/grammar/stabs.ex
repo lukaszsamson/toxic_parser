@@ -441,38 +441,17 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse arguments inside stab_parens_many: call_args_no_parens_kw or call_args_no_parens_many
   defp parse_stab_parens_args(state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        cond do
-          Keywords.starts_kw?(tok) ->
-            # call_args_no_parens_kw
-            with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
-              {:ok, [kw_list], state, log}
-            end
+    min_bp = Precedence.when_op_bp() + 1
 
-          tok.kind in [:list_string_start, :bin_string_start] ->
-            # Potentially a quoted keyword - parse as expression and check
-            case parse_stab_parens_exprs([], state, ctx, log) do
-              {:ok, [kw_list], state, log} when is_list(kw_list) and length(kw_list) > 0 ->
-                {:ok, [kw_list], state, log}
+    case Keywords.try_parse_kw_no_parens_call(state, ctx, log, min_bp: min_bp) do
+      {:ok, kw_list, state, log} ->
+        {:ok, [kw_list], state, log}
 
-              {:ok, exprs, state, log} ->
-                {:ok, exprs, state, log}
+      {:no_kw, state, log} ->
+        parse_stab_parens_exprs([], state, ctx, log)
 
-              {:error, _, _, _} = error ->
-                error
-            end
-
-          true ->
-            # Parse matched expressions
-            parse_stab_parens_exprs([], state, ctx, log)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
     end
   end
 
@@ -486,36 +465,20 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, %{kind: :","}, _} ->
             {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
             state = EOE.skip(state)
-            # Check for keyword after comma
-            case TokenAdapter.peek(state) do
-              {:ok, tok, _} ->
-                cond do
-                  Keywords.starts_kw?(tok) ->
-                    # call_args_no_parens_many: exprs followed by kw
-                    with {:ok, kw_list, state, log} <-
-                           Keywords.parse_kw_no_parens_call(
-                             state,
-                             Context.matched_expr(),
-                             log
-                           ) do
-                      # If expr was a keyword list from quoted key, merge them
-                      if is_keyword_list(expr) do
-                        {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
-                      else
-                        {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
-                      end
-                    end
+            # Check for keyword list tail after comma.
+            min_bp = Precedence.when_op_bp() + 1
 
-                  is_keyword_list(expr) and tok.kind in [:list_string_start, :bin_string_start] ->
-                    # Another quoted keyword after a keyword list - continue merging
-                    parse_stab_parens_exprs_quoted_kw_continuation(expr, acc, state, log)
+            case Keywords.try_parse_kw_no_parens_call(state, Context.matched_expr(), log,
+                   min_bp: min_bp
+                 ) do
+              {:ok, kw_list, state, log} ->
+                {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, log}
 
-                  true ->
-                    parse_stab_parens_exprs([expr | acc], state, Context.matched_expr(), log)
-                end
-
-              _ ->
+              {:no_kw, state, log} ->
                 parse_stab_parens_exprs([expr | acc], state, Context.matched_expr(), log)
+
+              {:error, reason, state, log} ->
+                {:error, reason, state, log}
             end
 
           {:ok, %{kind: :")"}, _} ->
@@ -571,64 +534,6 @@ defmodule ToxicParser.Grammar.Stabs do
 
       {:error, reason, state, log} ->
         {:error, reason, state, log}
-    end
-  end
-
-  # Parse continuation of keyword list in stab parens context
-  defp parse_stab_parens_exprs_quoted_kw_continuation(acc_kw, acc, state, log) do
-    case parse_stab_parens_single_expr(state, log) do
-      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
-        state_after_eoe = EOE.skip(state)
-
-        case TokenAdapter.peek(state_after_eoe) do
-          {:ok, %{kind: :","}, _} ->
-            {:ok, _comma, state} = TokenAdapter.next(state_after_eoe)
-            state = EOE.skip(state)
-
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :")"}, _} ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
-
-              {:ok, tok, _} ->
-                cond do
-                  Keywords.starts_kw?(tok) ->
-                    with {:ok, more_kw, state, log} <-
-                           Keywords.parse_kw_no_parens_call(
-                             state,
-                             Context.matched_expr(),
-                             log
-                           ) do
-                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
-                    end
-
-                  tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_stab_parens_exprs_quoted_kw_continuation(
-                      acc_kw ++ expr,
-                      acc,
-                      state,
-                      log
-                    )
-
-                  true ->
-                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
-                end
-
-              _ ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
-            end
-
-          {:ok, %{kind: :")"}, _} ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state_after_eoe, log}
-
-          _ ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, log}
-        end
-
-      {:ok, _expr, state, log} ->
-        {:error, {:expected, :keyword}, state, log}
-
-      {:error, _, _, _} = error ->
-        error
     end
   end
 
