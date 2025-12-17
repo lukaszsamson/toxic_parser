@@ -311,8 +311,10 @@ defmodule ToxicParser.Pratt do
         # Aliases cannot have no-parens call syntax - `Foo x` is invalid
         # bracket_identifier means tokenizer determined this is bracket access (foo[x])
         # not a no-parens call - let led_bracket handle it
+        # Literals (nil, true, false) cannot be function calls - only identifiers can
         # When allow_containers is false, don't parse no-parens calls
-        if token.kind not in [:paren_identifier, :alias, :bracket_identifier] and allow_no_parens and
+        if token.kind not in [:paren_identifier, :alias, :bracket_identifier, nil, true, false] and
+             allow_no_parens and
              allow_containers do
           parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
         else
@@ -679,10 +681,10 @@ defmodule ToxicParser.Pratt do
             # Exception: @ (at_op) should capture full expressions including low-precedence
             # operators like `when` for module attributes (@spec foo() when ...).
             # Bracket access for @ is handled separately in led_bracket.
-            {next_token_kind, next_token_value} =
+            {next_token, next_token_kind, next_token_value} =
               case TokenAdapter.peek(state) do
-                {:ok, tok, _} -> {tok.kind, tok.value}
-                _ -> {nil, nil}
+                {:ok, tok, _} -> {tok, tok.kind, tok.value}
+                _ -> {nil, nil, nil}
               end
 
             operand_min_bp =
@@ -698,8 +700,12 @@ defmodule ToxicParser.Pratt do
                     next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
+                # Only lower precedence for do-block keywords if a do-block or argument follows
+                # This prevents @for | x from parsing as @(for | x) when | is a binary operator
                 operand_token.kind in [:identifier, :dot_identifier] and
-                    operand_token.value in @do_block_keywords and Context.allow_do_block?(context) ->
+                    operand_token.value in @do_block_keywords and Context.allow_do_block?(context) and
+                    (next_token_kind == :do or
+                       (next_token != nil and NoParens.can_start_no_parens_arg?(next_token))) ->
                   0
 
                 op_token.kind in [:ellipsis_op, :range_op] ->
@@ -1557,10 +1563,21 @@ end
                     Builder.Helpers.call(other, [sections], block_meta)
                 end
 
-              # After attaching do-block, continue with led using original min_bp.
-              # This preserves operator precedence - e.g., in `~~~B.b do y end => C`
-              # the => should NOT be consumed as part of the unary operand.
-              led(combined, state, log, min_bp, context)
+              # After attaching do-block, decide min_bp based on context:
+              # - For unary operands: use min_bp=0 so trailing operators are consumed.
+              #   E.g., `+ a.b do x end ** c` -> `+ (a.b do x end ** c)`
+              #   BUT: stop at assoc_op (=>) so map key-value pairs work correctly.
+              #   E.g., `%{A | + B do x end => C}` should have `+B do x end` as key, not `+(B do x end => C)`
+              # - For binary RHS: preserve min_bp for proper associativity.
+              #   E.g., `A ** B do x end ** C` -> `(A ** B do x end) ** C` (left-assoc)
+              {led_min_bp, led_opts} =
+                if unary_operand do
+                  {0, [stop_at_assoc: true]}
+                else
+                  {min_bp, []}
+                end
+
+              led(combined, state, log, led_min_bp, context, led_opts)
             end
           else
             led(ast, state, log, min_bp, context)

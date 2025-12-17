@@ -743,4 +743,28 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "map update with unquote_splicing" do
+    test "map update with only unquote_splicing should wrap RHS in list" do
+      # From: /Users/lukaszsamson/elixir/lib/elixir/test/elixir/kernel/quote_test.exs line 234
+      # Map update where RHS is only unquote_splicing should have RHS wrapped in list
+      # Reference: {:|, _, [map, [{:unquote_splicing, ...}]]}
+      # Not: {:|, _, [map, {:unquote_splicing, ...}]}
+      code = "%{map | unquote_splicing(foo: :bar)}"
+
+      assert_conforms(code)
+    end
+  end
+
+  describe "@ operator precedence in lists" do
+    test "[@for | modules] should parse @ before |" do
+      # From: /Users/lukaszsamson/elixir/lib/iex/lib/iex/info.ex line 440
+      # @ (bp 320) should bind tighter than | (bp 70)
+      # Reference: [{:|, _, [{:@, _, [{:for, _, nil}]}, {:modules, _, nil}]}]
+      # Not: [{:@, _, [{:|, _, [{:for, _, nil}, {:modules, _, nil}]}]}]
+      code = "[@for | modules]"
+
+      assert_conforms(code)
+    end
+  end
 end

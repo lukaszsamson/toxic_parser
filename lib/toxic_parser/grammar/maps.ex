@@ -488,6 +488,16 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
+  # Handle map_base_expr: any valid AST expression that's not => or keyword
+  # Per grammar: assoc_expr -> map_base_expr : '$1'.
+  # Per grammar: assoc_update -> matched_expr pipe_op_eol assoc_expr : {'$2', '$1', ['$3']}.
+  # So a map_base_expr is valid as RHS, wrapped in a list
+  defp classify_pipe_rhs_for_map_update({name, meta, args})
+       when is_atom(name) and is_list(meta) and (is_list(args) or is_nil(args)) do
+    # Valid AST node - treat as map_base_expr, wrap in list
+    {:valid, [{name, meta, args}]}
+  end
+
   defp classify_pipe_rhs_for_map_update(_), do: :invalid
 
   # Annotate a single assoc entry with :assoc metadata
@@ -675,9 +685,70 @@ defmodule ToxicParser.Grammar.Maps do
               {:not_update, state}
           end
 
-        _not_assoc ->
-          # Not an assoc expression - not a valid map update
-          {:not_update, state}
+        map_base_expr ->
+          # It's a map_base_expr without => (like unquote_splicing)
+          # Valid only as a single entry at the end, wrap in a list
+          # Grammar: assoc_update -> matched_expr pipe_op_eol assoc_expr : {'$2', '$1', ['$3']}.
+          # Grammar: assoc_expr -> map_base_expr : '$1'.
+          state = EOE.skip(state)
+
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: :"}"} = close_tok, _} ->
+              {:ok, _close, state} = TokenAdapter.next(state)
+              close_meta = token_meta(close_tok.metadata)
+              # Wrap in a list per grammar
+              entries = Enum.reverse([map_base_expr | acc])
+              update_ast = {:|, pipe_meta, [base, entries]}
+              {:ok, update_ast, close_meta, state, log}
+
+            {:ok, %{kind: :","}, _} ->
+              # There's more after - map_base_expr can't be followed by more entries
+              # unless it's followed by kw_data (which would be handled by kw check)
+              {:ok, _comma, state} = TokenAdapter.next(state)
+              state = EOE.skip(state)
+
+              case TokenAdapter.peek(state) do
+                {:ok, %{kind: :"}"} = close_tok, _} ->
+                  # Trailing comma
+                  {:ok, _close, state} = TokenAdapter.next(state)
+                  close_meta = token_meta(close_tok.metadata)
+                  entries = Enum.reverse([map_base_expr | acc])
+                  update_ast = {:|, pipe_meta, [base, entries]}
+                  {:ok, update_ast, close_meta, state, log}
+
+                {:ok, tok, _} ->
+                  if Keywords.starts_kw?(tok) do
+                    # Switch to kw_data
+                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+                      state = EOE.skip(state)
+
+                      case TokenAdapter.peek(state) do
+                        {:ok, %{kind: :"}"} = close_tok, _} ->
+                          {:ok, _close, state} = TokenAdapter.next(state)
+                          close_meta = token_meta(close_tok.metadata)
+                          entries = Enum.reverse([map_base_expr | acc]) ++ kw_list
+                          update_ast = {:|, pipe_meta, [base, entries]}
+                          {:ok, update_ast, close_meta, state, log}
+
+                        _ ->
+                          {:not_update, state}
+                      end
+                    end
+                  else
+                    # More assoc entries after map_base_expr - need to check if it's assoc
+                    parse_map_update_assoc_entries(base, pipe_meta, [map_base_expr | acc], state, log)
+                  end
+
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+
+            _ ->
+              {:not_update, state}
+          end
       end
     end
   end
