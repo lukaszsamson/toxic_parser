@@ -23,7 +23,7 @@ defmodule ToxicParser.Pratt do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Blocks, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Blocks, Brackets, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type context :: Context.t()
@@ -2214,162 +2214,10 @@ defmodule ToxicParser.Pratt do
     [newlines: newlines] ++ build_meta(token_meta)
   end
 
-  defp parse_access_indices(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"]"}, state} ->
-        {:ok, acc, state, log}
-
-      {:ok, tok, _} ->
-        # Check if this is a keyword list first
-        # TODO: no coverage?
-        if Keywords.starts_kw?(tok) do
-          # kw_data case: [a: 1, b: 2]
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-            {:ok, [kw_list | acc], state, log}
-          end
-        else
-          # container_expr case - parse expression
-          case parse(state, ctx, log) do
-            {:ok, expr, state, log} ->
-              # Skip any newlines after expression before checking for ] or ,
-              {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: :","}, _} ->
-                  {:ok, _comma, state} = TokenAdapter.next(state)
-                  # Skip any newlines after comma
-                  {state, _newlines} = EOE.skip_count_newlines(state, 0)
-                  # After comma, check if next is keyword list
-                  case TokenAdapter.peek(state) do
-                    {:ok, kw_tok, _} ->
-                      # TODO: no coverage?
-                      if Keywords.starts_kw?(kw_tok) do
-                        with {:ok, kw_list, state, log} <-
-                               Keywords.parse_kw_data(state, ctx, log) do
-                          {:ok, [kw_list, expr | acc], state, log}
-                        end
-                      else
-                        parse_access_indices([expr | acc], state, ctx, log)
-                      end
-
-                    _ ->
-                      parse_access_indices([expr | acc], state, ctx, log)
-                  end
-
-                {:ok, %{kind: :"]"}, _} ->
-                  {:ok, [expr | acc], state, log}
-
-                _ ->
-                  {:error, {:expected_comma_or, :"]"}, state, log}
-              end
-
-            # Handle quoted keyword key like 'foo': 1
-            {:keyword_key, key_atom, state, log} ->
-              # Skip EOE after colon before parsing value
-              state = EOE.skip_count_newlines(state, 0) |> elem(0)
-
-              with {:ok, value_ast, state, log} <- parse(state, Context.matched_expr(), log) do
-                expr = [{key_atom, value_ast}]
-                parse_access_indices_after_kw(expr, acc, state, ctx, log)
-              end
-
-            {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-              alias ToxicParser.Grammar.Expressions
-              # Skip EOE after colon before parsing value
-              state = EOE.skip_count_newlines(state, 0) |> elem(0)
-
-              with {:ok, value_ast, state, log} <- parse(state, Context.matched_expr(), log) do
-                key_ast =
-                  Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-
-                expr = [{key_ast, value_ast}]
-                parse_access_indices_after_kw(expr, acc, state, ctx, log)
-              end
-
-            {:error, _, _, _} = error ->
-              error
-          end
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  # Continue parsing access indices after parsing a quoted keyword
-  defp parse_access_indices_after_kw(kw_expr, acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, _} ->
-        {:ok, _comma, state} = TokenAdapter.next(state)
-        # After comma, check if next is keyword list or another quoted keyword
-        case TokenAdapter.peek(state) do
-          {:ok, kw_tok, _} ->
-            cond do
-              # TODO: no coverage?
-              Keywords.starts_kw?(kw_tok) ->
-                with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                  # Merge keyword lists
-                  {:ok, [kw_expr ++ kw_list | acc], state, log}
-                end
-
-              # Check for another quoted keyword like 'bar': or "baz":
-              kw_tok.kind in [:list_string_start, :bin_string_start] ->
-                # Parse the next quoted keyword
-                case parse(state, ctx, log) do
-                  {:keyword_key, key_atom, state, log} ->
-                    state = EOE.skip_count_newlines(state, 0) |> elem(0)
-
-                    with {:ok, value_ast, state, log} <-
-                           parse(state, Context.matched_expr(), log) do
-                      next_kw = [{key_atom, value_ast}]
-                      # Recursively continue with merged keywords
-                      parse_access_indices_after_kw(kw_expr ++ next_kw, acc, state, ctx, log)
-                    end
-
-                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-                    alias ToxicParser.Grammar.Expressions
-                    state = EOE.skip_count_newlines(state, 0) |> elem(0)
-
-                    with {:ok, value_ast, state, log} <-
-                           parse(state, Context.matched_expr(), log) do
-                      key_ast =
-                        Expressions.build_interpolated_keyword_key(
-                          parts,
-                          kind,
-                          start_meta,
-                          delimiter
-                        )
-
-                      next_kw = [{key_ast, value_ast}]
-                      parse_access_indices_after_kw(kw_expr ++ next_kw, acc, state, ctx, log)
-                    end
-
-                  {:ok, _expr, _state, _log} ->
-                    # Was just a string, not a keyword - shouldn't happen here
-                    {:error, {:expected, :keyword}, state, log}
-
-                  {:error, _, _, _} = error ->
-                    error
-                end
-
-              true ->
-                # Not a keyword - this is unusual but handle it
-                parse_access_indices([kw_expr | acc], state, ctx, log)
-            end
-
-          _ ->
-            # Not a keyword - this is unusual but handle it
-            parse_access_indices([kw_expr | acc], state, ctx, log)
-        end
-
-      {:ok, %{kind: :"]"}, _} ->
-        {:ok, [kw_expr | acc], state, log}
-
-      _ ->
-        {:error, {:expected_comma_or, :"]"}, state, log}
+  defp parse_access_indices(acc, state, _ctx, log) do
+    case Brackets.parse_bracket_arg_no_skip(state, log) do
+      {:ok, arg, state, log} -> {:ok, [arg | acc], state, log}
+      {:error, reason, state, log} -> {:error, reason, state, log}
     end
   end
 
