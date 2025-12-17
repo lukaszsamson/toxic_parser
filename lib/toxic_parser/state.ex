@@ -39,7 +39,7 @@ defmodule ToxicParser.State do
             mode: :strict,
             opts: [],
             fuel: :infinity,
-             expression_context: Context.expr(),
+            expression_context: Context.expr(),
             checkpoints: %{},
             line_index: {},
             terminators: [],

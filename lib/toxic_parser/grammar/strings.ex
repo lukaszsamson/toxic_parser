@@ -72,7 +72,18 @@ defmodule ToxicParser.Grammar.Strings do
           {:keyword_key, atom, state, log}
         end
       else
-        build_string_ast(parts, kind, start_meta, delimiter, end_tok, state, ctx, log, min_bp, opts)
+        build_string_ast(
+          parts,
+          kind,
+          start_meta,
+          delimiter,
+          end_tok,
+          state,
+          ctx,
+          log,
+          min_bp,
+          opts
+        )
       end
     end
   end
@@ -93,7 +104,17 @@ defmodule ToxicParser.Grammar.Strings do
       # Trim indentation from parts
       trimmed_parts = trim_heredoc_parts(parts, indentation, line_continuation?: true)
 
-      build_heredoc_ast(trimmed_parts, kind, start_meta, indentation, state, ctx, log, min_bp, opts)
+      build_heredoc_ast(
+        trimmed_parts,
+        kind,
+        start_meta,
+        indentation,
+        state,
+        ctx,
+        log,
+        min_bp,
+        opts
+      )
     end
   end
 
@@ -341,7 +362,18 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Build AST for simple strings
-  defp build_string_ast(parts, kind, start_meta, delimiter, _end_tok, state, ctx, log, min_bp, opts) do
+  defp build_string_ast(
+         parts,
+         kind,
+         start_meta,
+         delimiter,
+         _end_tok,
+         state,
+         ctx,
+         log,
+         min_bp,
+         opts
+       ) do
     if has_interpolations?(parts) do
       args = build_interpolated_parts(parts, kind)
 

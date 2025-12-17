@@ -7,7 +7,18 @@ defmodule ToxicParser.Grammar.Calls do
   subsequent iterations.
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Identifiers, NoParens, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    EventLog,
+    Identifiers,
+    NoParens,
+    Pratt,
+    Result,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{DoBlocks, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
@@ -212,7 +223,8 @@ defmodule ToxicParser.Grammar.Calls do
                     # If so, and next is also a keyword (regular or quoted), merge them
                     cond do
                       is_keyword_list_result(expr) and Keywords.starts_kw?(kw_tok) ->
-                        with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, container_ctx, log) do
+                        with {:ok, more_kw, state, log} <-
+                               Keywords.parse_kw_data(state, container_ctx, log) do
                           {:ok, expr ++ more_kw, state, log}
                         end
 
@@ -349,7 +361,13 @@ defmodule ToxicParser.Grammar.Calls do
   with binding power < min_bp. This is essential for proper precedence handling
   in contexts like stab clauses where we must stop before `->`.
   """
-  def parse_no_parens_args(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
+  def parse_no_parens_args(
+        acc,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp \\ 0
+      ) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
         {:ok, Enum.reverse(acc), state, log}
@@ -394,7 +412,9 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
+                           Pratt.parse_with_min_bp(state, arg_context, log, 0,
+                             stop_at_assoc: true
+                           ) do
                       kw_pair = [{key_atom, value_ast}]
                       handle_no_parens_arg(kw_pair, acc, state, ctx, log, min_bp)
                     end
@@ -404,7 +424,9 @@ defmodule ToxicParser.Grammar.Calls do
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
-                           Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
+                           Pratt.parse_with_min_bp(state, arg_context, log, 0,
+                             stop_at_assoc: true
+                           ) do
                       key_ast =
                         Expressions.build_interpolated_keyword_key(
                           parts,
@@ -624,8 +646,8 @@ defmodule ToxicParser.Grammar.Calls do
       {:keyword_key, key_atom, state, log} ->
         state = EOE.skip(state)
 
-         with {:ok, value_ast, state, log} <-
-                Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
+        with {:ok, value_ast, state, log} <-
+               Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0) do
           expr = [{key_atom, value_ast}]
           continue_quoted_kw_accumulation(acc_kw ++ expr, acc, state, ctx, log, min_bp)
         end

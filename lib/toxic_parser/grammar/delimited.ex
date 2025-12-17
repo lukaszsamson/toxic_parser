@@ -21,7 +21,8 @@ defmodule ToxicParser.Grammar.Delimited do
           {:ok, [item], State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
 
-  @type item_fun(item) :: (State.t(), term(), EventLog.t() -> {:ok, item, State.t(), EventLog.t()} | result(item))
+  @type item_fun(item) :: (State.t(), term(), EventLog.t() ->
+                             {:ok, item, State.t(), EventLog.t()} | result(item))
 
   @type opts :: [
           separator: atom(),
@@ -51,7 +52,14 @@ defmodule ToxicParser.Grammar.Delimited do
   @spec parse_comma_separated(State.t(), term(), EventLog.t(), atom(), item_fun(item), opts()) ::
           result(item)
         when item: term()
-  def parse_comma_separated(%State{} = state, ctx, %EventLog{} = log, close_kind, item_fun, opts \\ [])
+  def parse_comma_separated(
+        %State{} = state,
+        ctx,
+        %EventLog{} = log,
+        close_kind,
+        item_fun,
+        opts \\ []
+      )
       when is_atom(close_kind) and is_function(item_fun, 3) do
     opts = Keyword.merge(@default_opts, opts)
     state = maybe_skip_eoe(state, opts)

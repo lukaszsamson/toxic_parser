@@ -31,7 +31,9 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("foo do :ok end")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+    assert {:ok, ast, _state, _log} =
+             Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+
     assert {:foo, _, [[do: :ok]]} = ast
   end
 
@@ -39,7 +41,9 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("case x do x -> :ok end")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+    assert {:ok, ast, _state, _log} =
+             Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+
     assert {:case, _, [{:x, _, nil}, [do: [{:->, _, [[{:x, _, nil}], :ok]}]]]} = ast
   end
 
@@ -47,7 +51,8 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("try do :ok rescue e -> e after :after end")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+    assert {:ok, ast, _state, _log} =
+             Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
 
     assert {:try, _,
             [[do: :ok, rescue: [{:->, _, [[{:e, _, nil}], {:e, _, nil}]}], after: :after]]} = ast
@@ -57,7 +62,8 @@ defmodule ToxicParser.BlocksTest do
     state = TokenAdapter.new("with x <- y do :ok else x -> :err end")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
+    assert {:ok, ast, _state, _log} =
+             Grammar.Expressions.expr(state, Context.unmatched_expr(), log)
 
     assert {:with, _,
             [

@@ -38,7 +38,11 @@ defmodule ToxicParser.Result do
 
   @spec normalize_error(error_tuple | term(), EventLog.t()) ::
           {:error, term(), State.t(), EventLog.t()} | term()
-  def normalize_error({:error, diag, %State{} = state, %EventLog{} = log}, _), do: {:error, diag, state, log}
-  def normalize_error({:error, diag, %State{} = state}, %EventLog{} = log), do: {:error, diag, state, log}
+  def normalize_error({:error, diag, %State{} = state, %EventLog{} = log}, _),
+    do: {:error, diag, state, log}
+
+  def normalize_error({:error, diag, %State{} = state}, %EventLog{} = log),
+    do: {:error, diag, state, log}
+
   def normalize_error(other, _), do: other
 end

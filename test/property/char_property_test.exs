@@ -1736,7 +1736,11 @@ defmodule ToxicParser.CharPropertyTest do
     @tag :property
     @tag timeout: 120_000
     property "inside bitstring segment spec" do
-      check all({context, code} <- context_bitstring_segment_spec(), max_runs: 100_000, max_shrinking_steps: 50) do
+      check all(
+              {context, code} <- context_bitstring_segment_spec(),
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
         run_comparison(context, code)
       end
     end

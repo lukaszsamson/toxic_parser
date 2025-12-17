@@ -68,7 +68,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                         # Continue collecting keywords into this list
                         # This handles both standard keywords (foo:) and quoted keywords ("foo":)
                         with {:ok, more_kw, state, log} <-
-                                Keywords.parse_kw_call(state, Context.container_expr(), log) do
+                               Keywords.parse_kw_call(state, Context.container_expr(), log) do
                           merged_kw = arg ++ more_kw
                           {:ok, [merged_kw | acc], state, log}
                         end

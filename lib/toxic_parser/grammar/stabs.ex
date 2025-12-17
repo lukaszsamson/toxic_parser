@@ -13,7 +13,13 @@ defmodule ToxicParser.Grammar.Stabs do
   @stab_pattern_min_bp Precedence.stab_op_bp() + 1
 
   # After leading semicolon: either close paren (empty) or stab content
-  def parse_paren_stab_or_empty(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
+  def parse_paren_stab_or_empty(
+        open_meta,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp
+      ) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :")"} = close_tok, _} ->
         # (;) -> empty stab with semicolon
@@ -94,7 +100,14 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Try to parse stab_parens_many: ((args) -> expr) or ((args) when g -> expr)
-  def try_parse_stab_parens_many(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp, fallback_fun) do
+  def try_parse_stab_parens_many(
+        open_meta,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp,
+        fallback_fun
+      ) do
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
     # Consume the inner open paren
@@ -164,7 +177,14 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Try parsing as stab or fallback to expression
-  def try_parse_stab_or_expr(_open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp, fallback_fun) do
+  def try_parse_stab_or_expr(
+        _open_meta,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp,
+        fallback_fun
+      ) do
     {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
     case try_parse_stab_clause(checkpoint_state, ctx, log) do
@@ -472,12 +492,12 @@ defmodule ToxicParser.Grammar.Stabs do
                 cond do
                   Keywords.starts_kw?(tok) ->
                     # call_args_no_parens_many: exprs followed by kw
-                     with {:ok, kw_list, state, log} <-
-                            Keywords.parse_kw_no_parens_call(
-                              state,
-                              Context.matched_expr(),
-                              log
-                            ) do
+                    with {:ok, kw_list, state, log} <-
+                           Keywords.parse_kw_no_parens_call(
+                             state,
+                             Context.matched_expr(),
+                             log
+                           ) do
                       # If expr was a keyword list from quoted key, merge them
                       if is_keyword_list(expr) do
                         {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -1072,13 +1092,13 @@ defmodule ToxicParser.Grammar.Stabs do
                 Keywords.starts_kw?(tok) ->
                   # call_args_no_parens_many: exprs followed by kw
                   # Use min_bp > stab_op (10) to stop keyword values before ->
-                   with {:ok, kw_list, state, log} <-
-                          Keywords.parse_kw_no_parens_call_with_min_bp(
-                            state,
-                            Context.matched_expr(),
-                            log,
-                            Precedence.stab_op_bp() + 1
-                          ) do
+                  with {:ok, kw_list, state, log} <-
+                         Keywords.parse_kw_no_parens_call_with_min_bp(
+                           state,
+                           Context.matched_expr(),
+                           log,
+                           Precedence.stab_op_bp() + 1
+                         ) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
                       {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}

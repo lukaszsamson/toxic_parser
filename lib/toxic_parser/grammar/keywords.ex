@@ -81,7 +81,12 @@ defmodule ToxicParser.Grammar.Keywords do
           non_neg_integer()
         ) ::
           result()
-  def parse_kw_no_parens_call_with_min_bp(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
+  def parse_kw_no_parens_call_with_min_bp(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp
+      ) do
     parse_kw_list([], state, ctx, log, min_bp, Context.kw_no_parens_value())
   end
 

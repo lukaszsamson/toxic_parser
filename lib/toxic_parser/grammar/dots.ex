@@ -204,7 +204,9 @@ defmodule ToxicParser.Grammar.Dots do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       # Use dot's metadata for the call column (not the curly's position)
       # If dot_meta is empty (no dot context), fall back to open_tok metadata
-      base_meta = if dot_meta == [], do: Builder.Helpers.token_meta(open_tok.metadata), else: dot_meta
+      base_meta =
+        if dot_meta == [], do: Builder.Helpers.token_meta(open_tok.metadata), else: dot_meta
+
       meta = Meta.closing_meta(base_meta, close_meta, total_newlines)
 
       # Return call format with :{} as the function name

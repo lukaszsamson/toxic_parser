@@ -22,7 +22,9 @@ defmodule ToxicParser.DotsTest do
     assert Macro.to_string(ast) =~ "bar(1)"
 
     state = TokenAdapter.new("foo.(1)")
-    assert {:ok, _ast, _state, _log} = Grammar.Expressions.expr(state, Context.matched_expr(), log)
+
+    assert {:ok, _ast, _state, _log} =
+             Grammar.Expressions.expr(state, Context.matched_expr(), log)
 
     state = TokenAdapter.new("foo.()")
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.matched_expr(), log)

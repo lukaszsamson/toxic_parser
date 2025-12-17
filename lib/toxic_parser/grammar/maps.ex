@@ -525,7 +525,8 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
           # Parse trailing keywords
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_data(state, Context.container_expr(), log) do
             state = EOE.skip(state)
 
             case TokenAdapter.peek(state) do
@@ -542,7 +543,8 @@ defmodule ToxicParser.Grammar.Maps do
           end
         else
           # Parse more assoc expressions
-          with {:ok, more_entries, close_meta, state, log} <- parse_map_close(state, Context.container_expr(), log) do
+          with {:ok, more_entries, close_meta, state, log} <-
+                 parse_map_close(state, Context.container_expr(), log) do
             all_entries = initial_entries ++ more_entries
             update_ast = {:|, pipe_meta, [base, all_entries]}
             {:ok, update_ast, close_meta, state, log}
@@ -593,7 +595,8 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, tok, _} ->
         if Keywords.starts_kw?(tok) do
           # kw_data: %{base | a: 1, b: 2}
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_data(state, Context.container_expr(), log) do
             state = EOE.skip(state)
 
             case TokenAdapter.peek(state) do
@@ -654,7 +657,8 @@ defmodule ToxicParser.Grammar.Maps do
                 {:ok, tok, _} ->
                   if Keywords.starts_kw?(tok) do
                     # Switch to kw_data
-                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+                    with {:ok, kw_list, state, log} <-
+                           Keywords.parse_kw_data(state, Context.container_expr(), log) do
                       state = EOE.skip(state)
 
                       case TokenAdapter.peek(state) do
@@ -671,7 +675,13 @@ defmodule ToxicParser.Grammar.Maps do
                     end
                   else
                     # More assoc entries
-                    parse_map_update_assoc_entries(base, pipe_meta, [{key, value} | acc], state, log)
+                    parse_map_update_assoc_entries(
+                      base,
+                      pipe_meta,
+                      [{key, value} | acc],
+                      state,
+                      log
+                    )
                   end
 
                 {:eof, state} ->
@@ -719,7 +729,8 @@ defmodule ToxicParser.Grammar.Maps do
                 {:ok, tok, _} ->
                   if Keywords.starts_kw?(tok) do
                     # Switch to kw_data
-                    with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, Context.container_expr(), log) do
+                    with {:ok, kw_list, state, log} <-
+                           Keywords.parse_kw_data(state, Context.container_expr(), log) do
                       state = EOE.skip(state)
 
                       case TokenAdapter.peek(state) do
@@ -736,7 +747,13 @@ defmodule ToxicParser.Grammar.Maps do
                     end
                   else
                     # More assoc entries after map_base_expr - need to check if it's assoc
-                    parse_map_update_assoc_entries(base, pipe_meta, [map_base_expr | acc], state, log)
+                    parse_map_update_assoc_entries(
+                      base,
+                      pipe_meta,
+                      [map_base_expr | acc],
+                      state,
+                      log
+                    )
                   end
 
                 {:eof, state} ->
@@ -756,7 +773,8 @@ defmodule ToxicParser.Grammar.Maps do
   # Check if we should skip map update parsing (starts with definite keyword)
   defp starts_with_kw?(state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _} when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
+      {:ok, %{kind: kind}, _}
+      when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
         true
 
       _ ->
