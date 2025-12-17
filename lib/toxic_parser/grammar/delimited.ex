@@ -14,7 +14,7 @@ defmodule ToxicParser.Grammar.Delimited do
   measure/attach closing metadata themselves.
   """
 
-  alias ToxicParser.{EventLog, State, TokenAdapter}
+  alias ToxicParser.{Context, EventLog, State, TokenAdapter}
   alias ToxicParser.Grammar.EOE
 
   @type result(item) ::
@@ -54,7 +54,7 @@ defmodule ToxicParser.Grammar.Delimited do
         when item: term()
   def parse_comma_separated(
         %State{} = state,
-        ctx,
+        %Context{} = ctx,
         %EventLog{} = log,
         close_kind,
         item_fun,

@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Dots do
 
   alias ToxicParser.{Builder, Context, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type result ::
@@ -195,12 +195,16 @@ defmodule ToxicParser.Grammar.Dots do
   # Grammar: dot_alias -> matched_expr dot_op open_curly container_args close_curly
   # Returns {:ok, {:{}, meta, args}, state, log} where :{} is the atom function name
   # The dot_meta parameter provides the dot's metadata for the call metadata (column should be dot's position)
-  defp parse_curly_call(open_tok, state, ctx, log, dot_meta) do
+  defp parse_curly_call(open_tok, state, _ctx, log, dot_meta) do
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-    with {:ok, args, state, log} <- parse_curly_args([], state, ctx, log),
+    container_ctx = Context.container_expr()
+
+    with {:ok, state, log} <- reject_initial_kw_data(state, container_ctx, log),
+         {:ok, tagged_items, state, log} <- parse_curly_args(state, container_ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :"}") do
+      args = finalize_curly_items(tagged_items)
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       # Use dot's metadata for the call column (not the curly's position)
       # If dot_meta is empty (no dot context), fall back to open_tok metadata
@@ -211,35 +215,24 @@ defmodule ToxicParser.Grammar.Dots do
 
       # Return call format with :{} as the function name
       # This matches {name, meta, args} pattern in the caller
-      {:ok, {:{}, meta, Enum.reverse(args)}, state, log}
+      {:ok, {:{}, meta, args}, state, log}
     else
       other -> Result.normalize_error(other, log)
     end
   end
 
-  # Parse arguments inside curly braces for dot curly call
-  defp parse_curly_args(acc, state, ctx, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"}"}, _} ->
-        {:ok, acc, state, log}
-
-      {:ok, _tok, _} ->
-        # Parse expression
-        with {:ok, expr, state, log} <- Pratt.parse(state, ctx, log) do
-          # Skip any newlines after expression
+  defp parse_curly_args(state, container_ctx, log) do
+    item_fun = fn state, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, container_ctx, log) do
+        {:ok, kw_list, state, log} ->
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :","}, _} ->
-              {:ok, _, state} = TokenAdapter.next(state)
-              {state, _newlines} = EOE.skip_count_newlines(state, 0)
-              parse_curly_args([expr | acc], state, ctx, log)
-
             {:ok, %{kind: :"}"}, _} ->
-              {:ok, [expr | acc], state, log}
+              {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, tok, _} ->
-              {:error, {:expected_comma_or, :"}", got: tok.kind}, state, log}
+            {:ok, %{kind: kind}, state} ->
+              {:error, {:expected, :"}", got: kind}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -247,6 +240,40 @@ defmodule ToxicParser.Grammar.Dots do
             {:error, diag, state} ->
               {:error, diag, state, log}
           end
+
+        {:no_kw, state, log} ->
+          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+            {:ok, {:expr, expr}, state, log}
+          end
+
+        {:error, reason, state, log} ->
+          {:error, reason, state, log}
+      end
+    end
+
+    Delimited.parse_comma_separated(state, container_ctx, log, :"}", item_fun, allow_empty?: true)
+  end
+
+  defp reject_initial_kw_data(state, container_ctx, log) do
+    case TokenAdapter.peek(state) do
+      {:ok, %{kind: :"}"}, state} ->
+        {:ok, state, log}
+
+      {:ok, tok, state} ->
+        {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+        case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
+          {:ok, kw_list, state, log} ->
+            state = TokenAdapter.rewind(state, ref)
+            meta = Builder.Helpers.token_meta(tok.metadata)
+            token_display = kw_data_first_key_display(kw_list)
+            {:error, syntax_error_before(meta, token_display), state, log}
+
+          {:no_kw, state, log} ->
+            {:ok, TokenAdapter.rewind(state, ref), log}
+
+          {:error, reason, state, log} ->
+            {:error, reason, TokenAdapter.rewind(state, ref), log}
         end
 
       {:eof, state} ->
@@ -255,6 +282,33 @@ defmodule ToxicParser.Grammar.Dots do
       {:error, diag, state} ->
         {:error, diag, state, log}
     end
+  end
+
+  defp kw_data_first_key_display([{key, _} | _]) when is_atom(key), do: Atom.to_string(key)
+  defp kw_data_first_key_display([{key, _} | _]), do: Macro.to_string(key)
+  defp kw_data_first_key_display(_), do: ""
+
+  defp finalize_curly_items([]), do: []
+
+  defp finalize_curly_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        exprs =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:expr, expr} -> expr end)
+
+        exprs ++ [kw_list]
+
+      _ ->
+        Enum.map(tagged_items, fn {:expr, expr} -> expr end)
+    end
+  end
+
+  defp syntax_error_before(meta, token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
   end
 
   # Parse quoted identifier: D."foo" or D."foo"() or D."foo" arg (no-parens)

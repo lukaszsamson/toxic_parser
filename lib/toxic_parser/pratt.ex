@@ -23,7 +23,17 @@ defmodule ToxicParser.Pratt do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Blocks, Brackets, Calls, DoBlocks, Dots, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{
+    Blocks,
+    Brackets,
+    Calls,
+    Delimited,
+    DoBlocks,
+    Dots,
+    EOE,
+    Expressions,
+    Keywords
+  }
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
   @type context :: Context.t()
@@ -1690,39 +1700,97 @@ defmodule ToxicParser.Pratt do
     {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}
   end
 
-  # Parse container args for dot_container: expr.{A, B, ...}
-  # Returns {:ok, args, newlines, close_meta, state, log}
-  defp parse_dot_container_args(state, ctx, log) do
-    # Skip leading EOE and count newlines
-    {state, newlines} = EOE.skip_count_newlines(state, 0)
+  # Parse container args for dot_container: expr.{...}
+  # Grammar (elixir_parser.yrl):
+  #   dot_alias -> matched_expr dot_op open_curly '}'.
+  #   dot_alias -> matched_expr dot_op open_curly container_args close_curly.
+  #
+  # Returns {:ok, args, leading_newlines, close_meta, state, log}.
+  defp parse_dot_container_args(state, _ctx, log) do
+    # Skip leading EOE and count newlines (only leading newlines matter for metadata).
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
+    container_ctx = Context.container_expr()
+
+    # `container_args` does NOT allow starting with kw_data (including quoted keys).
+    # Ensure we preserve the legacy behavior for `a: 1` (kw_identifier), and fix
+    # the quoted-key case where `'a': 1` previously parsed as a keyword list.
+    with {:ok, state, log} <- reject_initial_kw_data(state, container_ctx, log) do
+      item_fun = fn state, _ctx, log ->
+        case Keywords.try_parse_kw_data(state, container_ctx, log) do
+          {:ok, kw_list, state, log} ->
+            {state, _newlines} = EOE.skip_count_newlines(state, 0)
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"}"}, _} ->
+                {:ok, {:kw_data, kw_list}, state, log}
+
+              {:ok, %{kind: kind}, state} ->
+                {:error, {:expected, :"}", got: kind}, state, log}
+
+              {:eof, state} ->
+                {:error, :unexpected_eof, state, log}
+
+              {:error, diag, state} ->
+                {:error, diag, state, log}
+            end
+
+          {:no_kw, state, log} ->
+            with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+              {:ok, {:expr, expr}, state, log}
+            end
+
+          {:error, reason, state, log} ->
+            {:error, reason, state, log}
+        end
+      end
+
+      with {:ok, tagged_items, state, log} <-
+             Delimited.parse_comma_separated(state, container_ctx, log, :"}", item_fun,
+               allow_empty?: true
+             ) do
+        # Skip trailing EOE before close curly (don't count these).
+        {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.next(state) do
+          {:ok, %{kind: :"}"} = close_tok, state} ->
+            close_meta = build_meta(close_tok.metadata)
+            {:ok, finalize_dot_container_items(tagged_items), leading_newlines, close_meta, state,
+             log}
+
+          {:ok, other, state} ->
+            {:error, {:expected, :"}", got: other.kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+      end
+    end
+  end
+
+  defp reject_initial_kw_data(state, container_ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"}"} = close_tok, _} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        close_meta = build_meta(close_tok.metadata)
-        {:ok, [], newlines, close_meta, state, log}
+      {:ok, %{kind: :"}"}, state} ->
+        {:ok, state, log}
 
-      {:ok, _, _} ->
-        with {:ok, args, state, log} <- parse_dot_container_args_loop([], state, ctx, log) do
-          # Skip trailing EOE before close
-          {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
-          # For non-empty containers, only count leading newlines (matching calls.ex pattern)
-          total_newlines = newlines
+      {:ok, tok, state} ->
+        {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-          case TokenAdapter.next(state) do
-            {:ok, %{kind: :"}"} = close_tok, state} ->
-              close_meta = build_meta(close_tok.metadata)
-              {:ok, args, total_newlines, close_meta, state, log}
+        case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
+          {:ok, kw_list, state, log} ->
+            state = TokenAdapter.rewind(state, ref)
+            meta = build_meta(tok.metadata)
+            token_display = kw_data_first_key_display(kw_list)
+            {:error, syntax_error_before(meta, token_display), state, log}
 
-            {:ok, other, state} ->
-              {:error, {:expected, :"}", got: other.kind}, state, log}
+          {:no_kw, state, log} ->
+            {:ok, TokenAdapter.rewind(state, ref), log}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
-
-            {:error, diag, state} ->
-              {:error, diag, state, log}
-          end
+          {:error, reason, state, log} ->
+            {:error, reason, TokenAdapter.rewind(state, ref), log}
         end
 
       {:eof, state} ->
@@ -1733,108 +1801,24 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp parse_dot_container_args_loop(acc, state, ctx, log) do
-    alias ToxicParser.Grammar.Expressions
+  defp kw_data_first_key_display([{key, _} | _]) when is_atom(key), do: Atom.to_string(key)
+  defp kw_data_first_key_display([{key, _} | _]), do: Macro.to_string(key)
+  defp kw_data_first_key_display(_), do: ""
 
-    # container_args in elixir_parser.yrl allows unmatched_expr
-    # Use container_expr context to allow do-blocks inside container
-    with {:ok, expr, state, log} <- Expressions.expr(state, Context.container_expr(), log) do
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :","}, _} ->
-          {:ok, _comma, state} = TokenAdapter.next(state)
-          # After comma, check if we hit EOE or closing brace (trailing comma case)
-          {state, _newlines} = EOE.skip_count_newlines(state, 0)
+  defp finalize_dot_container_items([]), do: []
 
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"}, _} ->
-              # Trailing comma - stop here
-              {:ok, acc ++ [expr], state, log}
+  defp finalize_dot_container_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        exprs =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:expr, expr} -> expr end)
 
-            {:ok, tok, _} ->
-              # Check if expr was a keyword list and next is also a keyword
-              cond do
-                is_keyword_list_result(expr) and Keywords.starts_kw?(tok) ->
-                  # Merge quoted keyword with following regular keywords
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                    {:ok, acc ++ [expr ++ kw_list], state, log}
-                  end
+        exprs ++ [kw_list]
 
-                is_keyword_list_result(expr) and
-                    tok.kind in [:list_string_start, :bin_string_start] ->
-                  # Another quoted keyword - parse via expression and merge
-                  parse_dot_container_quoted_kw_continuation(expr, acc, state, ctx, log)
-
-                Keywords.starts_kw?(tok) ->
-                  # Regular keyword data after non-keyword expr
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                    {:ok, acc ++ [expr, kw_list], state, log}
-                  end
-
-                true ->
-                  parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
-              end
-
-            _ ->
-              parse_dot_container_args_loop(acc ++ [expr], state, ctx, log)
-          end
-
-        _ ->
-          {:ok, acc ++ [expr], state, log}
-      end
-    end
-  end
-
-  # Parse continuation of keyword list in dot_container context
-  defp parse_dot_container_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do
-    alias ToxicParser.Grammar.Expressions
-
-    case Expressions.expr(state, Context.container_expr(), log) do
-      {:ok, expr, state, log} when is_list(expr) and length(expr) > 0 ->
-        {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, _} ->
-            {:ok, _comma, state} = TokenAdapter.next(state)
-            {state, _newlines} = EOE.skip_count_newlines(state, 0)
-
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"}, _} ->
-                # Trailing comma
-                {:ok, acc ++ [acc_kw ++ expr], state, log}
-
-              {:ok, tok, _} ->
-                cond do
-                  Keywords.starts_kw?(tok) ->
-                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_data(state, ctx, log) do
-                      {:ok, acc ++ [acc_kw ++ expr ++ more_kw], state, log}
-                    end
-
-                  tok.kind in [:list_string_start, :bin_string_start] ->
-                    parse_dot_container_quoted_kw_continuation(
-                      acc_kw ++ expr,
-                      acc,
-                      state,
-                      ctx,
-                      log
-                    )
-
-                  true ->
-                    {:ok, acc ++ [acc_kw ++ expr], state, log}
-                end
-
-              _ ->
-                {:ok, acc ++ [acc_kw ++ expr], state, log}
-            end
-
-          _ ->
-            {:ok, acc ++ [acc_kw ++ expr], state, log}
-        end
-
-      {:ok, _expr, state, log} ->
-        {:error, {:expected, :keyword}, state, log}
-
-      {:error, _, _, _} = error ->
-        error
+      _ ->
+        Enum.map(tagged_items, fn {:expr, expr} -> expr end)
     end
   end
 
@@ -2187,6 +2171,12 @@ defmodule ToxicParser.Pratt do
     line = Keyword.get(meta, :line, 1)
     column = Keyword.get(meta, :column, 1)
     {[line: line, column: column], "syntax error before: ", to_string(token_value)}
+  end
+
+  defp syntax_error_before(meta, token_value) when is_binary(token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
   end
 
   # Extract line/column metadata from an AST node (for nested calls)
