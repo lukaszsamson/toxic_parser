@@ -2805,6 +2805,10 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms(":\"foo\#{...}\"")
   end
 
+  test "when keyword" do
+    assert_conforms("assert quoted_to_string(quote(do: (x when y: z, z: w))) == \"x when y: z, z: w\"")
+  end
+
   describe "newlines" do
     test "repro 1" do
       assert_conforms("foo \n;")

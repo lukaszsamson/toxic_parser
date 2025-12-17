@@ -1250,8 +1250,9 @@ defmodule ToxicParser.Pratt do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
       # This applies regardless of context (not just :no_parens)
-      {:ok, _rhs_tok, _} when op_token.kind == :when_op ->
-        case Keywords.try_parse_kw_no_parens_call(state, context, log) do
+      {:ok, _rhs_tok, _} when op_token.kind == :when_op and context.allow_no_parens_expr ->
+        dbg(context)
+        case Keywords.try_parse_call_args_no_parens_kw(state, context, log) do
           {:ok, kw_list, state, log} ->
             op = op_token.value
             meta = build_meta_with_newlines(op_token.metadata, effective_newlines)

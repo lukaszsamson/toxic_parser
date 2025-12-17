@@ -24,6 +24,7 @@ defmodule ToxicParser.Grammar.Keywords do
   # String start tokens that could be quoted keyword keys like "foo": or 'bar':
   @quoted_kw_start [:bin_string_start, :list_string_start]
   @no_parens_kw_terminators [
+    :eof,
     :eoe,
     :")",
     :"]",
@@ -198,6 +199,70 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   @doc """
+  Tries to parse `call_args_no_parens_kw_expr` (a single keyword pair) without consuming tokens
+  if it is not present.
+
+  Grammar (elixir_parser.yrl):
+
+  - `call_args_no_parens_kw_expr -> kw_eol matched_expr`
+  - `call_args_no_parens_kw_expr -> kw_eol no_parens_expr`
+
+  This context does not allow `unmatched_expr`, but it does allow `no_parens_expr` in the value.
+  """
+  @type kw_expr_try_result ::
+          {:ok, {term(), term()}, State.t(), EventLog.t()}
+          | {:no_kw_expr, State.t(), EventLog.t()}
+          | {:error, term(), State.t(), EventLog.t()}
+
+  @spec try_parse_call_args_no_parens_kw_expr(State.t(), Pratt.context(), EventLog.t(), keyword()) ::
+          kw_expr_try_result()
+  def try_parse_call_args_no_parens_kw_expr(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        opts \\ []
+      ) do
+    allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
+    min_bp = Keyword.get(opts, :min_bp, 0)
+    value_ctx = Context.kw_no_parens_value()
+
+    case TokenAdapter.peek(state) do
+      {:ok, tok, state} ->
+        cond do
+          starts_kw?(tok) ->
+            case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+              {:ok, pair, state, log} -> {:ok, pair, state, log}
+              {:error, reason, state, log} -> {:error, reason, state, log}
+            end
+
+          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            case parse_kw_pair(checkpoint_state, ctx, log, min_bp, value_ctx) do
+              {:ok, pair, state, log} ->
+                {:ok, pair, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                {:no_kw_expr, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, attempt_log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+            end
+
+          true ->
+            {:no_kw_expr, state, log}
+        end
+
+      {:eof, state} ->
+        {:no_kw_expr, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  @doc """
   Tries to parse `call_args_no_parens_kw` without consuming tokens if it is not present.
 
   This is used for:
@@ -214,21 +279,42 @@ defmodule ToxicParser.Grammar.Keywords do
         %EventLog{} = log,
         opts \\ []
       ) do
+    try_parse_call_args_no_parens_kw(state, ctx, log, opts)
+  end
+
+  @doc """
+  Tries to parse `call_args_no_parens_kw` without consuming tokens if it is not present.
+
+  This is the underlying parser for `try_parse_kw_no_parens_call/4`.
+  """
+  @spec try_parse_call_args_no_parens_kw(State.t(), Pratt.context(), EventLog.t(), keyword()) ::
+          try_result()
+  def try_parse_call_args_no_parens_kw(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        opts \\ []
+      ) do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
     min_bp = Keyword.get(opts, :min_bp, 0)
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
         cond do
-          starts_kw?(tok) ->
-            parse_call_args_no_parens_kw(state, ctx, log, min_bp)
-
-          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+          starts_kw?(tok) or (allow_quoted_keys? and tok.kind in @quoted_kw_start) ->
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
             case parse_call_args_no_parens_kw(checkpoint_state, ctx, log, min_bp) do
               {:ok, kw_list, state, log} ->
                 {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
+
+              {:error, {:expected, :item, got: got_kind}, state, _attempt_log}
+              when got_kind in @quoted_kw_start ->
+                # `@quoted_kw_start` tokens (string/charlist starts) can begin regular
+                # expressions too. If the comma-separated kw list parser fails to
+                # find even a single `kw_expr` item, treat it as "not a kw list"
+                # and let the caller fall back to normal expression parsing.
+                {:no_kw, TokenAdapter.rewind(state, ref), log}
 
               {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
               when got_kind in @quoted_kw_start ->
@@ -253,94 +339,41 @@ defmodule ToxicParser.Grammar.Keywords do
   @spec parse_call_args_no_parens_kw(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
           result()
   defp parse_call_args_no_parens_kw(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
-    value_ctx = Context.kw_no_parens_value()
-
-    with {:ok, pair, state, log} <- parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
-      parse_call_args_no_parens_kw_pairs([pair], state, ctx, log, min_bp, value_ctx)
+    item_fun = fn state, ctx, log ->
+      case try_parse_call_args_no_parens_kw_expr(state, ctx, log, min_bp: min_bp) do
+        {:ok, pair, state, log} -> {:ok, pair, state, log}
+        {:no_kw_expr, state, log} -> {:no_item, state, log}
+        {:error, reason, state, log} -> {:error, reason, state, log}
+      end
     end
-  end
 
-  defp parse_call_args_no_parens_kw_pairs(acc, state, ctx, log, min_bp, value_ctx) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","} = comma_tok, _} ->
-        {:ok, _comma, state} = TokenAdapter.next(state)
-        state = EOE.skip(state)
-
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: kind}, _} when kind in @no_parens_kw_terminators ->
-            meta = Builder.Helpers.token_meta(comma_tok.metadata)
-            {:error, syntax_error_before(meta), state, log}
-
-          {:ok, _tok, _} ->
-            case try_parse_no_parens_kw_pair(state, ctx, log, min_bp, value_ctx) do
-              {:ok, pair, state, log} ->
-                parse_call_args_no_parens_kw_pairs(
-                  [pair | acc],
-                  state,
-                  ctx,
-                  log,
-                  min_bp,
-                  value_ctx
-                )
-
-              {:no_kw, state, log} ->
-                meta = Builder.Helpers.token_meta(comma_tok.metadata)
-                {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
-
-              {:error, reason, state, log} ->
-                {:error, reason, state, log}
-            end
-
-          {:eof, state} ->
-            meta = Builder.Helpers.token_meta(comma_tok.metadata)
-            {:error, syntax_error_before(meta), state, log}
-
-          {:error, diag, state} ->
-            {:error, diag, state, log}
-        end
-
-      {:ok, _tok, state} ->
-        {:ok, Enum.reverse(acc), state, log}
-
-      {:eof, state} ->
-        {:ok, Enum.reverse(acc), state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+    on_no_item_after_separator = fn comma_tok, state, _ctx, log ->
+      meta = Builder.Helpers.token_meta(comma_tok.metadata)
+      {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
     end
-  end
 
-  defp try_parse_no_parens_kw_pair(state, ctx, log, min_bp, value_ctx) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, state} ->
-        cond do
-          starts_kw?(tok) ->
-            parse_kw_pair(state, ctx, log, min_bp, value_ctx)
+    case ToxicParser.Grammar.Delimited.parse_comma_separated(
+           state,
+           ctx,
+           log,
+           @no_parens_kw_terminators,
+           item_fun,
+           allow_trailing_comma?: false,
+           skip_eoe_initial?: false,
+           skip_eoe_after_item?: false,
+           skip_eoe_after_separator?: true,
+           stop_on_unexpected?: true,
+           on_no_item_after_separator: on_no_item_after_separator
+         ) do
+      {:ok, kw_list, state, log} ->
+        {:ok, kw_list, state, log}
 
-          tok.kind in @quoted_kw_start ->
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+      {:error, {:trailing_comma, comma_tok}, state, log} ->
+        meta = Builder.Helpers.token_meta(comma_tok.metadata)
+        {:error, syntax_error_before(meta), state, log}
 
-            case parse_kw_pair(checkpoint_state, ctx, log, min_bp, value_ctx) do
-              {:ok, pair, state, log} ->
-                {:ok, pair, TokenAdapter.drop_checkpoint(state, ref), log}
-
-              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                {:no_kw, TokenAdapter.rewind(state, ref), log}
-
-              {:error, reason, state, attempt_log} ->
-                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
-            end
-
-          true ->
-            {:no_kw, state, log}
-        end
-
-      {:eof, state} ->
-        {:no_kw, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, reason, state, log} ->
+        {:error, reason, state, log}
     end
   end
 

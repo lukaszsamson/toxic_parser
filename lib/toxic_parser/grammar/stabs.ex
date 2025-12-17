@@ -443,7 +443,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp parse_stab_parens_args(state, ctx, log) do
     min_bp = Precedence.when_op_bp() + 1
 
-    case Keywords.try_parse_kw_no_parens_call(state, ctx, log, min_bp: min_bp) do
+    case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log, min_bp: min_bp) do
       {:ok, kw_list, state, log} ->
         {:ok, [kw_list], state, log}
 
@@ -468,7 +468,7 @@ defmodule ToxicParser.Grammar.Stabs do
             # Check for keyword list tail after comma.
             min_bp = Precedence.when_op_bp() + 1
 
-            case Keywords.try_parse_kw_no_parens_call(state, Context.matched_expr(), log,
+            case Keywords.try_parse_call_args_no_parens_kw(state, Context.matched_expr(), log,
                    min_bp: min_bp
                  ) do
               {:ok, kw_list, state, log} ->

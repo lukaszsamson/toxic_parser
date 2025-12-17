@@ -329,7 +329,7 @@ defmodule ToxicParser.Grammar.Calls do
             {:ok, Enum.reverse(acc), state, log}
 
           _ ->
-            case Keywords.try_parse_kw_no_parens_call(state, ctx, log) do
+            case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
               {:ok, kw_list, state, log} ->
                 {:ok, Enum.reverse([kw_list | acc]), state, log}
 
@@ -389,7 +389,7 @@ defmodule ToxicParser.Grammar.Calls do
             {:error, {meta, "syntax error before: ", ""}, state, log}
 
           _ ->
-            case Keywords.try_parse_kw_no_parens_call(state, ctx, log) do
+            case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
               {:ok, kw_list, state, log} ->
                 {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
 
