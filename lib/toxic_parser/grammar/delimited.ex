@@ -248,7 +248,9 @@ defmodule ToxicParser.Grammar.Delimited do
       end
 
     if enabled? do
-      {state, _newlines} = EOE.skip_count_newlines(state, 0)
+      # Only skip newlines, not semicolons - semicolons are separators
+      # and should not be silently skipped in argument lists
+      {state, _newlines} = EOE.skip_newlines_only(state, 0)
       state
     else
       state

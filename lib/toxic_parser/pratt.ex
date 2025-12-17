@@ -340,6 +340,13 @@ defmodule ToxicParser.Pratt do
             meta = build_meta(token.metadata)
             {:error, syntax_error_before(meta, token.value), state, log}
 
+          # EOE tokens (semicolons) cannot start an expression
+          # e.g., "1+;\n2" should error because ; cannot follow +
+          # Note: newlines are handled separately by EOE.skip_newlines_only
+          token.kind == :eoe and token.value.source == :semicolon ->
+            meta = build_meta(token.metadata)
+            {:error, syntax_error_before(meta, "';'"), state, log}
+
           true ->
             nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers)
         end
@@ -1290,13 +1297,14 @@ defmodule ToxicParser.Pratt do
     # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
     rhs_min_bp = if assoc == :right, do: bp, else: bp + 1
 
-    # Skip EOE tokens after operator (allows "1 +\n2")
+    # Skip newlines after operator (allows "1 +\n2")
+    # Note: We only skip newlines, not semicolons. "1 +;\n2" should be a syntax error.
     # Newlines can come from:
     # 1. EOE after the operator (continuation: "1 +\n2")
     # 2. The operator token itself (continuation operator: "a\n|> b")
     # 3. EOE before the operator (for pipe_op in map update: "%{base\n| key: val}")
     # We take the max of all sources
-    {state, newlines_after_op} = EOE.skip_count_newlines(state, 0)
+    {state, newlines_after_op} = EOE.skip_newlines_only(state, 0)
     token_newlines = Map.get(op_token.metadata, :newlines, 0)
     effective_newlines = Enum.max([newlines_after_op, token_newlines, newlines_before_op])
 

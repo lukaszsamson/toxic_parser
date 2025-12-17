@@ -347,6 +347,8 @@ defmodule ToxicParser.TokenAdapter do
   defp newline_count({:",", {_, _, count}}) when is_integer(count), do: count
   # 3-tuple tokens like operators: {kind, {start, end, newlines}, value}
   defp newline_count({_kind, {_, _, count}, _value}) when is_integer(count), do: count
+  # 4-tuple tokens like in_op: {kind, {start, end, newlines}, v1, v2}
+  defp newline_count({_kind, {_, _, count}, _v1, _v2}) when is_integer(count), do: count
   defp newline_count(_), do: 0
 
   defp synthetic_error_token(stream, state, terminators, diagnostic, opts) do
