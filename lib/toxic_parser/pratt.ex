@@ -38,6 +38,33 @@ defmodule ToxicParser.Pratt do
 
   import Keywords, only: [{:is_keyword_list_result, 1}]
 
+  # Binary-only operators that cannot start an expression
+  # These have binary precedence but no unary form
+  @binary_only_ops [
+    :stab_op,
+    :in_match_op,
+    :when_op,
+    :type_op,
+    :pipe_op,
+    :assoc_op,
+    :match_op,
+    :or_op,
+    :and_op,
+    :comp_op,
+    :rel_op,
+    :arrow_op,
+    :in_op,
+    :xor_op,
+    :ternary_op,
+    :concat_op,
+    :mult_op,
+    :power_op,
+    :dot_op,
+    :dot_call_op
+  ]
+
+  defp is_binary_only_op(kind), do: kind in @binary_only_ops
+
   @type context :: Context.t()
 
   # Operators that can extend matched_expr to no_parens_expr
@@ -307,6 +334,12 @@ defmodule ToxicParser.Pratt do
           token.kind == :ternary_op and token.value == :"//" ->
             parse_ternary_unary(token, state, context, log)
 
+          # Binary-only operators cannot start an expression
+          # e.g., "1 + * 3" should error because * cannot follow +
+          is_binary_only_op(token.kind) ->
+            meta = build_meta(token.metadata)
+            {:error, syntax_error_before(meta, token.value), state, log}
+
           true ->
             nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers)
         end
@@ -331,9 +364,14 @@ defmodule ToxicParser.Pratt do
         # Aliases cannot have no-parens call syntax - `Foo x` is invalid
         # bracket_identifier means tokenizer determined this is bracket access (foo[x])
         # not a no-parens call - let led_bracket handle it
-        # Literals (nil, true, false) cannot be function calls - only identifiers can
+        # Literals cannot be function calls - only identifiers can:
+        # - nil, true, false are boolean/nil literals
+        # - :int, :flt, :char, :atom are other literal token kinds
         # When allow_containers is false, don't parse no-parens calls
-        if token.kind not in [:paren_identifier, :alias, :bracket_identifier, nil, true, false] and
+        literal_kinds = [:int, :flt, :char, :atom]
+        excluded_kinds = [:paren_identifier, :alias, :bracket_identifier, nil, true, false | literal_kinds]
+
+        if token.kind not in excluded_kinds and
              allow_no_parens and
              allow_containers do
           parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
@@ -1046,47 +1084,59 @@ defmodule ToxicParser.Pratt do
         with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
           # Check if rhs indicates a no-parens call (from op_identifier/dot_op_identifier)
           # or bracket access (from bracket_identifier)
-          {combined, expects_no_parens_call, allows_bracket} =
+          combined_result =
             case rhs do
               # Simple identifier with :no_parens_call flag: {member_atom, member_meta, :no_parens_call}
               # This indicates a no-parens call is expected (from op_identifier/dot_op_identifier)
               {member, member_meta, :no_parens_call} when is_atom(member) ->
-                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, true,
-                 false}
+                {:ok,
+                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, true,
+                  false}}
 
               # Bracket identifier with :allows_bracket flag: {member_atom, member_meta, :allows_bracket}
               # This indicates bracket access is allowed (no whitespace before [)
               {member, member_meta, :allows_bracket} when is_atom(member) ->
-                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
-                 true}
+                {:ok,
+                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                  true}}
 
               # Simple identifier: {member_atom, member_meta}
               # Build: {{:., dot_meta, [left, member]}, [no_parens: true | member_meta], []}
               # Bracket access NOT allowed (whitespace before [)
               {member, member_meta} when is_atom(member) ->
-                {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
-                 false}
+                {:ok,
+                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                  false}}
 
               # Alias on RHS with bracket access allowed (no whitespace before [)
               {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
-                {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, true}
+                case build_dot_alias(left, rhs_alias, rhs_meta, dot_meta) do
+                  {:ok, combined} -> {:ok, {combined, false, true}}
+                  {:error, reason} -> {:error, reason}
+                end
 
               # Alias on RHS - build combined __aliases__ (dot_alias rule)
               # Must come before the general {name, meta, args} pattern
               {:__aliases__, rhs_meta, [rhs_alias]} ->
-                {build_dot_alias(left, rhs_alias, rhs_meta, dot_meta), false, false}
+                case build_dot_alias(left, rhs_alias, rhs_meta, dot_meta) do
+                  {:ok, combined} -> {:ok, {combined, false, false}}
+                  {:error, reason} -> {:error, reason}
+                end
 
               # Call with args: {name, meta, args}
               # Bracket access is always allowed after a call result (no whitespace check needed)
               {name, meta, args} when is_list(args) ->
-                {{{:., dot_meta, [left, name]}, meta, args}, false, true}
+                {:ok, {{{:., dot_meta, [left, name]}, meta, args}, false, true}}
 
               # Other AST node
               other ->
-                {{:., dot_meta, [left, other]}, false, false}
+                {:ok, {{:., dot_meta, [left, other]}, false, false}}
             end
 
-          case TokenAdapter.peek(state) do
+          # Handle error from build_dot_alias (e.g., atom.Alias)
+          case combined_result do
+            {:ok, {combined, expects_no_parens_call, allows_bracket}} ->
+              case TokenAdapter.peek(state) do
             # When ( follows a dot member that was already a call (allows_bracket = true),
             # it's a nested paren call: foo.bar()()
             # When ( follows a simple identifier (allows_bracket = false), it means there's
@@ -1174,6 +1224,10 @@ defmodule ToxicParser.Pratt do
 
             _ ->
               led(combined, state, log, min_bp, context, opts)
+          end
+
+            {:error, reason} ->
+              {:error, reason, state, log}
           end
         else
           {:error, :unexpected_eof, state, log} ->
@@ -1471,14 +1525,21 @@ defmodule ToxicParser.Pratt do
     # Extract just the line/column from rhs_meta's :last value (or from rhs_meta itself)
     last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
     new_meta = Keyword.put(left_meta, :last, last_meta)
-    {:__aliases__, new_meta, left_segments ++ [rhs_alias]}
+    {:ok, {:__aliases__, new_meta, left_segments ++ [rhs_alias]}}
+  end
+
+  # Error case: literal atom followed by alias
+  # From elixir_parser.yrl: build_dot_alias(_Dot, Atom, Right) when is_atom(Atom) -> error_bad_atom(Right)
+  defp build_dot_alias(left_expr, _rhs_alias, _rhs_meta, dot_meta)
+       when is_atom(left_expr) do
+    {:error, {:atom_followed_by_alias, dot_meta}}
   end
 
   # When left is some other expression, wrap both in __aliases__
   # Meta is [last: alias_location] ++ dot_location
   defp build_dot_alias(left_expr, rhs_alias, rhs_meta, dot_meta) do
     last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
-    {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}
+    {:ok, {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}}
   end
 
   # Parse container args for dot_container: expr.{...}
@@ -2005,7 +2066,7 @@ defmodule ToxicParser.Pratt do
         # Parse the RHS of dot - must be an alias or identifier
         # Pass dot_meta for curly calls where the call metadata uses the dot's position
         with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
-          combined =
+          combined_result =
             case rhs do
               # Alias on RHS with bracket access (ignored here, just unwrap)
               {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
@@ -2018,19 +2079,26 @@ defmodule ToxicParser.Pratt do
               # Paren call on RHS (tokenized as dot_paren_identifier)
               # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
               {name, meta, args} when is_atom(name) and is_list(args) ->
-                {{:., dot_meta, [left, name]}, meta, args}
+                {:ok, {{:., dot_meta, [left, name]}, meta, args}}
 
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->
-                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
 
               # Other AST node
               other ->
-                {:., dot_meta, [left, other]}
+                {:ok, {:., dot_meta, [left, other]}}
             end
 
-          # Continue to handle chained dots: Foo.Bar.Baz
-          led_dot_only(combined, state, log, context)
+          # Handle error from build_dot_alias (e.g., atom.Alias)
+          case combined_result do
+            {:ok, combined} ->
+              # Continue to handle chained dots: Foo.Bar.Baz
+              led_dot_only(combined, state, log, context)
+
+            {:error, reason} ->
+              {:error, reason, state, log}
+          end
         end
 
       _ ->
@@ -2054,7 +2122,7 @@ defmodule ToxicParser.Pratt do
         # Parse the RHS of dot - must be an alias or identifier
         # Pass dot_meta for curly calls where the call metadata uses the dot's position
         with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
-          combined =
+          combined_result =
             case rhs do
               # Alias on RHS with bracket access (unwrap the flag, bracket handled separately)
               {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
@@ -2067,28 +2135,35 @@ defmodule ToxicParser.Pratt do
               # Paren call on RHS (tokenized as dot_paren_identifier)
               # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
               {name, meta, args} when is_atom(name) and is_list(args) ->
-                {{:., dot_meta, [left, name]}, meta, args}
+                {:ok, {{:., dot_meta, [left, name]}, meta, args}}
 
               # Simple identifier with :no_parens_call flag - treat same as simple identifier
               # In struct base context, { is the struct body, not a no-parens call argument
               {member, member_meta, :no_parens_call} when is_atom(member) ->
-                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
 
               # Simple identifier with :allows_bracket flag
               {member, member_meta, :allows_bracket} when is_atom(member) ->
-                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
 
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->
-                {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}
+                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
 
               # Other AST node
               other ->
-                {:., dot_meta, [left, other]}
+                {:ok, {:., dot_meta, [left, other]}}
             end
 
-          # Continue to handle chained dots and calls
-          led_dots_and_calls(combined, state, log, context)
+          # Handle error from build_dot_alias (e.g., atom.Alias)
+          case combined_result do
+            {:ok, combined} ->
+              # Continue to handle chained dots and calls
+              led_dots_and_calls(combined, state, log, context)
+
+            {:error, reason} ->
+              {:error, reason, state, log}
+          end
         end
 
       # Handle paren calls: foo(args) or unquote(struct)

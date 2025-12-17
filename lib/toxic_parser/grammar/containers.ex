@@ -454,19 +454,27 @@ defmodule ToxicParser.Grammar.Containers do
            Delimited.parse_comma_separated(state, container_ctx, log, :"}", item_fun,
              allow_empty?: true
            ) do
-      case TokenAdapter.next(state) do
-        {:ok, %{kind: :"}"} = close_tok, state} ->
-          close_meta = token_meta(close_tok.metadata)
-          {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, log}
+      # Check for invalid keyword list at start of tuple
+      # {foo: :bar} is invalid - tuples cannot start with keyword data
+      case tagged_items do
+        [{:kw_data, _} | _] ->
+          {:error, :unexpected_keyword_list_in_tuple, state, log}
 
-        {:ok, tok, state} ->
-          {:error, {:expected, :"}", got: tok.kind}, state, log}
+        _ ->
+          case TokenAdapter.next(state) do
+            {:ok, %{kind: :"}"} = close_tok, state} ->
+              close_meta = token_meta(close_tok.metadata)
+              {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, log}
 
-        {:eof, state} ->
-          {:error, :unexpected_eof, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :"}", got: tok.kind}, state, log}
 
-        {:error, diag, state} ->
-          {:error, diag, state, log}
+            {:eof, state} ->
+              {:error, :unexpected_eof, state, log}
+
+            {:error, diag, state} ->
+              {:error, diag, state, log}
+          end
       end
     end
   end
