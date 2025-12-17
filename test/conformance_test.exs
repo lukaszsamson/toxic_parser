@@ -2805,10 +2805,65 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms(":\"foo\#{...}\"")
   end
 
-  test "when keyword" do
-    assert_conforms(
-      "assert quoted_to_string(quote(do: (x when y: z, z: w))) == \"x when y: z, z: w\""
-    )
+  test "when keyword in stab" do
+    # no_parens_op_expr -> when_op_eol call_args_no_parens_kw
+    # stab_expr -> expr
+    assert_conforms("(x when y: z, z: w)")
+    # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+    assert_conforms("(() when x when y: z, z: w -> 0)")
+    # stab_parens_many when_op expr stab_op_eol_and_expr
+    assert_conforms("((a) when x when y: z, z: w -> 0)")
+    assert_conforms("((a, b) when x when y: z, z: w -> 0)")
+
+    # stab_expr -> stab_op_eol_and_expr
+    assert_conforms("(-> x when y: z, z: w)")
+    # stab_expr -> empty_paren stab_op_eol_and_expr
+    assert_conforms("(() -> x when y: z, z: w)")
+    # stab_expr -> empty_paren stab_op_eol_and_expr
+    assert_conforms("(() -> x when y: z, z: w)")
+    # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+    assert_conforms("(() when foo -> x when y: z, z: w)")
+    assert_conforms("(() when foo: 1 -> x when y: z, z: w)")
+    # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
+    assert_conforms("(a -> x when y: z, z: w)")
+    assert_conforms("(a, b -> x when y: z, z: w)")
+    # stab_expr -> stab_parens_many stab_op_eol_and_expr
+    assert_conforms("((a) -> x when y: z, z: w)")
+    assert_conforms("((a, b) -> x when y: z, z: w)")
+    # stab_parens_many when_op expr stab_op_eol_and_expr
+    assert_conforms("((a) when 1 -> x when y: z, z: w)")
+    assert_conforms("((a, b) when 1 -> x when y: z, z: w)")
+    assert_conforms("((a) when foo: 1 -> x when y: z, z: w)")
+  end
+
+  test "when keyword in fn" do
+    # no_parens_op_expr -> when_op_eol call_args_no_parens_kw
+    # stab_expr -> expr - forbidden error case
+    # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+    assert_conforms("fn () when x when y: z, z: w -> 0 end")
+    # stab_parens_many when_op expr stab_op_eol_and_expr
+    assert_conforms("fn (a) when x when y: z, z: w -> 0 end")
+    assert_conforms("fn (a, b) when x when y: z, z: w -> 0 end")
+
+    # stab_expr -> stab_op_eol_and_expr
+    assert_conforms("fn -> x when y: z, z: w end")
+    # stab_expr -> empty_paren stab_op_eol_and_expr
+    assert_conforms("fn () -> x when y: z, z: w end")
+    # stab_expr -> empty_paren stab_op_eol_and_expr
+    assert_conforms("fn () -> x when y: z, z: w end")
+    # stab_expr -> empty_paren when_op expr stab_op_eol_and_expr
+    assert_conforms("fn () when foo -> x when y: z, z: w end")
+    assert_conforms("fn () when foo: 1 -> x when y: z, z: w end")
+    # stab_expr -> call_args_no_parens_all stab_op_eol_and_expr
+    assert_conforms("fn a -> x when y: z, z: w end")
+    assert_conforms("fn a, b -> x when y: z, z: w end")
+    # stab_expr -> stab_parens_many stab_op_eol_and_expr
+    assert_conforms("fn (a) -> x when y: z, z: w end")
+    assert_conforms("fn (a, b) -> x when y: z, z: w end")
+    # stab_parens_many when_op expr stab_op_eol_and_expr
+    assert_conforms("fn (a) when 1 -> x when y: z, z: w end")
+    assert_conforms("fn (a, b) when 1 -> x when y: z, z: w end")
+    assert_conforms("fn (a) when foo: 1 -> x when y: z, z: w end")
   end
 
   describe "newlines" do
