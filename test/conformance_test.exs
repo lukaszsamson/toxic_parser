@@ -3075,6 +3075,18 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("case x do 1 -> :ok; (0) -> :error end")
       assert_conforms("case x do 1 -> :ok; (y) -> :error end")
     end
+
+    test "repro 47" do
+      assert_conforms("%{l{} => 1, a: d}")
+    end
+
+    test "repro 48" do
+      assert_conforms("fn () -> !if-e end")
+    end
+
+    test "repro 49" do
+      assert_conforms("cond do +if+t -> :ok end")
+    end
   end
 
   # =============================================================================

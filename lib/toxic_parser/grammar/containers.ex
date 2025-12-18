@@ -12,17 +12,17 @@ defmodule ToxicParser.Grammar.Containers do
           | {:error, term(), State.t(), EventLog.t()}
           | {:no_container, State.t()}
 
-  @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
+  @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
+  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} ->
-        parse_paren(state, ctx, log, min_bp)
+        parse_paren(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: :"["}, _} ->
-        parse_list(state, ctx, log, min_bp)
+        parse_list(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: :"{", value: _}, _} ->
-        parse_tuple(state, ctx, log, min_bp)
+        parse_tuple(state, ctx, log, min_bp, opts)
 
       {:ok, %{kind: :%{}}, _} ->
         Maps.parse_map(state, ctx, log, min_bp)
@@ -77,7 +77,7 @@ defmodule ToxicParser.Grammar.Containers do
   #   access_expr -> open_paren ';' stab_eoe ')'     : build_paren_stab
   #   access_expr -> open_paren ';' close_paren      : build_paren_stab with nil
   #   access_expr -> empty_paren                     : wrap in __block__
-  defp parse_paren(state, ctx, log, min_bp) do
+  defp parse_paren(state, ctx, log, min_bp, opts) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
@@ -96,18 +96,18 @@ defmodule ToxicParser.Grammar.Containers do
         else
           # Skip any remaining EOE tokens
           state = EOE.skip(state)
-          parse_paren_content(open_meta, state, ctx, log, min_bp)
+          parse_paren_content(open_meta, state, ctx, log, min_bp, opts)
         end
 
       _ ->
         # Skip any remaining EOE tokens
         state = EOE.skip(state)
-        parse_paren_content(open_meta, state, ctx, log, min_bp)
+        parse_paren_content(open_meta, state, ctx, log, min_bp, opts)
     end
   end
 
   # Parse content after open paren (no leading semicolon)
-  defp parse_paren_content(open_meta, state, ctx, log, min_bp) do
+  defp parse_paren_content(open_meta, state, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
       # Empty parens: () -> {:__block__, [parens: ...], []}
       {:ok, %{kind: :")"} = close_tok, _} ->
@@ -115,7 +115,7 @@ defmodule ToxicParser.Grammar.Containers do
         close_meta = token_meta(close_tok.metadata)
         parens_meta = [parens: Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)]
         ast = {:__block__, parens_meta, []}
-        Pratt.led(ast, state, log, min_bp, ctx)
+        Pratt.led(ast, state, log, min_bp, ctx, opts)
 
       # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
       {:ok, _, _} ->
@@ -157,10 +157,10 @@ defmodule ToxicParser.Grammar.Containers do
   defp semicolon_eoe?(%{kind: :eoe, raw: {:";", _}}), do: true
   defp semicolon_eoe?(_), do: false
 
-  defp parse_list(state, ctx, log, min_bp) do
+  defp parse_list(state, ctx, log, min_bp, opts) do
     with {:ok, ast, state, log} <- parse_list_base(state, ctx, log) do
       # Continue with Pratt's led() to handle trailing operators
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
 
@@ -239,10 +239,10 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_tuple(state, ctx, log, min_bp) do
+  defp parse_tuple(state, ctx, log, min_bp, opts) do
     with {:ok, ast, state, log} <- parse_tuple_base(state, ctx, log) do
       # Continue with Pratt's led() to handle trailing operators like <-, =, etc.
-      Pratt.led(ast, state, log, min_bp, ctx)
+      Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
 

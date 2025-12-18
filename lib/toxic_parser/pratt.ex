@@ -271,7 +271,7 @@ defmodule ToxicParser.Pratt do
         if allow_containers do
           state = TokenAdapter.pushback(state, token)
           alias ToxicParser.Grammar.Containers
-          Containers.parse(state, context, log, min_bp)
+          Containers.parse(state, context, log, min_bp, led_opts)
         else
           nud_literal_or_unary(token, state, context, log, min_bp, false)
         end
@@ -730,7 +730,7 @@ defmodule ToxicParser.Pratt do
         alias ToxicParser.Grammar.Containers
 
         # Call Containers.parse with min_bp to preserve operator precedence
-        Containers.parse(state, context, log, min_bp)
+        Containers.parse(state, context, log, min_bp, opts)
 
       # String and quoted atom tokens need special handling to preserve min_bp
       token.kind in [
