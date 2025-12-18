@@ -500,7 +500,7 @@ defmodule ToxicParser.Grammar.Keywords do
       if min_bp > 0 do
         Pratt.parse_with_min_bp(state, value_ctx, log, min_bp)
       else
-        Expressions.expr(state, value_ctx, log)
+        Pratt.parse_with_min_bp(state, value_ctx, log, 0, stop_at_assoc: true)
       end
 
     with {:ok, value_ast, state, log} <- result do
@@ -526,7 +526,7 @@ defmodule ToxicParser.Grammar.Keywords do
       if min_bp > 0 do
         Pratt.parse_with_min_bp(state, value_ctx, log, min_bp)
       else
-        Expressions.expr(state, value_ctx, log)
+        Pratt.parse_with_min_bp(state, value_ctx, log, 0, stop_at_assoc: true)
       end
 
     with {:ok, value_ast, state, log} <- result do

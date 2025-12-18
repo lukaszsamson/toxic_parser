@@ -499,21 +499,13 @@ defmodule ToxicParser.Grammar.Maps do
       annotated = Enum.map(list, &annotate_assoc_entry/1)
       {:valid, annotated}
     else
-      :invalid
+      # A non-keyword list literal is a valid map_base_expr on the RHS.
+      {:valid, [list]}
     end
   end
 
-  # Handle map_base_expr: any valid AST expression that's not => or keyword
-  # Per grammar: assoc_expr -> map_base_expr : '$1'.
-  # Per grammar: assoc_update -> matched_expr pipe_op_eol assoc_expr : {'$2', '$1', ['$3']}.
-  # So a map_base_expr is valid as RHS, wrapped in a list
-  defp classify_pipe_rhs_for_map_update({name, meta, args})
-       when is_atom(name) and is_list(meta) and (is_list(args) or is_nil(args)) do
-    # Valid AST node - treat as map_base_expr, wrap in list
-    {:valid, [{name, meta, args}]}
-  end
-
-  defp classify_pipe_rhs_for_map_update(_), do: :invalid
+  # Fallback: any other expression is a valid map_base_expr on the RHS, wrapped in a list.
+  defp classify_pipe_rhs_for_map_update(rhs), do: {:valid, [rhs]}
 
   # Annotate a single assoc entry with :assoc metadata
   defp annotate_assoc_entry({:"=>", assoc_meta, [key, value]}) do

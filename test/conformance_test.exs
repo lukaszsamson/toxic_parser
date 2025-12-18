@@ -3024,12 +3024,10 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{a!d=d => 1, a: f}")
     end
 
-    @tag :skip
     test "repro 35" do
       assert_conforms("%{x | 0}")
     end
 
-    @tag :skip
     test "repro 36" do
       assert_conforms("%{c^: h => 1}")
       assert_conforms("%{n%: n => 1}")
@@ -3039,14 +3037,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("case x do 1 -> :ok; w\n; -> :error end")
     end
 
-    @tag :skip
     test "repro 38" do
       assert_conforms("%{x | n.d}")
       assert_conforms("%{a|?{}")
       assert_conforms("%{x | :u}")
     end
 
-    @tag :skip
     test "repro 39" do
       assert_conforms("%Foo{l|\"\"}")
     end
