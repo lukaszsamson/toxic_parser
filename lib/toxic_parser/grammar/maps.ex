@@ -461,9 +461,14 @@ defmodule ToxicParser.Grammar.Maps do
   # e.g., map | :a => 1 parses as {:|, meta, [map, {:"=>", _, [:a, 1]}]}
   # Returns {:update, base, pipe_meta, entries} or :not_update
   defp check_embedded_map_update({:|, pipe_meta, [base, rhs]}) do
-    case classify_pipe_rhs_for_map_update(rhs) do
-      {:valid, entries} -> {:update, base, pipe_meta, entries}
-      :invalid -> :not_update
+    # Parenthesized pipes inside %{} are regular pipe expressions, not map updates.
+    if Keyword.has_key?(pipe_meta, :parens) do
+      :not_update
+    else
+      case classify_pipe_rhs_for_map_update(rhs) do
+        {:valid, entries} -> {:update, base, pipe_meta, entries}
+        :invalid -> :not_update
+      end
     end
   end
 
@@ -494,13 +499,19 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   defp classify_pipe_rhs_for_map_update(list) when is_list(list) do
-    if Enum.all?(list, &is_keyword_or_assoc_entry?/1) do
-      # Annotate keys in assoc entries with :assoc metadata
-      annotated = Enum.map(list, &annotate_assoc_entry/1)
-      {:valid, annotated}
-    else
-      # A non-keyword list literal is a valid map_base_expr on the RHS.
-      {:valid, [list]}
+    cond do
+      list == [] ->
+        # Empty list literal (e.g. ''), treated as a map_base_expr, wrapped.
+        {:valid, [list]}
+
+      Enum.all?(list, &is_keyword_or_assoc_entry?/1) ->
+        # Annotate keys in assoc entries with :assoc metadata
+        annotated = Enum.map(list, &annotate_assoc_entry/1)
+        {:valid, annotated}
+
+      true ->
+        # A non-keyword list literal is a valid map_base_expr on the RHS.
+        {:valid, [list]}
     end
   end
 
@@ -802,26 +813,21 @@ defmodule ToxicParser.Grammar.Maps do
     _ctx = ctx
 
     # Parse the full expression - this will include => as a binary operator
-    # Then extract the key/value from the rightmost => in the expression tree
+    # Then extract the key/value from the rightmost => in the expression tree.
     case Pratt.parse(state, Context.unmatched_expr(), log) do
       {:ok, expr, state, log} ->
-        # Check if the result has => at top level or nested
         case extract_assoc(expr) do
           {:assoc, key, value, assoc_meta} ->
-            # Annotate the key with :assoc metadata (the position of =>)
-            # This is what Elixir's parser does with token_metadata: true
             annotated_key = annotate_assoc(key, assoc_meta)
             {:ok, {annotated_key, value}, state, log}
 
           :not_assoc ->
-            # No => found - this is just an expression (for map update base)
             {:ok, expr, state, log}
         end
 
       # keyword_key means "string": - convert to keyword pair
       {:keyword_key, key_atom, state, log} ->
         alias ToxicParser.Grammar.Expressions
-        # Skip EOE (newlines) after the colon before parsing value
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
@@ -831,7 +837,6 @@ defmodule ToxicParser.Grammar.Maps do
 
       {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
         alias ToxicParser.Grammar.Expressions
-        # Skip EOE (newlines) after the colon before parsing value
         state = EOE.skip(state)
 
         with {:ok, value_ast, state, log} <-
@@ -853,35 +858,13 @@ defmodule ToxicParser.Grammar.Maps do
     {:assoc, key, value, meta}
   end
 
-  # Binary operator - check both sides
-  defp extract_assoc({op, meta, [left, right]} = _expr) when is_atom(op) do
-    # Check if right side contains =>
-    case extract_assoc(right) do
-      {:assoc, right_key, value, assoc_meta} ->
-        # Reconstruct: {op, meta, [left, right_key]} => value
-        new_key = {op, meta, [left, right_key]}
-        {:assoc, new_key, value, assoc_meta}
-
-      :not_assoc ->
-        # Check left side (for operators with left-to-right parsing)
-        case extract_assoc(left) do
-          {:assoc, left_key, left_value, assoc_meta} ->
-            # This shouldn't happen for well-formed expressions, but handle it
-            {:assoc, left_key, {op, meta, [left_value, right]}, assoc_meta}
-
-          :not_assoc ->
-            :not_assoc
-        end
-    end
-  end
-
-  # Unary operator - check the single operand
-  defp extract_assoc({op, meta, [operand]} = _expr) when is_atom(op) do
-    case extract_assoc(operand) do
-      {:assoc, operand_key, value, assoc_meta} ->
-        # Reconstruct: {op, meta, [operand_key]} => value
-        new_key = {op, meta, [operand_key]}
-        {:assoc, new_key, value, assoc_meta}
+  # Any expression node with arguments (operators and calls).
+  # Scan args right-to-left and pull out the rightmost assoc, rebuilding the node.
+  # Call / remote call - scan args right-to-left and pull out the rightmost assoc.
+  defp extract_assoc({callee, meta, args} = _expr) when is_list(meta) and is_list(args) do
+    case extract_assoc_in_args(args) do
+      {:assoc, new_args, value, assoc_meta} ->
+        {:assoc, {callee, meta, new_args}, value, assoc_meta}
 
       :not_assoc ->
         :not_assoc
@@ -889,6 +872,21 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   defp extract_assoc(_), do: :not_assoc
+
+  defp extract_assoc_in_args(args) do
+    args
+    |> Enum.with_index()
+    |> Enum.reverse()
+    |> Enum.reduce_while(:not_assoc, fn {arg, idx}, _acc ->
+      case extract_assoc(arg) do
+        {:assoc, key, value, assoc_meta} ->
+          {:halt, {:assoc, List.replace_at(args, idx, key), value, assoc_meta}}
+
+        :not_assoc ->
+          {:cont, :not_assoc}
+      end
+    end)
+  end
 
   # Annotate expression with :assoc metadata (for LHS of => operator)
   # The assoc_meta comes from the => node's metadata, which may include :newlines
