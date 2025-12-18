@@ -310,7 +310,8 @@ defmodule ToxicParser.Grammar.Calls do
         %State{} = state,
         %Context{} = ctx,
         %EventLog{} = log,
-        min_bp \\ 0
+        min_bp \\ 0,
+        opts \\ []
       ) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
@@ -345,7 +346,7 @@ defmodule ToxicParser.Grammar.Calls do
 
                 case Pratt.parse_with_min_bp(state, arg_context, log, 0, stop_at_assoc: true) do
                   {:ok, arg, state, log} ->
-                    handle_no_parens_arg(arg, acc, state, ctx, log, min_bp)
+                    handle_no_parens_arg(arg, acc, state, ctx, log, min_bp, opts)
 
                   {:error, reason, state, log} ->
                     {:error, reason, state, log}
@@ -365,40 +366,44 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   # Helper to handle a parsed argument in no-parens context
-  defp handle_no_parens_arg(arg, acc, state, ctx, log, min_bp) do
+  defp handle_no_parens_arg(arg, acc, state, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :","}, _} ->
-        {:ok, comma_tok, state} = TokenAdapter.next(state)
-        state = EOE.skip(state)
+        if Keyword.get(opts, :stop_at_comma, false) do
+          {:ok, Enum.reverse([arg | acc]), state, log}
+        else
+          {:ok, comma_tok, state} = TokenAdapter.next(state)
+          state = EOE.skip(state)
 
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
-            meta =
-              comma_tok.metadata
-              |> Builder.Helpers.token_meta()
-              |> Keyword.take([:line, :column])
+          case TokenAdapter.peek(state) do
+            {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+              meta =
+                comma_tok.metadata
+                |> Builder.Helpers.token_meta()
+                |> Keyword.take([:line, :column])
 
-            {:error, {meta, "syntax error before: ", ""}, state, log}
+              {:error, {meta, "syntax error before: ", ""}, state, log}
 
-          {:eof, state} ->
-            meta =
-              comma_tok.metadata
-              |> Builder.Helpers.token_meta()
-              |> Keyword.take([:line, :column])
+            {:eof, state} ->
+              meta =
+                comma_tok.metadata
+                |> Builder.Helpers.token_meta()
+                |> Keyword.take([:line, :column])
 
-            {:error, {meta, "syntax error before: ", ""}, state, log}
+              {:error, {meta, "syntax error before: ", ""}, state, log}
 
-          _ ->
-            case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
-              {:ok, kw_list, state, log} ->
-                {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
+            _ ->
+              case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
+                {:ok, kw_list, state, log} ->
+                  {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
 
-              {:no_kw, state, log} ->
-                parse_no_parens_args([arg | acc], state, ctx, log, min_bp)
+                {:no_kw, state, log} ->
+                  parse_no_parens_args([arg | acc], state, ctx, log, min_bp, opts)
 
-              {:error, reason, state, log} ->
-                {:error, reason, state, log}
-            end
+                {:error, reason, state, log} ->
+                  {:error, reason, state, log}
+              end
+          end
         end
 
       _ ->
@@ -412,8 +417,8 @@ defmodule ToxicParser.Grammar.Calls do
   The caller is responsible for calling led() with the correct min_bp.
   Optional `min_bp` parameter (default 0) is threaded through to argument parsing.
   """
-  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse_without_led(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
+  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
+  def parse_without_led(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do
@@ -422,7 +427,7 @@ defmodule ToxicParser.Grammar.Calls do
 
           ident_kind ->
             {:ok, _tok, state} = TokenAdapter.next(state)
-            parse_identifier_no_led(ident_kind, tok, state, ctx, log, min_bp)
+            parse_identifier_no_led(ident_kind, tok, state, ctx, log, min_bp, opts)
         end
 
       {:eof, state} ->
@@ -434,7 +439,7 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   # Parse identifier without calling led at the end
-  defp parse_identifier_no_led(kind, tok, state, ctx, log, min_bp) do
+  defp parse_identifier_no_led(kind, tok, state, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} when kind == :paren_identifier ->
         parse_paren_call_no_led(tok, state, ctx, log)
@@ -447,7 +452,7 @@ defmodule ToxicParser.Grammar.Calls do
       {:ok, next_tok, _} ->
         cond do
           kind == :op_identifier ->
-            parse_op_identifier_call_no_led(tok, state, ctx, log, min_bp)
+            parse_op_identifier_call_no_led(tok, state, ctx, log, min_bp, opts)
 
           # Check no-parens arg BEFORE binary operator check.
           # This handles cases like `spec +integer :: integer` where + is dual_op:
@@ -455,7 +460,7 @@ defmodule ToxicParser.Grammar.Calls do
           # - BUT it can also start a unary no-parens argument
           # We want the no-parens interpretation here, so check can_start_no_parens_arg first.
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
-            parse_no_parens_call_no_led(tok, state, ctx, log, min_bp)
+            parse_no_parens_call_no_led(tok, state, ctx, log, min_bp, opts)
 
           Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
             # Binary operator follows - return as bare identifier, caller will handle
@@ -515,7 +520,7 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log, _min_bp) do
+  defp parse_op_identifier_call_no_led(callee_tok, state, ctx, log, _min_bp, opts) do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
@@ -525,7 +530,7 @@ defmodule ToxicParser.Grammar.Calls do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
 
-          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log, 0) do
+          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log, 0, opts) do
             callee = callee_tok.value
             meta = Builder.Helpers.token_meta(callee_tok.metadata)
             ast = {callee, meta, args}
@@ -541,8 +546,8 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_no_parens_call_no_led(callee_tok, state, ctx, log, min_bp) do
-    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log, min_bp) do
+  defp parse_no_parens_call_no_led(callee_tok, state, ctx, log, min_bp, opts) do
+    with {:ok, args, state, log} <- parse_no_parens_args([], state, ctx, log, min_bp, opts) do
       callee = callee_tok.value
       meta = Builder.Helpers.token_meta(callee_tok.metadata)
       ast = {callee, meta, args}

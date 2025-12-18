@@ -273,7 +273,7 @@ defmodule ToxicParser.Pratt do
           alias ToxicParser.Grammar.Containers
           Containers.parse(state, context, log, min_bp, led_opts)
         else
-          nud_literal_or_unary(token, state, context, log, min_bp, false)
+          nud_literal_or_unary(token, state, context, log, min_bp, false, opts)
         end
 
       # Quoted atoms need to be handled by Strings.parse even in restricted mode
@@ -303,7 +303,7 @@ defmodule ToxicParser.Pratt do
           alias ToxicParser.Grammar.Blocks
           Blocks.parse(state, context, log)
         else
-          nud_literal_or_unary(token, state, context, log, min_bp, false)
+          nud_literal_or_unary(token, state, context, log, min_bp, false, opts)
         end
 
       # kw_identifier at expression position is a syntax error
@@ -311,13 +311,13 @@ defmodule ToxicParser.Pratt do
         {:error, syntax_error_before(build_meta(token.metadata), token.value), state, log}
 
       _ ->
-        nud_literal_or_unary(token, state, context, log, min_bp, allow_containers)
+        nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts)
     end
   end
 
   # allow_containers: when false (e.g., struct base parsing), don't parse no-parens calls
   # The grammar's map_base_expr only produces bare identifiers via sub_matched_expr
-  defp nud_literal_or_unary(token, state, context, log, min_bp, allow_containers) do
+  defp nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts) do
     case Precedence.unary(token.kind) do
       {_bp, _assoc} ->
         # Pass outer min_bp for trailing led(), not the unary's own precedence.
@@ -348,12 +348,12 @@ defmodule ToxicParser.Pratt do
             {:error, syntax_error_before(meta, "';'"), state, log}
 
           true ->
-            nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers)
+            nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts)
         end
     end
   end
 
-  defp nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers) do
+  defp nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts) do
     allow_do_blocks = Context.allow_do_block?(context)
 
     case TokenAdapter.peek(state) do
@@ -389,27 +389,29 @@ defmodule ToxicParser.Pratt do
         if token.kind not in excluded_kinds and
              allow_no_parens and
              allow_containers do
-          parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp)
+          parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp, opts)
         else
           ast = literal_to_ast(token)
-          maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
+          maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks, opts)
         end
 
       _ ->
         ast = literal_to_ast(token)
-        maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks)
+        maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks, opts)
     end
   end
 
-  defp maybe_attach_do_block(ast, token, state, context, log, min_bp, true) do
+  defp maybe_attach_do_block(ast, token, state, context, log, min_bp, true, opts) do
     DoBlocks.maybe_do_block(ast, state, context, log,
       token: token,
       min_bp: min_bp,
-      parse_no_parens: &parse_no_parens_call_nud_with_min_bp/5
+      parse_no_parens: fn tok, st, ctx, log, min_bp ->
+        parse_no_parens_call_nud_with_min_bp(tok, st, ctx, log, min_bp, opts)
+      end
     )
   end
 
-  defp maybe_attach_do_block(ast, _token, state, _context, log, _min_bp, false) do
+  defp maybe_attach_do_block(ast, _token, state, _context, log, _min_bp, false, _opts) do
     {:ok, ast, state, log}
   end
 
@@ -438,9 +440,9 @@ defmodule ToxicParser.Pratt do
   # Parse a no-parens call in nud context (for identifiers followed by args)
   # This is similar to Calls.parse_no_parens_call but doesn't call led at the end
   # This version uses min_bp to stop argument parsing before certain operators
-  defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp) do
+  defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp, opts) do
     with {:ok, args, state, log} <-
-           Calls.parse_no_parens_args([], state, context, log, min_bp) do
+           Calls.parse_no_parens_args([], state, context, log, min_bp, opts) do
       callee = callee_tok.value
       base_meta = Builder.Helpers.token_meta(callee_tok.metadata)
 
@@ -566,7 +568,7 @@ defmodule ToxicParser.Pratt do
             # Exception: @ (at_op) should capture full expressions including low-precedence
             # operators like `when` for module attributes (@spec foo() when ...).
             # Bracket access for @ is handled separately in led_bracket.
-            {next_token, next_token_kind, next_token_value} =
+            {_next_token, next_token_kind, next_token_value} =
               case TokenAdapter.peek(state) do
                 {:ok, tok, _} -> {tok, tok.kind, tok.value}
                 _ -> {nil, nil, nil}
@@ -771,7 +773,7 @@ defmodule ToxicParser.Pratt do
         # belong to the argument expression in Elixir.
         state = TokenAdapter.pushback(state, token)
 
-        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp, opts) do
           # Preserve min_bp so unary operands do not swallow lower-precedence operators.
           led_min_bp = min_bp
           opts = ensure_no_parens_extension_opt(opts)
@@ -782,7 +784,7 @@ defmodule ToxicParser.Pratt do
         # Do-block - delegate to Calls.parse_without_led
         state = TokenAdapter.pushback(state, token)
 
-        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
+        with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp, opts) do
           # Preserve min_bp so unary operands do not swallow lower-precedence operators.
           led_min_bp = min_bp
           opts = ensure_no_parens_extension_opt(opts)
@@ -807,7 +809,7 @@ defmodule ToxicParser.Pratt do
               (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
 
-            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp, opts) do
               # Preserve the original min_bp for proper associativity
               opts = ensure_no_parens_extension_opt(opts)
               led(right, state, log, min_bp, context, opts)
@@ -824,7 +826,7 @@ defmodule ToxicParser.Pratt do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
-            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp) do
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp, opts) do
               # Preserve min_bp so unary operands do not swallow lower-precedence operators.
               led_min_bp = min_bp
 

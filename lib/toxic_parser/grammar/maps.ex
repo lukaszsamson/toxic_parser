@@ -823,7 +823,7 @@ defmodule ToxicParser.Grammar.Maps do
 
     # Parse the full expression - this will include => as a binary operator
     # Then extract the key/value from the rightmost => in the expression tree.
-    case Pratt.parse(state, Context.unmatched_expr(), log) do
+    case Pratt.parse_with_min_bp(state, Context.unmatched_expr(), log, 0, stop_at_comma: true) do
       {:ok, expr, state, log} ->
         case extract_assoc(expr) do
           {:assoc, key, value, assoc_meta} ->
