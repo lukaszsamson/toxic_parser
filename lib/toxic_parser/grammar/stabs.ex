@@ -865,16 +865,19 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   defp apply_parens_meta([single_pattern], parens_meta, stab_meta) when parens_meta != [] do
-    # 1 pattern - parens go on the pattern if it's a 3-tuple with metadata
-    # For keyword lists (plain lists), parens go on the stab arrow
+    # 1 pattern - parens go on the pattern if it's a 3-tuple with metadata.
+    # For keyword lists (plain lists), parens go on the stab arrow.
+    # For literals (no metadata carrier), Elixir drops the parens.
     case single_pattern do
       {_name, meta, _args} when is_list(meta) ->
         pattern_with_parens = add_parens_to_pattern(single_pattern, parens_meta)
         {[pattern_with_parens], stab_meta}
 
-      _ ->
-        # Pattern can't hold metadata (e.g., keyword list) - put parens on stab
+      _ when is_list(single_pattern) ->
         {[single_pattern], parens_meta ++ stab_meta}
+
+      _ ->
+        {[single_pattern], stab_meta}
     end
   end
 

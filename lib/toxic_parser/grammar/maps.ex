@@ -515,8 +515,17 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  # Fallback: any other expression is a valid map_base_expr on the RHS, wrapped in a list.
-  defp classify_pipe_rhs_for_map_update(rhs), do: {:valid, [rhs]}
+  # Fallback: if RHS contains a rightmost assoc (=>), treat it as a single assoc entry.
+  # Otherwise it's a map_base_expr, wrapped in a list.
+  defp classify_pipe_rhs_for_map_update(rhs) do
+    case extract_assoc(rhs) do
+      {:assoc, key, value, assoc_meta} ->
+        {:valid, [{annotate_assoc(key, assoc_meta), value}]}
+
+      :not_assoc ->
+        {:valid, [rhs]}
+    end
+  end
 
   # Annotate a single assoc entry with :assoc metadata
   defp annotate_assoc_entry({:"=>", assoc_meta, [key, value]}) do

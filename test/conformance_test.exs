@@ -3062,6 +3062,19 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 43" do
       assert_conforms("%{i.=d.!l => 1}")
     end
+
+    test "repro 44" do
+      assert_conforms("%{a|l n.&o => 1}")
+    end
+
+    test "repro 45" do
+      assert_conforms("%{x | b{} => 1}")
+    end
+
+    test "repro 46" do
+      assert_conforms("case x do 1 -> :ok; (0) -> :error end")
+      assert_conforms("case x do 1 -> :ok; (y) -> :error end")
+    end
   end
 
   # =============================================================================
