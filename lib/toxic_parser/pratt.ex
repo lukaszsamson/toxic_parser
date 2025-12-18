@@ -376,7 +376,15 @@ defmodule ToxicParser.Pratt do
         # - :int, :flt, :char, :atom are other literal token kinds
         # When allow_containers is false, don't parse no-parens calls
         literal_kinds = [:int, :flt, :char, :atom]
-        excluded_kinds = [:paren_identifier, :alias, :bracket_identifier, nil, true, false | literal_kinds]
+
+        excluded_kinds = [
+          :paren_identifier,
+          :alias,
+          :bracket_identifier,
+          nil,
+          true,
+          false | literal_kinds
+        ]
 
         if token.kind not in excluded_kinds and
              allow_no_parens and
@@ -439,9 +447,9 @@ defmodule ToxicParser.Pratt do
       # Check if there's a do-block following that will attach to this call.
       # Only counts as "has do-block" if context allows do-block attachment.
       # When context has allow_do_block: false, the do-block belongs to an outer call.
-      has_do_block =
-        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state)) and
-          Context.allow_do_block?(context)
+      has_do_block = Context.allow_do_block?(context) and
+        match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state))
+
 
       # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
@@ -1144,94 +1152,99 @@ defmodule ToxicParser.Pratt do
           case combined_result do
             {:ok, {combined, expects_no_parens_call, allows_bracket}} ->
               case TokenAdapter.peek(state) do
-            # When ( follows a dot member that was already a call (allows_bracket = true),
-            # it's a nested paren call: foo.bar()()
-            # When ( follows a simple identifier (allows_bracket = false), it means there's
-            # whitespace before (, so ( starts a no-parens argument: foo.e ()
-            {:ok, %{kind: :"("}, _} when not allows_bracket ->
-              with {:ok, args, state, log} <-
-                     Calls.parse_no_parens_args([], state, context, log) do
-                combined = dot_to_no_parens_call(combined, args)
-                # Check for do-blocks after no-parens call: foo.bar () do...end
-                maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-              end
-
-            # Nested paren call: foo.bar()() - rhs was already a call (allows_bracket = true)
-            {:ok, %{kind: :"("}, _} ->
-              {:ok, _open, state} = TokenAdapter.next(state)
-              # Skip leading EOE and count newlines
-              {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
-
-              with {:ok, args, state, log} <-
-                     ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log) do
-                # Skip trailing EOE before close paren
-                {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
-
-                case TokenAdapter.next(state) do
-                  {:ok, %{kind: :")"} = close_tok, state} ->
-                    # Only count trailing newlines for empty args
-                    # (matches behavior in maybe_nested_call_or_do_block)
-                    total_newlines =
-                      if args == [] do
-                        leading_newlines + trailing_newlines
-                      else
-                        leading_newlines
-                      end
-
-                    close_meta = build_meta(close_tok.metadata)
-
-                    # When followed by parens, convert to call form with proper metadata
-                    combined =
-                      dot_to_call_with_meta(combined, args, total_newlines, close_meta)
-
-                    # Check for nested calls and do-blocks (foo.bar() do...end)
+                # When ( follows a dot member that was already a call (allows_bracket = true),
+                # it's a nested paren call: foo.bar()()
+                # When ( follows a simple identifier (allows_bracket = false), it means there's
+                # whitespace before (, so ( starts a no-parens argument: foo.e ()
+                {:ok, %{kind: :"("}, _} when not allows_bracket ->
+                  with {:ok, args, state, log} <-
+                         Calls.parse_no_parens_args([], state, context, log) do
+                    combined = dot_to_no_parens_call(combined, args)
+                    # Check for do-blocks after no-parens call: foo.bar () do...end
                     maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+                  end
 
-                  {:ok, other, state} ->
-                    {:error, {:expected, :")", got: other.kind}, state, log}
+                # Nested paren call: foo.bar()() - rhs was already a call (allows_bracket = true)
+                {:ok, %{kind: :"("}, _} ->
+                  {:ok, _open, state} = TokenAdapter.next(state)
+                  # Skip leading EOE and count newlines
+                  {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
+                  with {:ok, args, state, log} <-
+                         ToxicParser.Grammar.CallsPrivate.parse_paren_args(
+                           [],
+                           state,
+                           context,
+                           log
+                         ) do
+                    # Skip trailing EOE before close paren
+                    {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
-                end
-              end
+                    case TokenAdapter.next(state) do
+                      {:ok, %{kind: :")"} = close_tok, state} ->
+                        # Only count trailing newlines for empty args
+                        # (matches behavior in maybe_nested_call_or_do_block)
+                        total_newlines =
+                          if args == [] do
+                            leading_newlines + trailing_newlines
+                          else
+                            leading_newlines
+                          end
 
-            {:ok, %{kind: :"["}, _} when allows_bracket ->
-              # Bracket access: foo.bar[:key] - only when bracket access is allowed
-              # (no whitespace before [)
-              led(combined, state, log, min_bp, context, opts)
+                        close_meta = build_meta(close_tok.metadata)
 
-            {:ok, %{kind: :do}, _} ->
-              # Do-block after dot call: foo.bar() do...end
-              # Only handle when rhs was a call (combined has args list)
-              maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+                        # When followed by parens, convert to call form with proper metadata
+                        combined =
+                          dot_to_call_with_meta(combined, args, total_newlines, close_meta)
 
-            {:ok, next_tok, _} ->
-              # Check for no-parens call argument after dot expression
-              # Only parse as no-parens call if:
-              # 1. The member was tokenized as op_identifier/dot_op_identifier (expects_no_parens_call)
-              # 2. OR next token can start a no-parens arg (excluding dual_op when expects_no_parens_call is false)
-              # 3. OR next token starts a keyword list
-              should_parse_no_parens =
-                expects_no_parens_call or Keywords.starts_kw?(next_tok) or
-                  (NoParens.can_start_no_parens_arg?(next_tok) and next_tok.kind != :dual_op)
+                        # Check for nested calls and do-blocks (foo.bar() do...end)
+                        maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
-              if should_parse_no_parens do
-                with {:ok, args, state, log} <-
-                       Calls.parse_no_parens_args([], state, context, log) do
-                  combined = dot_to_no_parens_call(combined, args)
-                  # Check for do-blocks after no-parens call: foo.bar arg do...end
+                      {:ok, other, state} ->
+                        {:error, {:expected, :")", got: other.kind}, state, log}
+
+                      {:eof, state} ->
+                        {:error, :unexpected_eof, state, log}
+
+                      {:error, diag, state} ->
+                        {:error, diag, state, log}
+                    end
+                  end
+
+                {:ok, %{kind: :"["}, _} when allows_bracket ->
+                  # Bracket access: foo.bar[:key] - only when bracket access is allowed
+                  # (no whitespace before [)
+                  led(combined, state, log, min_bp, context, opts)
+
+                {:ok, %{kind: :do}, _} ->
+                  # Do-block after dot call: foo.bar() do...end
+                  # Only handle when rhs was a call (combined has args list)
                   maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
-                end
-              else
-                led(combined, state, log, min_bp, context, opts)
-              end
 
-            _ ->
-              led(combined, state, log, min_bp, context, opts)
-          end
+                {:ok, next_tok, _} ->
+                  # Check for no-parens call argument after dot expression
+                  # Only parse as no-parens call if:
+                  # 1. The member was tokenized as op_identifier/dot_op_identifier (expects_no_parens_call)
+                  # 2. OR next token can start a no-parens arg (excluding dual_op when expects_no_parens_call is false)
+                  # 3. OR next token starts a keyword list
+                  should_parse_no_parens =
+                    expects_no_parens_call or Keywords.starts_kw?(next_tok) or
+                      (NoParens.can_start_no_parens_arg?(next_tok) and next_tok.kind != :dual_op)
+
+                  if should_parse_no_parens do
+                    with {:ok, args, state, log} <-
+                           Calls.parse_no_parens_args([], state, context, log) do
+                      combined = dot_to_no_parens_call(combined, args)
+                      # Check for do-blocks after no-parens call: foo.bar arg do...end
+                      maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
+                    end
+                  else
+                    led(combined, state, log, min_bp, context, opts)
+                  end
+
+                _ ->
+                  led(combined, state, log, min_bp, context, opts)
+              end
 
             {:error, reason} ->
               {:error, reason, state, log}

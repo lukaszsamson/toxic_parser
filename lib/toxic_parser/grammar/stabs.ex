@@ -40,17 +40,22 @@ defmodule ToxicParser.Grammar.Stabs do
   # Parse stab expressions inside parens
   # min_bp controls whether to continue with led() for trailing operators
   def parse_paren_stab(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
-    with {:ok, clauses, state, log} <- parse_stab_eoe([], state, ctx, log) do
+    with {:ok, items, state, log} <- parse_stab_items_until([], state, ctx, log, :")") do
       state = EOE.skip(state)
 
       case TokenAdapter.next(state) do
         {:ok, %{kind: :")"} = close_tok, state} ->
           close_meta = token_meta(close_tok.metadata)
-          # Unwrap single plain expression (not stab clause) from list
-          # This handles cases like (;d) where we have a plain expr after semicolon
-          # For single expressions, add parens metadata matching Elixir's build_block behavior
-          result = unwrap_single_non_stab_with_parens(clauses, open_meta, close_meta)
-          # Continue with Pratt.led to handle trailing operators like |
+
+          result =
+            case check_stab(items) do
+              :stab ->
+                collect_stab(items)
+
+              _ ->
+                unwrap_single_non_stab_with_parens(Enum.reverse(items), open_meta, close_meta)
+            end
+
           Pratt.led(result, state, log, min_bp, ctx)
 
         {:ok, token, state} ->
@@ -82,6 +87,10 @@ defmodule ToxicParser.Grammar.Stabs do
        )
        when op in [:!, :not] do
     {:__block__, [], [expr]}
+  end
+
+  defp unwrap_single_non_stab_with_parens([{:unquote_splicing, _meta, [_]} = single], open_meta, close_meta) do
+    {:__block__, Meta.closing_meta(open_meta, close_meta), [single]}
   end
 
   defp unwrap_single_non_stab_with_parens([{name, meta, args}], open_meta, close_meta)
@@ -231,6 +240,7 @@ defmodule ToxicParser.Grammar.Stabs do
       parens_meta =
         [parens: Meta.closing_meta(inner_open_meta, inner_close_meta, 0, [], base_first: true)]
 
+      body = wrap_unquote_splicing_body(body)
       clause = {:->, parens_meta ++ newlines_meta ++ stab_base_meta, [[], body]}
 
       # Check for more clauses
@@ -402,6 +412,7 @@ defmodule ToxicParser.Grammar.Stabs do
       # Apply parens meta and unwrap splice for stab patterns
       unwrapped = unwrap_splice(args)
       {final_args, final_stab_meta} = apply_parens_meta(unwrapped, parens_meta, stab_meta)
+      body = wrap_unquote_splicing_body(body)
       clause = {:->, final_stab_meta, [final_args, body]}
       parse_remaining_stab_clauses([clause], state, ctx, log)
     end
@@ -464,6 +475,7 @@ defmodule ToxicParser.Grammar.Stabs do
                   when_ast = {:when, when_meta, [left, kw_list]}
                   final_args = List.replace_at(final_args, -1, when_ast)
 
+                  body = wrap_unquote_splicing_body(body)
                   clause = {:->, final_stab_meta, [final_args, body]}
                   parse_remaining_stab_clauses([clause], state, ctx, log)
                 end
@@ -519,6 +531,7 @@ defmodule ToxicParser.Grammar.Stabs do
                     apply_parens_meta(unwrapped, parens_meta, stab_meta)
 
                   guard_ast = {:when, when_meta, final_args ++ [guard]}
+                  body = wrap_unquote_splicing_body(body)
                   clause = {:->, final_stab_meta, [[guard_ast], body]}
                   parse_remaining_stab_clauses([clause], state, ctx, log)
                 end
@@ -713,6 +726,7 @@ defmodule ToxicParser.Grammar.Stabs do
                 apply_parens_meta(unwrapped, parens_meta, stab_meta)
             end
 
+          body = wrap_unquote_splicing_body(body)
           clause = {:->, final_stab_meta, [final_patterns, body]}
           {:ok, clause, state, log}
         end
@@ -811,6 +825,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
                       # Wrap patterns with guard in a when clause
                       patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
+                      body = wrap_unquote_splicing_body(body)
                       clause = {:->, final_stab_meta, [patterns_with_guard, body]}
                       {:ok, clause, state, log}
                     end
@@ -879,6 +894,9 @@ defmodule ToxicParser.Grammar.Stabs do
   defp unwrap_when(patterns, guard, when_meta) do
     [{:when, when_meta, patterns ++ [guard]}]
   end
+
+  defp wrap_unquote_splicing_body({:unquote_splicing, _, [_]} = u), do: {:__block__, [], [u]}
+  defp wrap_unquote_splicing_body(other), do: other
 
   # Extract guard from trailing when in pattern list
   # Handles cases like `fn x, y when guard -> body` where patterns = [x, {:when, _, [y, guard]}]
@@ -1038,7 +1056,7 @@ defmodule ToxicParser.Grammar.Stabs do
         # TODO: no coverage?
         if Keywords.starts_kw?(tok) do
           # Just keywords: fn (x: 1) -> body end
-          with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+          with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
             {:ok, [kw_list], state, log}
           end
         else
@@ -1065,7 +1083,7 @@ defmodule ToxicParser.Grammar.Stabs do
               cond do
                 Keywords.starts_kw?(tok) ->
                   # Expressions followed by keywords
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
                       {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -1329,7 +1347,7 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  # Parse the body of a stab clause (expression or nil if empty)
+  # Parse the body of a stab clause (single expr or nil if empty)
   # Default terminator is :) for paren stabs
   def parse_stab_body(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     parse_stab_body(state, ctx, log, :")")
@@ -1337,118 +1355,26 @@ defmodule ToxicParser.Grammar.Stabs do
 
   @doc """
   Parse stab clause body with custom terminator.
-  Exported for use by fn parsing.
 
-  The body can contain multiple expressions separated by EOE (newlines/semicolons).
-  Expressions are collected until we see:
-  - The terminator (e.g., :end, :))
-  - A block identifier (e.g., :else, :rescue)
-  - The start of a new stab clause (detected by trying to parse and seeing ->)
+  YRL-aligned: a stab clause body is a single `expr` (or omitted / `nil`).
+  Multi-expression bodies are handled later via `collect_stab/1`.
   """
   def parse_stab_body(%State{} = state, %Context{}, %EventLog{} = log, terminator) do
-    # In elixir_parser.yrl, stab bodies are parsed as `expr` (not `unmatched_expr`).
-    # We want to allow both do-blocks and `no_parens_expr` (e.g. `x when y: z`).
     body_ctx = Context.expr()
 
     case TokenAdapter.peek(state) do
       {:ok, %{kind: ^terminator}, _} ->
-        # Empty body at terminator - return nil
         {:ok, nil, state, log}
 
-      {:ok, %{kind: :eoe} = eoe_tok, _} ->
-        # Leading EOE means the first expression is nil (empty before semicolon)
-        # Handle cases like: `fn 1 -> ;fs end` where body is `{:__block__, [], [nil, fs]}`
-        # Consume EOE
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        # Build the nil with line/column from the EOE token
-        nil_ast = handle_literal_nil_from_eoe(eoe_tok)
-        state = EOE.skip(state)
-
-        # Check what's next after EOE
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: ^terminator}, _} ->
-            # Just semicolon before terminator - return nil
-            {:ok, nil_ast, state, log}
-
-          {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
-            {:ok, nil_ast, state, log}
-
-          {:ok, %{kind: :stab_op}, _} ->
-            # Stab operator after leading semicolon - this starts a new stab clause
-            # Return just the nil (the semicolon's implied nil)
-            {:ok, nil_ast, state, log}
-
-          {:ok, _, _} ->
-            # More content after leading semicolon - check if it's a new stab clause
-            # For `fn x when e->;e -> 1 end`, after `;` we have `e -> 1` which is a new clause
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
-
-            case try_parse_stab_clause(
-                   checkpoint_state,
-                   Context.unmatched_expr(),
-                   log,
-                   terminator
-                 ) do
-              {:ok, _clause, _state2, _log2} ->
-                # This is a new stab clause - return just nil, rewind state
-                {:ok, nil_ast, TokenAdapter.rewind(checkpoint_state, ref), log}
-
-              {:not_stab, _state2, _log2} ->
-                # Not a stab clause - parse as more body expressions
-                state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
-
-                with {:ok, next_expr, state, log} <-
-                       Expressions.expr(state, body_ctx, log) do
-                  # Now collect more expressions (if any), starting with [next_expr, nil_ast]
-                  collect_stab_body_exprs(
-                    [next_expr, nil_ast],
-                    state,
-                    body_ctx,
-                    log,
-                    terminator
-                  )
-                end
-
-              {:error, _diag, _state2, _log2} ->
-                # Error - parse as more body expressions
-                state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
-
-                with {:ok, next_expr, state, log} <-
-                       Expressions.expr(state, body_ctx, log) do
-                  collect_stab_body_exprs(
-                    [next_expr, nil_ast],
-                    state,
-                    body_ctx,
-                    log,
-                    terminator
-                  )
-                end
-            end
-
-          {:eof, state} ->
-            {:ok, nil_ast, state, log}
-
-          {:error, diag, state} ->
-            {:error, diag, state, log}
-        end
-
-      # For :end terminator, also stop at block identifiers (after, else, catch, rescue)
       {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
         {:ok, nil, state, log}
 
+      {:ok, %{kind: :eoe}, _} ->
+        # `-> ;` / `-> \n` (newlines are normally already skipped by stab_op_eol)
+        {:ok, nil, state, log}
+
       {:ok, _, _} ->
-        # Parse first expression using `expr` context (see `body_ctx` above).
-        with {:ok, first_expr, state, log} <-
-               Expressions.expr(state, body_ctx, log) do
-          # Check if there are more expressions in the body
-          collect_stab_body_exprs(
-            [first_expr],
-            state,
-            body_ctx,
-            log,
-            terminator
-          )
-        end
+        Expressions.expr(state, body_ctx, log)
 
       {:eof, state} ->
         {:ok, nil, state, log}
@@ -1458,115 +1384,193 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  # Collect additional expressions for the stab body
-  # Expressions after the first are separated by EOE (semicolons/newlines)
-  defp collect_stab_body_exprs(acc, state, ctx, log, terminator) do
+  @doc """
+  Parse stab items (clauses or plain expressions) separated by EOE until `terminator` or stop token.
+
+  Returns items in reverse source order (latest first), matching `collect_stab/1` input.
+  """
+  @spec parse_stab_items_until(list(), State.t(), Pratt.context(), EventLog.t(), atom(), [atom()]) ::
+          {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
+  def parse_stab_items_until(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, terminator, stop_kinds \\ []) do
+    state = EOE.skip(state)
+
+    case TokenAdapter.peek(state) do
+      {:ok, tok, _} ->
+        if stop_token?(tok, terminator, stop_kinds) do
+          {:ok, acc, state, log}
+        else
+          {kind, state} = classify_stab_item(state, terminator, stop_kinds)
+
+          case kind do
+            :clause ->
+              with {:ok, clause, state, log} <- try_parse_stab_clause(state, ctx, log, terminator) do
+                {clause, state} = maybe_annotate_and_consume_eoe(clause, state)
+                parse_stab_items_until([clause | acc], state, ctx, log, terminator, stop_kinds)
+              end
+
+            :unknown ->
+              {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+              case try_parse_stab_clause(checkpoint_state, ctx, log, terminator) do
+                {:ok, clause, state, log} ->
+                  state = TokenAdapter.drop_checkpoint(state, ref)
+                  {clause, state} = maybe_annotate_and_consume_eoe(clause, state)
+                  parse_stab_items_until([clause | acc], state, ctx, log, terminator, stop_kinds)
+
+                {:not_stab, _state, log} ->
+                  state = TokenAdapter.rewind(checkpoint_state, ref)
+
+                  with {:ok, expr, state, log} <-
+                         Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                    {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
+                    parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
+                  end
+
+                {:error, reason, state, log} ->
+                  {:error, reason, state, log}
+              end
+
+            _ ->
+              # Parse as plain expr, stopping before `->`.
+              with {:ok, expr, state, log} <-
+                     Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
+                parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
+              end
+          end
+        end
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      {:error, diag, state} ->
+        {:error, diag, state, log}
+    end
+  end
+
+  defp maybe_annotate_and_consume_eoe(expr, state) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :eoe} = eoe_tok, _} ->
-        # Annotate the last expression with EOE metadata
-        acc = annotate_last_expr_eoe(acc, eoe_tok)
-        # Consume EOE
+        eoe_meta = EOE.build_eoe_meta(eoe_tok)
+
+        annotated =
+          case expr do
+            {:->, meta, [pats, {:__block__, [], [{:unquote_splicing, _, [_]} = u]}]} ->
+              u = EOE.annotate_eoe(u, eoe_meta)
+              {:->, meta, [pats, {:__block__, [], [u]}]}
+
+            {:->, meta, [pats, body]} ->
+              {:->, meta, [pats, EOE.annotate_eoe(body, eoe_meta)]}
+
+            _ ->
+              EOE.annotate_eoe(expr, eoe_meta)
+          end
+
         {:ok, _eoe, state} = TokenAdapter.next(state)
-        state = EOE.skip(state)
+        {annotated, EOE.skip(state)}
 
-        # Check what's next after EOE
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: ^terminator}, _} ->
-            # Terminator - done collecting
-            build_stab_body(acc, state, log)
-
-          # Block identifiers stop collection (for do blocks)
-          {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
-            build_stab_body(acc, state, log)
-
-          {:ok, _, _} ->
-            # More content after EOE - need to check if it's a new stab clause
-            # or more body expressions
-            check_and_collect_stab_body(acc, state, ctx, log, terminator)
-
-          {:eof, state} ->
-            build_stab_body(acc, state, log)
-
-          {:error, diag, state} ->
-            {:error, diag, state, log}
-        end
-
-      {:ok, %{kind: ^terminator}, _} ->
-        # Terminator without EOE - done
-        build_stab_body(acc, state, log)
-
-      {:ok, %{kind: :block_identifier}, _} when terminator == :end ->
-        build_stab_body(acc, state, log)
-
-      {:eof, state} ->
-        build_stab_body(acc, state, log)
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-
-      {:ok, _, _} ->
-        # Unexpected token - stop collecting (caller will handle)
-        build_stab_body(acc, state, log)
+      _ ->
+        {expr, state}
     end
   end
 
-  # Check if the next content is a new stab clause or more body expressions
-  defp check_and_collect_stab_body(acc, state, ctx, log, terminator) do
-    # Try to see if this looks like the start of a new stab clause
-    # We use checkpoint to try parsing, then rewind if it's a stab
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+  defp stop_token?(%{kind: kind} = tok, terminator, stop_kinds) do
+    kind == terminator or kind in stop_kinds or block_label?(tok)
+  end
 
-    case try_parse_stab_clause(checkpoint_state, ctx, log, terminator) do
-      {:ok, _clause, _state2, _log2} ->
-        # This is a new stab clause - stop collecting body, rewind
-        build_stab_body(acc, TokenAdapter.rewind(checkpoint_state, ref), log)
+  defp block_label?(%{kind: :block_identifier, value: value}),
+    do: value in [:else, :catch, :rescue, :after]
 
-      {:not_stab, _state2, _log2} ->
-        # Not a stab - this expression is part of the current body
-        # Rewind and parse as expression
-        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
-        # as a binary operator. The -> belongs to the clause parser.
-        state = TokenAdapter.rewind(checkpoint_state, ref)
+  defp block_label?(%{kind: kind}) when kind in [:else, :catch, :rescue, :after], do: true
+  defp block_label?(_), do: false
 
-        with {:ok, expr, state, log} <-
-               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
-          collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
+  defp classify_stab_item(%State{} = state, terminator, stop_kinds) do
+    ctx = %{delim: 0, block: 0, open?: true}
+    scan_classify(state, [], ctx, terminator, stop_kinds, 200, false)
+  end
+
+  defp scan_classify(state, consumed, _ctx, _terminator, _stop_kinds, max, _boundary?) when max <= 0 do
+    {:unknown, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+  end
+
+  defp scan_classify(state, consumed, ctx, terminator, stop_kinds, max, boundary?) do
+    case TokenAdapter.next(state) do
+      {:ok, tok, state2} ->
+        top? = ctx.delim == 0 and ctx.block == 0
+
+        cond do
+          top? and tok.kind == :stab_op ->
+            {:clause, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
+
+          top? and boundary? and tok.kind == :eoe ->
+            scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, true)
+
+          top? and boundary? ->
+            {:expr, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
+
+          top? and stop_token?(tok, terminator, stop_kinds) ->
+            {:expr, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
+
+          top? and tok.kind == :eoe and tok.value.source == :semicolon ->
+            {:expr, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
+
+          top? and tok.kind == :eoe and ctx.open? == false ->
+            scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, true)
+
+          top? and tok.kind == :eoe ->
+            scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, boundary?)
+
+          tok.kind == :error_token ->
+            {:unknown, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
+
+          true ->
+            ctx2 = scan_update_ctx(ctx, tok)
+            scan_classify(state2, [tok | consumed], ctx2, terminator, stop_kinds, max - 1, false)
         end
 
-      {:error, _reason, _state2, _log2} ->
-        # Error parsing as stab - try as expression
-        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
-        # as a binary operator. The -> belongs to the clause parser.
-        state = TokenAdapter.rewind(checkpoint_state, ref)
+      {:eof, state2} ->
+        {:expr, TokenAdapter.pushback_many(state2, Enum.reverse(consumed))}
 
-        with {:ok, expr, state, log} <-
-               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
-          collect_stab_body_exprs([expr | acc], state, ctx, log, terminator)
-        end
+      {:error, _diag, state2} ->
+        {:unknown, TokenAdapter.pushback_many(state2, Enum.reverse(consumed))}
     end
   end
 
-  # Build the final stab body from collected expressions
-  # unquote_splicing always gets wrapped in __block__ (parser assumes block is being spliced)
-  # See elixir_parser.yrl: build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter)
-  defp build_stab_body([{:unquote_splicing, _, [_]} = single], state, log) do
-    {:ok, {:__block__, [], [single]}, state, log}
+  defp scan_update_ctx(ctx, tok) do
+    ctx
+    |> scan_update_delims(tok)
+    |> Map.put(:open?, scan_open?(tok))
   end
 
-  defp build_stab_body([single], state, log), do: {:ok, single, state, log}
+  defp scan_update_delims(%{delim: d, block: b} = ctx, %{kind: kind}) do
+    ctx =
+      case kind do
+        kind when kind in [:"(", :"[", :"{", :"<<"] ->
+          %{ctx | delim: d + 1}
 
-  defp build_stab_body(exprs, state, log) do
-    # Multiple expressions - wrap in __block__
-    # Expressions are accumulated in reverse order, so reverse them
-    block = {:__block__, [], Enum.reverse(exprs)}
-    {:ok, block, state, log}
+        kind when kind in [:")", :"]", :"}", :">>"] ->
+          %{ctx | delim: max(d - 1, 0)}
+
+        :do ->
+          %{ctx | block: b + 1}
+
+        :fn ->
+          %{ctx | block: b + 1}
+
+        :end when b > 0 ->
+          %{ctx | block: b - 1}
+
+        _ ->
+          ctx
+      end
+
+    ctx
   end
 
-  # Annotate the last (most recent) expression with EOE metadata
-  defp annotate_last_expr_eoe([last | rest], eoe_tok) do
-    eoe_meta = EOE.build_eoe_meta(eoe_tok)
-    annotated = EOE.annotate_eoe(last, eoe_meta)
-    [annotated | rest]
+  defp scan_open?(%{kind: kind}) do
+    kind in [:",", :kw_identifier, :"(", :"[", :"{", :"<<"] or
+      Precedence.binary(kind) != nil or
+      Precedence.unary(kind) != nil
   end
 
   # Parse remaining stab clauses after the first one
@@ -1608,6 +1612,35 @@ defmodule ToxicParser.Grammar.Stabs do
     parse_stab_eoe_until(acc, state, ctx, log, :")")
   end
 
+  @doc "Build the value for a do-block section (block or stab clauses)."
+  @spec build_section_value([Macro.t()]) :: Macro.t()
+  def build_section_value(items_rev) do
+    case check_stab(items_rev) do
+      :stab -> collect_stab(items_rev)
+      _ -> build_block(Enum.reverse(items_rev))
+    end
+  end
+
+  defp build_block([{:unquote_splicing, _, [_]} = single]), do: {:__block__, [], [single]}
+  defp build_block([single]), do: single
+  defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
+
+  defp check_stab(items_rev) do
+    items = Enum.reverse(items_rev)
+
+    if Enum.any?(items, &match?({:->, _, _}, &1)) do
+      first = Enum.find_index(items, &match?({:->, _, _}, &1))
+
+      if Enum.any?(Enum.take(items, first), &(!match?({:->, _, _}, &1))) do
+        :invalid
+      else
+        :stab
+      end
+    else
+      :block
+    end
+  end
+
   @doc """
   Parse stab_eoe until a given terminator kind.
   Exported for use by fn parsing in Blocks module.
@@ -1621,98 +1654,14 @@ defmodule ToxicParser.Grammar.Stabs do
   @spec parse_stab_eoe_until(list(), State.t(), Pratt.context(), EventLog.t(), atom()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_stab_eoe_until(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, terminator) do
-    # Checkpoint before trying stab clause - we may need to rewind if not a stab
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+    with {:ok, items, state, log} <- parse_stab_items_until(acc, state, ctx, log, terminator) do
+      case check_stab(items) do
+        :stab ->
+          {:ok, collect_stab(items), state, log}
 
-    case try_parse_stab_clause(checkpoint_state, ctx, log, terminator) do
-      {:ok, clause, state, log} ->
-        state = TokenAdapter.drop_checkpoint(state, ref)
-        state = EOE.skip(state)
-
-        case TokenAdapter.peek(state) do
-          {:ok, %{kind: ^terminator}, _} ->
-            # acc is in reverse source order (latest first), so [clause | acc] maintains that
-            {:ok, collect_stab([clause | acc]), state, log}
-
-          {:ok, _, _} ->
-            parse_stab_eoe_until([clause | acc], state, ctx, log, terminator)
-
-          {:eof, state} ->
-            {:error, :unexpected_eof, state, log}
-
-          {:error, diag, state} ->
-            {:error, diag, state, log}
-        end
-
-      {:not_stab, _state, log} ->
-        # Rewind and try as plain expression
-        state = TokenAdapter.rewind(checkpoint_state, ref)
-
-        # For fn (terminator = :end), stab is required as the first clause
-        # For parens (terminator = :)), expression fallback is allowed
-        if terminator == :")" do
-          # Could be just an expression (stab_expr -> expr)
-          with {:ok, expr, state, log} <- Expressions.expr(state, ctx, log) do
-            # Check for trailing EOE and continue or return
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :eoe} = eoe_tok, _} ->
-                eoe_meta = EOE.build_eoe_meta(eoe_tok)
-                annotated = EOE.annotate_eoe(expr, eoe_meta)
-                # Consume EOE and check for more content
-                {:ok, _eoe, state} = TokenAdapter.next(state)
-                state = EOE.skip(state)
-
-                case TokenAdapter.peek(state) do
-                  {:ok, %{kind: :")"}, _} ->
-                    # Terminator - done
-                    {:ok, collect_stab([annotated | acc]), state, log}
-
-                  {:ok, _, _} ->
-                    # More content - continue parsing
-                    parse_stab_eoe_until([annotated | acc], state, ctx, log, terminator)
-
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
-
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
-                end
-
-              _ ->
-                {:ok, collect_stab([expr | acc]), state, log}
-            end
-          end
-        else
-          # fn requires stab - but check for empty clauses list
-          if acc == [] do
-            # First "clause" isn't a stab - error
-            {:error, {:expected, :stab_op, got: :expression}, state, log}
-          else
-            # Already have clauses - this non-stab expression after EOE should be
-            # merged into the previous clause's body. Parse it and add to acc.
-            with {:ok, expr, state, log} <-
-                   Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
-              state = EOE.skip(state)
-
-              case TokenAdapter.peek(state) do
-                {:ok, %{kind: ^terminator}, _} ->
-                  {:ok, collect_stab([expr | acc]), state, log}
-
-                {:ok, _, _} ->
-                  parse_stab_eoe_until([expr | acc], state, ctx, log, terminator)
-
-                {:eof, state} ->
-                  {:error, :unexpected_eof, state, log}
-
-                {:error, diag, state} ->
-                  {:error, diag, state, log}
-              end
-            end
-          end
-        end
-
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
+        _ ->
+          {:error, {:expected, :stab_op, got: :expression}, state, log}
+      end
     end
   end
 

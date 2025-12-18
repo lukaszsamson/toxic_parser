@@ -110,10 +110,10 @@ defmodule ToxicParser.Grammar.Blocks do
   end
 
   defp parse_labeled_sections(acc, label, state, ctx, log) do
-    stop_kinds = [:end, :block_identifier]
+    stop_kinds = [:end, :block_identifier, :else, :catch, :rescue, :after]
 
-    with {:ok, clauses, state, log} <- parse_section_items([], state, ctx, log, stop_kinds) do
-      section_value = build_section_value(clauses)
+    with {:ok, items_rev, state, log} <- Stabs.parse_stab_items_until([], state, ctx, log, :end, stop_kinds) do
+      section_value = Stabs.build_section_value(items_rev)
       acc = [{label, section_value} | acc]
 
       case TokenAdapter.peek(state) do

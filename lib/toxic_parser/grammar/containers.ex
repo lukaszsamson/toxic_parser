@@ -115,39 +115,11 @@ defmodule ToxicParser.Grammar.Containers do
         close_meta = token_meta(close_tok.metadata)
         parens_meta = [parens: Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)]
         ast = {:__block__, parens_meta, []}
-        # Continue with Pratt.led to handle trailing operators
         Pratt.led(ast, state, log, min_bp, ctx)
 
-      # Check for stab operator at start: (-> expr)
-      {:ok, %{kind: :stab_op}, _} ->
-        Stabs.parse_paren_stab(open_meta, state, ctx, log, min_bp)
-
-      # Check for empty inner parens followed by stab/when: (() -> expr) or (() when g -> expr)
-      {:ok, %{kind: :"("}, _} ->
-        Stabs.try_parse_stab_parens_many(
-          open_meta,
-          state,
-          ctx,
-          log,
-          min_bp,
-          fn new_state, new_log ->
-            parse_expr_in_paren_with_meta(open_meta, new_state, ctx, new_log, min_bp)
-          end
-        )
-
-      # Content that could be expression or stab pattern
+      # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
       {:ok, _, _} ->
-        # Try to parse stab first using checkpoint
-        Stabs.try_parse_stab_or_expr(
-          open_meta,
-          state,
-          ctx,
-          log,
-          min_bp,
-          fn new_state, new_log ->
-            parse_expr_in_paren_with_meta(open_meta, new_state, ctx, new_log, min_bp)
-          end
-        )
+        Stabs.parse_paren_stab(open_meta, state, ctx, log, min_bp)
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}

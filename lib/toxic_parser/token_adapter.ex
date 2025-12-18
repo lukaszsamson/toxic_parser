@@ -71,6 +71,16 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   @doc """
+  Push multiple previously consumed tokens back into the lookahead buffer.
+
+  Tokens must be in source order (the first token in the list will be the next token returned).
+  """
+  @spec pushback_many(State.t(), [token()]) :: State.t()
+  def pushback_many(%State{} = state, tokens) when is_list(tokens) do
+    %{state | lookahead: tokens ++ state.lookahead}
+  end
+
+  @doc """
   Peek at the next N tokens (bounded by `state.max_peek`).
   """
   @spec peek_n(State.t(), pos_integer()) ::
