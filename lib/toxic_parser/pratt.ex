@@ -585,13 +585,6 @@ defmodule ToxicParser.Pratt do
                   next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
-                # Only lower precedence for do-block keywords for @ (module attributes).
-                # This prevents @for | x from parsing as @(for | x) when | is a binary operator.
-                op_token.kind == :at_op and operand_token.kind in [:identifier, :dot_identifier] and
-                  operand_token.value in @do_block_keywords and Context.allow_do_block?(context) and
-                    (next_token_kind == :do or
-                       (next_token != nil and NoParens.can_start_no_parens_arg?(next_token))) ->
-                  0
 
                 op_token.kind in [:ellipsis_op, :range_op] ->
                   100
