@@ -2131,6 +2131,37 @@ defmodule ToxicParser.Pratt do
   @spec led_dots_and_calls(Macro.t(), State.t(), EventLog.t(), context()) :: result()
   def led_dots_and_calls(left, %State{} = state, %EventLog{} = log, %Context{} = context) do
     case TokenAdapter.peek(state) do
+      # Handle dot-call: foo.() (tokenized as dot_call_op followed by parens)
+      {:ok, %{kind: :dot_call_op} = _dot_tok, _} ->
+        {:ok, dot_tok, state} = TokenAdapter.next(state)
+        dot_meta = build_meta(dot_tok.metadata)
+
+        case TokenAdapter.next(state) do
+          {:ok, %{kind: :"("}, state} ->
+            {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
+            with {:ok, args, state, log} <-
+                   ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
+                 {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
+              total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
+              call_meta = Meta.closing_meta(dot_meta, close_meta, total_newlines)
+              callee = {:., dot_meta, [left]}
+              combined = {callee, call_meta, Enum.reverse(args)}
+              led_dots_and_calls(combined, state, log, context)
+            else
+              other -> Result.normalize_error(other, log)
+            end
+
+          {:ok, other, state} ->
+            {:error, {:expected, :"(", got: other.kind}, state, log}
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
+        end
+
       {:ok, %{kind: :dot_op} = _dot_tok, _} ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)
         dot_meta = build_meta(dot_tok.metadata)
