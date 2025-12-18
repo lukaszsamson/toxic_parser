@@ -34,4 +34,18 @@ defmodule ToxicParser.DotsTest do
     assert {:ok, ast, _state, _log} = Grammar.Expressions.expr(state, Context.matched_expr(), log)
     assert Macro.to_string(ast) =~ "baz"
   end
+
+  test "dot curly call rejects initial kw_data" do
+    log = EventLog.new()
+
+    state = TokenAdapter.new("foo.{a: 1}")
+
+    assert {:error, {[_ | _], "syntax error before: ", "a"}, _state, _log} =
+             Grammar.Expressions.expr(state, Context.matched_expr(), log)
+
+    state = TokenAdapter.new(~s(foo.{"a": 1}))
+
+    assert {:error, {[_ | _], "syntax error before: ", "a"}, _state, _log} =
+             Grammar.Expressions.expr(state, Context.matched_expr(), log)
+  end
 end

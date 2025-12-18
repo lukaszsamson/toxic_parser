@@ -261,20 +261,32 @@ defmodule ToxicParser.Grammar.Dots do
         {:ok, state, log}
 
       {:ok, tok, state} ->
-        {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
-
-        case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
-          {:ok, kw_list, state, log} ->
-            state = TokenAdapter.rewind(state, ref)
+        cond do
+          # Definite kw_data start - no need to checkpoint/parse.
+          Keywords.starts_kw?(tok) ->
             meta = Builder.Helpers.token_meta(tok.metadata)
-            token_display = kw_data_first_key_display(kw_list)
-            {:error, syntax_error_before(meta, token_display), state, log}
+            {:error, syntax_error_before(meta, Atom.to_string(tok.value)), state, log}
 
-          {:no_kw, state, log} ->
-            {:ok, TokenAdapter.rewind(state, ref), log}
+          # Quoted key may or may not be kw_data; only this case needs checkpoint.
+          Keywords.starts_kw_or_quoted_key?(tok) ->
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
-          {:error, reason, state, log} ->
-            {:error, reason, TokenAdapter.rewind(state, ref), log}
+            case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
+              {:ok, kw_list, state, log} ->
+                state = TokenAdapter.rewind(state, ref)
+                meta = Builder.Helpers.token_meta(tok.metadata)
+                token_display = kw_data_first_key_display(kw_list)
+                {:error, syntax_error_before(meta, token_display), state, log}
+
+              {:no_kw, state, log} ->
+                {:ok, TokenAdapter.rewind(state, ref), log}
+
+              {:error, reason, state, log} ->
+                {:error, reason, TokenAdapter.rewind(state, ref), log}
+            end
+
+          true ->
+            {:ok, state, log}
         end
 
       {:eof, state} ->

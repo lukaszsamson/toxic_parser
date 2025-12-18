@@ -301,7 +301,15 @@ defmodule ToxicParser.Grammar.Keywords do
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
         cond do
-          starts_kw?(tok) or (allow_quoted_keys? and tok.kind in @quoted_kw_start) ->
+          # Definite keyword (kw_identifier) - no checkpoint needed.
+          starts_kw?(tok) ->
+            case parse_call_args_no_parens_kw(state, ctx, log, min_bp) do
+              {:ok, kw_list, state, log} -> {:ok, kw_list, state, log}
+              {:error, reason, state, log} -> {:error, reason, state, log}
+            end
+
+          # Quoted key - needs checkpoint for fallback to regular expression.
+          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 
             case parse_call_args_no_parens_kw(checkpoint_state, ctx, log, min_bp) do
