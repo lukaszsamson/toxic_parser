@@ -1403,9 +1403,20 @@ defmodule ToxicParser.Grammar.Stabs do
 
           case kind do
             :clause ->
-              with {:ok, clause, state, log} <- try_parse_stab_clause(state, ctx, log, terminator) do
-                {clause, state} = maybe_annotate_and_consume_eoe(clause, state)
-                parse_stab_items_until([clause | acc], state, ctx, log, terminator, stop_kinds)
+              case try_parse_stab_clause(state, ctx, log, terminator) do
+                {:ok, clause, state, log} ->
+                  {clause, state} = maybe_annotate_and_consume_eoe(clause, state)
+                  parse_stab_items_until([clause | acc], state, ctx, log, terminator, stop_kinds)
+
+                {:not_stab, _state, log} ->
+                  with {:ok, expr, state, log} <-
+                         Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                    {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
+                    parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
+                  end
+
+                {:error, reason, state, log} ->
+                  {:error, reason, state, log}
               end
 
             :unknown ->
