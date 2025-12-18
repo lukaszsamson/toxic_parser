@@ -3087,6 +3087,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 49" do
       assert_conforms("cond do +if+t -> :ok end")
     end
+
+    test "repro 50" do
+      assert_conforms("\"\"\"\nfoo\#{!if-l}\n\"\"\"")
+    end
   end
 
   # =============================================================================
