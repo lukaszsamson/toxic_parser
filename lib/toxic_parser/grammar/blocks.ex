@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, Precedence, Result, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, EventLog, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{EOE, Stabs}
 
@@ -131,115 +131,12 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp parse_section_items(acc, state, ctx, log, stop_kinds) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
-        if stop_token?(tok, stop_kinds) do
-          {:ok, Enum.reverse(acc), state, log}
-        else
-          handle_section_item(tok.kind, acc, state, ctx, log, stop_kinds)
-        end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
-    end
-  end
-
-  defp handle_section_item(:eoe, acc, state, ctx, log, stop_kinds) do
-    {:ok, _tok, state} = TokenAdapter.next(state)
-    parse_section_items(acc, state, ctx, log, stop_kinds)
-  end
-
-  defp handle_section_item(_kind, acc, state, ctx, log, stop_kinds) do
-    case try_parse_clause(state, ctx, log, stop_kinds) do
-      {:ok, clause, state, log} ->
-        parse_section_items([clause | acc], state, ctx, log, stop_kinds)
-
-      {:no_clause, state, log} ->
-        # Use min_bp > stab_op (10) to stop before -> so it doesn't get consumed
-        # as a binary operator. The -> belongs to the clause parser.
-        with {:ok, expr, state, log} <-
-               Pratt.parse_with_min_bp(state, ctx, log, Precedence.stab_op_bp() + 1) do
-          # Annotate with end_of_expression if followed by EOE
-          {transformed, state} = maybe_annotate_and_consume_eoe(expr, state)
-
-          transformed =
-            case transformed do
-              {:stab_op, _, [lhs, rhs]} -> {:->, [], [List.wrap(lhs), rhs]}
-              other -> other
-            end
-
-          parse_section_items([transformed | acc], state, ctx, log, stop_kinds)
-        end
-    end
-  end
-
-  defp try_parse_clause(state, ctx, log, _stop_kinds) do
-    # Use Stabs.try_parse_stab_clause which properly handles:
-    # - stab_parens_many: (a) -> body, (a, b) -> body, () -> body
-    # - stab pattern expressions: a -> body, a, b -> body
-    # - guards: a when g -> body
-    # Use :end as terminator since block sections end at :end or :block_identifier
-    # Checkpoint so we can rewind if not a stab clause
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
-
-    case Stabs.try_parse_stab_clause(checkpoint_state, ctx, log, :end) do
-      {:ok, clause, state, log} ->
-        {:ok, clause, TokenAdapter.drop_checkpoint(state, ref), log}
-
-      {:not_stab, _state, log} ->
-        # Rewind to before we tried to parse stab
-        {:no_clause, TokenAdapter.rewind(checkpoint_state, ref), log}
-
-      {:error, _reason, _state, log} ->
-        # Rewind on error too - let expression parsing try
-        {:no_clause, TokenAdapter.rewind(checkpoint_state, ref), log}
-    end
-  end
-
-  defp build_section_value([]), do: build_block([])
-
-  defp build_section_value(items) do
-    if Enum.all?(items, &match?({:->, _, _}, &1)) do
-      items
-    else
-      build_block(items)
-    end
-  end
-
-  # Annotate expression with end_of_expression metadata if followed by EOE, then consume it
-  defp maybe_annotate_and_consume_eoe(expr, state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe} = eoe_tok, _} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        eoe_meta = EOE.build_eoe_meta(eoe_tok)
-        annotated = EOE.annotate_eoe(expr, eoe_meta)
-        {annotated, state}
-
-      _ ->
-        {expr, state}
-    end
-  end
-
-  # unquote_splicing always gets wrapped in __block__ (parser assumes block is being spliced)
-  # See elixir_parser.yrl: build_block([{unquote_splicing, _, [_]}]=Exprs, BeforeAfter)
-  defp build_block([{:unquote_splicing, _, [_]} = single]), do: {:__block__, [], [single]}
-  defp build_block([single]), do: single
-  defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
-
   defp enter_scope(log, scope, meta) do
     EventLog.env(log, %{action: :enter_scope, scope: scope, name: nil}, meta)
   end
 
   defp exit_scope(log, scope, meta) do
     EventLog.env(log, %{action: :exit_scope, scope: scope, name: nil}, meta)
-  end
-
-  defp stop_token?(%{kind: kind} = tok, stop_kinds) do
-    kind in stop_kinds or block_label?(tok)
   end
 
   defp block_label?(%{kind: :block_identifier, value: value}),

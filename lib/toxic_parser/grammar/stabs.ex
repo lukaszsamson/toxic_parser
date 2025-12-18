@@ -1620,12 +1620,6 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  # Parse stab_eoe: list of stab clauses separated by eoe
-  # Terminates on :) for paren stab
-  defp parse_stab_eoe(acc, state, ctx, log) do
-    parse_stab_eoe_until(acc, state, ctx, log, :")")
-  end
-
   @doc "Build the value for a do-block section (block or stab clauses)."
   @spec build_section_value([Macro.t()]) :: Macro.t()
   def build_section_value(items_rev) do
@@ -1740,10 +1734,6 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
-
-  # Build nil literal for leading semicolon in stab body
-  # In Elixir's AST, nil is just a plain `nil` atom, no metadata
-  defp handle_literal_nil_from_eoe(_eoe_tok), do: nil
 
   #   %% an arg style call. unwrap_splice unwraps the splice
   defp unwrap_splice([{:__block__, _, [{:unquote_splicing, _, _}] = splice}]), do: splice
