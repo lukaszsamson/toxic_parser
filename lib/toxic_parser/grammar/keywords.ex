@@ -23,6 +23,10 @@ defmodule ToxicParser.Grammar.Keywords do
 
   # String start tokens that could be quoted keyword keys like "foo": or 'bar':
   @quoted_kw_start [:bin_string_start, :list_string_start]
+
+  @quoted_kw_keyword_end [:kw_identifier_safe_end, :kw_identifier_unsafe_end]
+  @quoted_kw_string_end [:bin_string_end, :list_string_end]
+  @quoted_kw_scan_max 512
   @no_parens_kw_terminators [
     :eof,
     :eoe,
@@ -61,6 +65,48 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   def starts_kw_or_quoted_key?(_), do: false
+
+  @spec quoted_string_is_keyword?(State.t()) :: {:keyword | :not_keyword, State.t()}
+  defp quoted_string_is_keyword?(%State{} = state) do
+    scan_to_string_end(state, [], 0, @quoted_kw_scan_max)
+  end
+
+  defp scan_to_string_end(state, consumed, _interp_depth, max) when max <= 0 do
+    {:not_keyword, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+  end
+
+  defp scan_to_string_end(state, consumed, interp_depth, max) do
+    case TokenAdapter.next(state) do
+      {:ok, %{kind: kind} = tok, state} ->
+        consumed = [tok | consumed]
+
+        cond do
+          kind == :begin_interpolation ->
+            scan_to_string_end(state, consumed, interp_depth + 1, max - 1)
+
+          kind == :end_interpolation ->
+            scan_to_string_end(state, consumed, max(interp_depth - 1, 0), max - 1)
+
+          interp_depth > 0 ->
+            scan_to_string_end(state, consumed, interp_depth, max - 1)
+
+          kind in @quoted_kw_keyword_end ->
+            {:keyword, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+
+          kind in @quoted_kw_string_end ->
+            {:not_keyword, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+
+          true ->
+            scan_to_string_end(state, consumed, interp_depth, max - 1)
+        end
+
+      {:eof, state} ->
+        {:not_keyword, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+
+      {:error, _diag, state} ->
+        {:not_keyword, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
+    end
+  end
 
   @doc "Parses a keyword list usable in call argument position."
   @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
@@ -130,18 +176,12 @@ defmodule ToxicParser.Grammar.Keywords do
             parse_kw_data(state, ctx, log)
 
           allow_quoted_keys? and tok.kind in @quoted_kw_start ->
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+            case quoted_string_is_keyword?(state) do
+              {:keyword, state} ->
+                parse_kw_data(state, ctx, log)
 
-            case parse_kw_data(checkpoint_state, ctx, log) do
-              {:ok, kw_list, state, log} ->
-                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
-
-              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                {:no_kw, TokenAdapter.rewind(state, ref), log}
-
-              {:error, reason, state, attempt_log} ->
-                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+              {:not_keyword, state} ->
+                {:no_kw, state, log}
             end
 
           true ->
@@ -172,18 +212,12 @@ defmodule ToxicParser.Grammar.Keywords do
             parse_kw_call(state, ctx, log)
 
           allow_quoted_keys? and tok.kind in @quoted_kw_start ->
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+            case quoted_string_is_keyword?(state) do
+              {:keyword, state} ->
+                parse_kw_call(state, ctx, log)
 
-            case parse_kw_call(checkpoint_state, ctx, log) do
-              {:ok, kw_list, state, log} ->
-                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
-
-              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                {:no_kw, TokenAdapter.rewind(state, ref), log}
-
-              {:error, reason, state, attempt_log} ->
-                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+              {:not_keyword, state} ->
+                {:no_kw, state, log}
             end
 
           true ->
@@ -236,18 +270,15 @@ defmodule ToxicParser.Grammar.Keywords do
             end
 
           allow_quoted_keys? and tok.kind in @quoted_kw_start ->
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+            case quoted_string_is_keyword?(state) do
+              {:keyword, state} ->
+                case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+                  {:ok, pair, state, log} -> {:ok, pair, state, log}
+                  {:error, reason, state, log} -> {:error, reason, state, log}
+                end
 
-            case parse_kw_pair(checkpoint_state, ctx, log, min_bp, value_ctx) do
-              {:ok, pair, state, log} ->
-                {:ok, pair, TokenAdapter.drop_checkpoint(state, ref), log}
-
-              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                {:no_kw_expr, TokenAdapter.rewind(state, ref), log}
-
-              {:error, reason, state, attempt_log} ->
-                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+              {:not_keyword, state} ->
+                {:no_kw_expr, state, log}
             end
 
           true ->
@@ -308,28 +339,17 @@ defmodule ToxicParser.Grammar.Keywords do
               {:error, reason, state, log} -> {:error, reason, state, log}
             end
 
-          # Quoted key - needs checkpoint for fallback to regular expression.
+          # Quoted key - only parse if we can prove it ends with a colon.
           allow_quoted_keys? and tok.kind in @quoted_kw_start ->
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+            case quoted_string_is_keyword?(state) do
+              {:keyword, state} ->
+                case parse_call_args_no_parens_kw(state, ctx, log, min_bp) do
+                  {:ok, kw_list, state, log} -> {:ok, kw_list, state, log}
+                  {:error, reason, state, log} -> {:error, reason, state, log}
+                end
 
-            case parse_call_args_no_parens_kw(checkpoint_state, ctx, log, min_bp) do
-              {:ok, kw_list, state, log} ->
-                {:ok, kw_list, TokenAdapter.drop_checkpoint(state, ref), log}
-
-              {:error, {:expected, :item, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                # `@quoted_kw_start` tokens (string/charlist starts) can begin regular
-                # expressions too. If the comma-separated kw list parser fails to
-                # find even a single `kw_expr` item, treat it as "not a kw list"
-                # and let the caller fall back to normal expression parsing.
-                {:no_kw, TokenAdapter.rewind(state, ref), log}
-
-              {:error, {:expected, :keyword, got: got_kind}, state, _attempt_log}
-              when got_kind in @quoted_kw_start ->
-                {:no_kw, TokenAdapter.rewind(state, ref), log}
-
-              {:error, reason, state, attempt_log} ->
-                {:error, reason, TokenAdapter.rewind(state, ref), attempt_log}
+              {:not_keyword, state} ->
+                {:no_kw, state, log}
             end
 
           true ->
