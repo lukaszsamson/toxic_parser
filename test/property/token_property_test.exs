@@ -25,6 +25,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:alias, _meta, atom}), do: {:alias, atom}
   defp normalize_token({:at_op, _meta, :@}), do: :at
   defp normalize_token({:capture_int, _meta, :&}), do: :capture_int
+  defp normalize_token({:kw_identifier, _meta, atom}), do: {:kw_identifier, atom}
   defp normalize_token({:atom, _meta, atom}), do: {:atom, atom}
   defp normalize_token({:int, _meta, chars}), do: {:int, chars}
   defp normalize_token({:flt, _meta, chars}), do: {:flt, chars}
@@ -36,6 +37,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:"]", _meta}), do: :rbracket
   defp normalize_token({:"{", _meta}), do: :lcurly
   defp normalize_token({:"}", meta}), do: {:rcurly, elem(meta, 2) || 0}
+  defp normalize_token({:",", _meta}), do: :comma
   defp normalize_token({:";", _meta}), do: {:";"}
   defp normalize_token({:., _meta}), do: :dot
   defp normalize_token({:"(", _meta}), do: {:"("}

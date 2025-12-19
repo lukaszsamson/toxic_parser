@@ -325,7 +325,9 @@ defmodule ToxicParser.Generator do
          bind(matched_expr_raw(decr_depth(state)), fn lhs ->
            bind(dot_op_raw(), fn dot ->
              bind(open_curly_raw(), fn open ->
-              constant(lhs ++ dot ++ open ++ [{:rcurly, nil}])
+               bind(close_curly_raw(), fn close ->
+                 constant(lhs ++ dot ++ open ++ close)
+               end)
              end)
            end)
          end)},
@@ -366,11 +368,107 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  defp container_args_raw(_state) do
+  # container_expr -> matched_expr | unmatched_expr
+  defp container_expr_raw(state) do
     frequency([
-      {3, identifier_raw()},
-      {2, int_raw()}
+      {5, matched_expr_raw(state)},
+      {1, unmatched_expr_raw(state)}
     ])
+  end
+
+  defp unmatched_expr_raw(state), do: matched_expr_raw(state)
+
+  # container_args_base -> container_expr | container_args_base ',' container_expr
+  defp container_args_base_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(1..max), fn count ->
+      container_args_base_n_raw(state, count)
+    end)
+  end
+
+  defp container_args_base_n_raw(state, 1), do: container_expr_raw(state)
+
+  defp container_args_base_n_raw(state, count) when count > 1 do
+    bind(container_args_base_n_raw(state, count - 1), fn prev ->
+      bind(container_expr_raw(state), fn last ->
+        constant(prev ++ [:comma] ++ last)
+      end)
+    end)
+  end
+
+  # container_args -> container_args_base
+  # container_args -> container_args_base ','
+  # container_args -> container_args_base ',' kw_data
+  defp container_args_raw(state) do
+    bind(container_args_base_raw(state), fn base ->
+      frequency([
+        {5, constant(base)},
+        {2, constant(base ++ [:comma])},
+        {2,
+         bind(kw_data_raw(state), fn kw ->
+           constant(base ++ [:comma] ++ kw)
+         end)}
+      ])
+    end)
+  end
+
+  # kw_data -> kw_base | kw_base ','
+  defp kw_data_raw(state) do
+    bind(kw_base_raw(state), fn base ->
+      frequency([
+        {5, constant(base)},
+        {1, constant(base ++ [:comma])}
+      ])
+    end)
+  end
+
+  # kw_base -> kw_eol container_expr
+  # kw_base -> kw_base ',' kw_eol container_expr
+  defp kw_base_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(1..max), fn count ->
+      kw_base_n_raw(state, count)
+    end)
+  end
+
+  defp kw_base_n_raw(state, 1) do
+    bind(kw_eol_raw(), fn kw ->
+      bind(container_expr_raw(state), fn expr ->
+        constant(kw ++ expr)
+      end)
+    end)
+  end
+
+  defp kw_base_n_raw(state, count) when count > 1 do
+    bind(kw_base_n_raw(state, count - 1), fn prev ->
+      bind(kw_eol_raw(), fn kw ->
+        bind(container_expr_raw(state), fn expr ->
+          constant(prev ++ [:comma] ++ kw ++ expr)
+        end)
+      end)
+    end)
+  end
+
+  # kw_eol -> kw_identifier | kw_identifier eol
+  # NOTE: we always add a gap-space after the ':' so Toxic lexes it as kw_identifier
+  # and doesn't error on missing space after colon.
+  defp kw_eol_raw do
+    bind(kw_identifier_raw(), fn kw ->
+      frequency([
+        {4, constant(kw ++ [{:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant(kw ++ [{:gap_space, 1}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp kw_identifier_raw do
+    member_of(@identifiers)
+    |> map(fn atom -> [{:kw_identifier, atom}] end)
   end
 
   defp alias_raw do
@@ -418,6 +516,7 @@ defmodule ToxicParser.Generator do
         raw =
           case {raw, prev_raw} do
             {{:rcurly, nil}, {:eol, n}} when is_integer(n) -> {:rcurly, n}
+            {{:rcurly, nil}, {:comma, n}} when is_integer(n) -> {:rcurly, n}
             _ -> raw
           end
 
@@ -432,11 +531,20 @@ defmodule ToxicParser.Generator do
   defp coalesce_eols(raw_tokens), do: do_coalesce_eols(raw_tokens, [])
 
   defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:eol, a + b} | rest], acc)
+
+  # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
+  defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
+  defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:comma, a + b} | rest], acc)
+
   defp do_coalesce_eols([h | t], acc), do: do_coalesce_eols(t, [h | acc])
   defp do_coalesce_eols([], acc), do: Enum.reverse(acc)
 
   defp materialize_token({:gap_eol, n}, {line, _col}) do
     {nil, {line + n, 1}}
+  end
+
+  defp materialize_token({:gap_space, n}, {line, col}) do
+    {nil, {line, col + n}}
   end
 
   defp materialize_token({:eol, n}, {line, col}) do
@@ -449,6 +557,21 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + 1}
     {{:";", {start, stop, 0}}, stop}
+  end
+
+  defp materialize_token(:comma, pos), do: materialize_token({:comma, 0}, pos)
+
+  defp materialize_token({:comma, eol_count}, {line, col}) do
+    start = {line, col}
+
+    {stop, next_pos} =
+      if eol_count > 0 do
+        {{line + eol_count, 1}, {line + eol_count, 1}}
+      else
+        {{line, col + 1}, {line, col + 1}}
+      end
+
+    {{:",", {start, stop, eol_count}}, next_pos}
   end
 
   defp materialize_token(:dot, {line, col}) do
@@ -510,6 +633,13 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + String.length(text)}
     {{:identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:kw_identifier, atom}, {line, col}) do
+    text = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + String.length(text) + 1}
+    {{:kw_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
   end
 
   defp materialize_token({:bracket_identifier, atom}, {line, col}) do
