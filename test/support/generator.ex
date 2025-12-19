@@ -922,11 +922,81 @@ defmodule ToxicParser.Generator do
   end
 
   # do_block -> do_eoe 'end'
-  # (only minimal empty do-block form for now)
-  defp do_block_raw do
+  # do_block -> do_eoe stab_eoe 'end'
+  # do_block -> do_eoe block_list 'end'
+  # do_block -> do_eoe stab_eoe block_list 'end'
+  defp do_block_raw(state) do
+    state = decr_depth(state)
+
     bind(do_eoe_raw(), fn do_kw ->
-      constant(do_kw ++ [:end])
+      frequency([
+        {3, constant(do_kw ++ [:end])},
+        {3,
+         bind(stab_eoe_raw(state), fn stab ->
+           constant(do_kw ++ stab ++ [{:gap_space, 1}, :end])
+         end)},
+        {2,
+         bind(block_list_raw(state), fn blocks ->
+           constant(do_kw ++ blocks ++ [{:gap_space, 1}, :end])
+         end)},
+        {1,
+         bind(stab_eoe_raw(state), fn stab ->
+           bind(block_list_raw(state), fn blocks ->
+             constant(do_kw ++ stab ++ [{:gap_space, 1}] ++ blocks ++ [{:gap_space, 1}, :end])
+           end)
+         end)}
+      ])
     end)
+  end
+
+  # block_eoe -> block_identifier | block_identifier eoe
+  defp block_eoe_raw do
+    bind(block_identifier_raw(), fn block_id ->
+      frequency([
+        {3, constant(block_id)},
+        {1,
+         bind(eoe_raw(), fn eoe ->
+           constant(block_id ++ eoe)
+         end)}
+      ])
+    end)
+  end
+
+  # block_item -> block_eoe stab_eoe | block_eoe
+  defp block_item_raw(state) do
+    bind(block_eoe_raw(), fn label ->
+      frequency([
+        {3,
+         bind(stab_eoe_raw(state), fn stab ->
+           constant(label ++ stab)
+         end)},
+        {1, constant(label)}
+      ])
+    end)
+  end
+
+  # block_list -> block_item | block_item block_list
+  defp block_list_raw(state) do
+    max = min(state.max_forms, 2)
+
+    bind(integer(1..max), fn count ->
+      block_list_n_raw(state, count)
+    end)
+  end
+
+  defp block_list_n_raw(state, 1), do: block_item_raw(state)
+
+  defp block_list_n_raw(state, count) when count > 1 do
+    bind(block_item_raw(state), fn head ->
+      bind(block_list_n_raw(state, count - 1), fn tail ->
+        constant(head ++ [{:gap_space, 1}] ++ tail)
+      end)
+    end)
+  end
+
+  defp block_identifier_raw do
+    member_of([:after, :else, :catch, :rescue])
+    |> map(fn atom -> [{:block_identifier, atom}] end)
   end
 
   # block_expr -> dot_call_identifier call_args_parens do_block
@@ -941,7 +1011,7 @@ defmodule ToxicParser.Generator do
       {3,
        bind(dot_call_identifier_raw(state), fn fun ->
          bind(call_args_parens_raw(state), fn args ->
-           bind(do_block_raw(), fn block ->
+           bind(do_block_raw(state), fn block ->
              constant(fun ++ args ++ [{:gap_space, 1}] ++ block)
            end)
          end)
@@ -950,7 +1020,7 @@ defmodule ToxicParser.Generator do
        bind(dot_call_identifier_raw(state), fn fun ->
          bind(call_args_parens_raw(state), fn args1 ->
            bind(call_args_parens_raw(state), fn args2 ->
-             bind(do_block_raw(), fn block ->
+             bind(do_block_raw(state), fn block ->
                constant(fun ++ args1 ++ args2 ++ [{:gap_space, 1}] ++ block)
              end)
            end)
@@ -958,14 +1028,14 @@ defmodule ToxicParser.Generator do
        end)},
       {2,
        bind(dot_do_identifier_raw(state), fn fun ->
-         bind(do_block_raw(), fn block ->
+         bind(do_block_raw(state), fn block ->
            constant(fun ++ [{:gap_space, 1}] ++ block)
          end)
        end)},
       {2,
        bind(dot_op_identifier_raw(state), fn fun ->
          bind(call_args_no_parens_all_raw(state), fn args ->
-           bind(do_block_raw(), fn block ->
+           bind(do_block_raw(state), fn block ->
              constant(fun ++ [{:gap_space, 1}] ++ args ++ [{:gap_space, 1}] ++ block)
            end)
          end)
@@ -973,7 +1043,7 @@ defmodule ToxicParser.Generator do
       {3,
        bind(dot_identifier_raw(state), fn fun ->
          bind(call_args_no_parens_all_raw(state), fn args ->
-           bind(do_block_raw(), fn block ->
+           bind(do_block_raw(state), fn block ->
              constant(fun ++ [{:gap_space, 1}] ++ args ++ [{:gap_space, 1}] ++ block)
            end)
          end)
