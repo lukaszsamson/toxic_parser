@@ -18,12 +18,48 @@ defmodule ToxicParser.TokenPropertyTest do
     end
   end
 
-  defp normalize_tokens(tokens), do: Enum.map(tokens, &normalize_token/1)
+  defp normalize_tokens(tokens) do
+    tokens
+    |> Enum.map(&normalize_token/1)
+    |> expand_range_leading_eols()
+  end
 
+  defp expand_range_leading_eols(tokens) do
+    Enum.flat_map(tokens, fn
+      {:range_op, op, n} when is_integer(n) and n > 0 ->
+        [{:eol, n}, {:range_op, op, 0}]
+
+      {:stab_op, op, n} when is_integer(n) and n > 0 ->
+        [{:eol, n}, {:stab_op, op, 0}]
+
+      other ->
+        [other]
+    end)
+  end
+
+  defp normalize_token({:do_identifier, _meta, atom}), do: {:identifier, atom}
+  defp normalize_token({:identifier, _meta, :@}), do: :at
+  defp normalize_token({:identifier, _meta, :...}), do: {:ellipsis_op, :..., 0}
+  defp normalize_token({:identifier, _meta, :..}), do: {:range_op, :.., 0}
+  defp normalize_token({:identifier, _meta, :\\}), do: {:in_match_op, :\\, 0}
+  defp normalize_token({:identifier, _meta, :<-}), do: {:in_match_op, :<-, 0}
+  defp normalize_token({:identifier, _meta, :+}), do: {:dual_op, :+}
+  defp normalize_token({:identifier, _meta, :-}), do: {:dual_op, :-}
+  defp normalize_token({:identifier, _meta, :!}), do: {:unary_op, :!}
+  defp normalize_token({:identifier, _meta, :^}), do: {:unary_op, :^}
+  defp normalize_token({:identifier, _meta, :"::"}), do: {:type_op, :"::", 0}
+  defp normalize_token({:identifier, _meta, :+++}), do: {:concat_op, :+++, 0}
+  defp normalize_token({:identifier, _meta, :or}), do: {:or_op, :or, 0}
+  defp normalize_token({:identifier, _meta, :||}), do: {:or_op, :||, 0}
+  defp normalize_token({:identifier, _meta, :&&}), do: {:and_op, :&&, 0}
+  defp normalize_token({:identifier, _meta, :**}), do: {:power_op, :**, 0}
+  defp normalize_token({:identifier, _meta, :=}), do: {:match_op, :=, 0}
+  defp normalize_token({:identifier, _meta, :/}), do: {:mult_op, :/, 0}
   defp normalize_token({:identifier, _meta, atom}), do: {:identifier, atom}
   defp normalize_token({:paren_identifier, _meta, atom}), do: {:paren_identifier, atom}
-  defp normalize_token({:op_identifier, _meta, atom}), do: {:op_identifier, atom}
+  defp normalize_token({:op_identifier, _meta, atom}), do: {:identifier, atom}
   defp normalize_token({:bracket_identifier, _meta, atom}), do: {:bracket_identifier, atom}
+  defp normalize_token({:block_identifier, _meta, atom}), do: {:block_identifier, atom}
   defp normalize_token({:alias, _meta, atom}), do: {:alias, atom}
   defp normalize_token({:at_op, _meta, :@}), do: :at
   defp normalize_token({:capture_int, _meta, :&}), do: :capture_int

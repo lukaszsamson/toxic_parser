@@ -106,7 +106,15 @@ defmodule ToxicParser.Generator do
   end
 
   # expr -> matched_expr
-  defp expr_raw(state), do: matched_expr_raw(state)
+  # expr -> no_parens_expr
+  # expr -> unmatched_expr
+  defp expr_raw(state) do
+    frequency([
+      {8, matched_expr_raw(state)},
+      {2, no_parens_expr_raw(state)},
+      {2, unmatched_expr_raw(state)}
+    ])
+  end
 
   # matched_expr -> sub_matched_expr
   # matched_expr -> no_parens_one_expr
@@ -968,7 +976,7 @@ defmodule ToxicParser.Generator do
       frequency([
         {3,
          bind(stab_eoe_raw(state), fn stab ->
-           constant(label ++ stab)
+           constant(label ++ [{:gap_space, 1}] ++ stab)
          end)},
         {1, constant(label)}
       ])
@@ -2955,6 +2963,13 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + 3}
     {{:end, {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token({:block_identifier, atom}, {line, col}) do
+    text = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+    {{:block_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
   end
 
   defp materialize_token({:identifier, atom}, {line, col}) do
