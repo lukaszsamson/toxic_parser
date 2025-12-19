@@ -706,8 +706,10 @@ defmodule ToxicParser.Pratt do
     # Parse the operand with unary precedence
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
+        {bp, _assoc} = Precedence.binary(:ternary_op)
+
         with {:ok, operand, state, log} <-
-               parse_rhs(operand_token, state, context, log, 300, unary_operand: true) do
+               parse_rhs(operand_token, state, context, log, bp, unary_operand: true) do
           # Build: {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           ast = {:/, outer_meta, [{:/, inner_meta, nil}, operand]}
           {:ok, ast, state, log}
@@ -983,13 +985,16 @@ defmodule ToxicParser.Pratt do
         state = pushback_eoe_tokens(state, eoe_tokens)
         {:ok, left, state, log}
 
-      # range_op (..) or ellipsis_op (...) after EOE is NOT a binary operator
-      # e.g., "t;..<e" should be two expressions: t and (..<e), not (t..<) e
-      # The range/ellipsis starts a new expression (unary/nullary)
-      {kind, {bp, _assoc}}
-      when kind in [:range_op, :ellipsis_op] and bp >= min_bp and eoe_tokens != [] ->
-        state = pushback_eoe_tokens(state, eoe_tokens)
-        {:ok, left, state, log}
+      # range_op (..) or ellipsis_op (...) after EOE:
+      # - After semicolon EOE, it starts a new expression (e.g. "t;..<e").
+      # - After newline EOE, it can continue the previous expression (e.g. "a\n..b").
+      {kind, {bp, assoc}} when kind in [:range_op, :ellipsis_op] and bp >= min_bp and eoe_tokens != [] ->
+        if Enum.any?(eoe_tokens, &(&1.value.source == :semicolon)) do
+          state = pushback_eoe_tokens(state, eoe_tokens)
+          {:ok, left, state, log}
+        else
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
+        end
 
       # stab_op (->) is NOT a general binary operator - it only appears in stab clause contexts
       # Parsing it here would wrongly parse "1 -> 2" as a binary expression
@@ -1330,7 +1335,7 @@ defmodule ToxicParser.Pratt do
     effective_newlines =
       cond do
         op_token.kind in [:range_op, :ellipsis_op] ->
-          newlines_after_op
+          if newlines_after_op > 0, do: newlines_after_op, else: token_newlines
 
         op_token.kind == :pipe_op ->
           Enum.max([newlines_after_op, token_newlines, newlines_before_op])

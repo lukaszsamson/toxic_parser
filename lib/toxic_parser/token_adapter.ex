@@ -355,6 +355,12 @@ defmodule ToxicParser.TokenAdapter do
   defp newline_count({:eol, {_, _, count}}) when is_integer(count), do: count
   defp newline_count({:";", {_, _, count}}) when is_integer(count), do: count
   defp newline_count({:",", {_, _, count}}) when is_integer(count), do: count
+
+  # Literals encode parsed values in the 3rd element, not newline counts.
+  defp newline_count({:int, _meta, _value}), do: 0
+  defp newline_count({:flt, _meta, _value}), do: 0
+  defp newline_count({:char, _meta, _value}), do: 0
+
   # 3-tuple tokens like operators: {kind, {start, end, newlines}, value}
   defp newline_count({_kind, {_, _, count}, _value}) when is_integer(count), do: count
   # 4-tuple tokens like in_op: {kind, {start, end, newlines}, v1, v2}
