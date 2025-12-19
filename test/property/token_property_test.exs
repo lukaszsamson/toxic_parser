@@ -27,6 +27,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:alias, _meta, atom}), do: {:alias, atom}
   defp normalize_token({:at_op, _meta, :@}), do: :at
   defp normalize_token({:capture_int, _meta, :&}), do: :capture_int
+  defp normalize_token({:capture_op, _meta, :&}), do: :capture_op
   defp normalize_token({:kw_identifier, _meta, atom}), do: {:kw_identifier, atom}
   defp normalize_token({:atom, _meta, atom}), do: {:atom, atom}
   defp normalize_token({:int, _meta, chars}), do: {:int, chars}

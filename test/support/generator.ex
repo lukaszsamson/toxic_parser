@@ -114,11 +114,91 @@ defmodule ToxicParser.Generator do
     if depth <= 0 do
       sub_matched_expr_raw(state)
     else
+      state = decr_depth(state)
+
       frequency([
-        {10, sub_matched_expr_raw(state)},
-        {2, no_parens_one_expr_raw(decr_depth(state))}
+        {12, sub_matched_expr_raw(state)},
+        {3, no_parens_one_expr_raw(state)},
+        {2,
+         bind(unary_op_eol_no_ternary_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {1,
+         bind(ternary_op_eol_raw(), fn op ->
+           bind(matched_expr_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {2,
+         bind(at_op_eol_raw(), fn op ->
+           # `@` only lexes as :at_op when applied to an identifier-ish target.
+           bind(map_at_target_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {2,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(matched_expr_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)}
       ])
     end
+  end
+
+  defp matched_expr_no_ternary_prefix_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      sub_matched_expr_raw(state)
+    else
+      state = decr_depth(state)
+
+      frequency([
+        {12, sub_matched_expr_raw(state)},
+        {3, no_parens_one_expr_raw(state)},
+        {2,
+         bind(unary_op_eol_no_ternary_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {2,
+         bind(at_op_eol_raw(), fn op ->
+           bind(map_at_target_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {2,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)}
+      ])
+    end
+  end
+
+  defp ternary_op_eol_raw do
+    frequency([
+      {4, constant([{:ternary_op, :"//", 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:ternary_op, :"//", 0}] ++ eol)
+       end)}
+    ])
   end
 
   # sub_matched_expr -> no_parens_zero_expr
@@ -592,6 +672,17 @@ defmodule ToxicParser.Generator do
       {1,
        bind(eol_raw(), fn eol ->
          constant([:at] ++ eol)
+       end)}
+    ])
+  end
+
+  # capture_op_eol -> capture_op | capture_op eol
+  defp capture_op_eol_raw do
+    frequency([
+      {4, constant([:capture_op, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([:capture_op] ++ eol)
        end)}
     ])
   end
@@ -1468,6 +1559,12 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + 1}
     {{:capture_int, {start, stop, nil}, :&}, stop}
+  end
+
+  defp materialize_token(:capture_op, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:capture_op, {start, stop, nil}, :&}, stop}
   end
 
   defp materialize_token(:lbracket, {line, col}) do
