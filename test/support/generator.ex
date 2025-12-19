@@ -754,6 +754,8 @@ defmodule ToxicParser.Generator do
   defp access_expr_raw(state) do
     frequency([
       {5, empty_paren_raw()},
+      {1, fn_stab_raw(state)},
+      {1, paren_stab_raw(state)},
       {3, list_raw(state)},
       {2, tuple_raw(state)},
       {2, bitstring_raw(state)},
@@ -792,6 +794,102 @@ defmodule ToxicParser.Generator do
       {1,
        bind(eol_raw(), fn [{:eol, _n}] = eol ->
          constant(eol ++ [{:rbracket, nil}])
+       end)}
+    ])
+  end
+
+  # fn_eoe -> 'fn' | 'fn' eoe
+  defp fn_eoe_raw do
+    frequency([
+      {4, constant([:fn, {:gap_space, 1}])},
+      {1,
+       bind(eoe_raw(), fn eoe ->
+         constant([:fn] ++ eoe)
+       end)}
+    ])
+  end
+
+  # stab_expr -> expr
+  defp stab_expr_raw(state), do: expr_raw(decr_depth(state))
+
+  # stab -> stab_expr | stab eoe stab_expr
+  defp stab_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(1..max), fn count ->
+      stab_n_raw(state, count)
+    end)
+  end
+
+  defp stab_n_raw(state, 1), do: stab_expr_raw(state)
+
+  defp stab_n_raw(state, count) when count > 1 do
+    bind(stab_n_raw(state, count - 1), fn prev ->
+      bind(eoe_raw(), fn sep ->
+        bind(stab_expr_raw(state), fn last ->
+          constant(prev ++ sep ++ last)
+        end)
+      end)
+    end)
+  end
+
+  # stab_eoe -> stab | stab eoe
+  defp stab_eoe_raw(state) do
+    bind(stab_raw(state), fn stab ->
+      frequency([
+        {4, constant(stab)},
+        {1,
+         bind(eoe_raw(), fn eoe ->
+           constant(stab ++ eoe)
+         end)}
+      ])
+    end)
+  end
+
+  # access_expr -> fn_eoe stab_eoe 'end'
+  defp fn_stab_raw(state) do
+    state = decr_depth(state)
+
+    bind(fn_eoe_raw(), fn fn_kw ->
+      bind(stab_eoe_raw(state), fn stab ->
+        # Ensure separation before `end` even when stab_eoe doesn't end with eoe.
+        constant(fn_kw ++ stab ++ [{:gap_space, 1}, :end])
+      end)
+    end)
+  end
+
+  # access_expr -> open_paren stab_eoe ')'
+  # access_expr -> open_paren ';' stab_eoe ')'
+  # access_expr -> open_paren ';' close_paren
+  defp paren_stab_raw(state) do
+    state = decr_depth(state)
+
+    frequency([
+      {4,
+       bind(open_paren_raw(), fn open ->
+         bind(stab_eoe_raw(state), fn stab ->
+           bind(close_paren_raw(), fn close ->
+             constant(open ++ stab ++ close)
+           end)
+         end)
+       end)},
+      {2,
+       bind(open_paren_raw(), fn open ->
+         bind(semi_raw(), fn semi ->
+           bind(stab_eoe_raw(state), fn stab ->
+             bind(close_paren_raw(), fn close ->
+               constant(open ++ semi ++ stab ++ close)
+             end)
+           end)
+         end)
+       end)},
+      {1,
+       bind(open_paren_raw(), fn open ->
+         bind(semi_raw(), fn semi ->
+           bind(close_paren_raw(), fn close ->
+             constant(open ++ semi ++ close)
+           end)
+         end)
        end)}
     ])
   end
@@ -1388,6 +1486,8 @@ defmodule ToxicParser.Generator do
   defp access_expr_no_brackets_raw(state) do
     frequency([
       {5, empty_paren_raw()},
+      {1, fn_stab_raw(state)},
+      {1, paren_stab_raw(state)},
       {3, list_raw(state)},
       {2, tuple_raw(state)},
       {2, bitstring_raw(state)},
@@ -1951,6 +2051,10 @@ defmodule ToxicParser.Generator do
   defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
   defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:comma, a + b} | rest], acc)
 
+  # Toxic folds newlines after semicolon into the semicolon token meta (no standalone :eol token).
+  defp do_coalesce_eols([:semi, {:eol, n} | rest], acc), do: do_coalesce_eols([{:semi, n} | rest], acc)
+  defp do_coalesce_eols([{:semi, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:semi, a + b} | rest], acc)
+
   defp do_coalesce_eols([h | t], acc), do: do_coalesce_eols(t, [h | acc])
   defp do_coalesce_eols([], acc), do: Enum.reverse(acc)
 
@@ -1968,10 +2072,13 @@ defmodule ToxicParser.Generator do
     {{:eol, {start, stop, n}}, stop}
   end
 
-  defp materialize_token(:semi, {line, col}) do
+  defp materialize_token(:semi, pos), do: materialize_token({:semi, 0}, pos)
+
+  defp materialize_token({:semi, extra}, {line, col}) do
+    extra = extra || 0
     start = {line, col}
-    stop = {line, col + 1}
-    {{:";", {start, stop, 0}}, stop}
+    stop = if extra > 0, do: {line + extra, 1}, else: {line, col + 1}
+    {{:";", {start, stop, extra}}, stop}
   end
 
   defp materialize_token(:map_op, {line, col}) do
@@ -2213,10 +2320,26 @@ defmodule ToxicParser.Generator do
     {{:"(", {start, stop, nil}}, stop}
   end
 
-  defp materialize_token(:rparen, {line, col}) do
+  defp materialize_token(:rparen, pos), do: materialize_token({:rparen, nil}, pos)
+
+  defp materialize_token({:rparen, extra}, {line, col}) do
+    extra = extra || 0
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
     start = {line, col}
     stop = {line, col + 1}
-    {{:")", {start, stop, nil}}, stop}
+    {{:")", {start, stop, extra}}, stop}
+  end
+
+  defp materialize_token(:fn, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 2}
+    {{:fn, {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token(:end, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 3}
+    {{:end, {start, stop, nil}}, stop}
   end
 
   defp materialize_token({:identifier, atom}, {line, col}) do

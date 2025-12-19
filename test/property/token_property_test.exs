@@ -69,6 +69,8 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:dot_call_op, _meta, :.}), do: :dot_call_op
   defp normalize_token({:"(", _meta}), do: {:"("}
   defp normalize_token({:")", _meta}), do: {:")"}
+  defp normalize_token({:fn, _meta}), do: :fn
+  defp normalize_token({:end, _meta}), do: :end
   defp normalize_token({true, _meta}), do: true
   defp normalize_token({false, _meta}), do: false
   defp normalize_token({nil, _meta}), do: nil
