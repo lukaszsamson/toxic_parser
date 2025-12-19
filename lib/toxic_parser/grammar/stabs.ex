@@ -230,7 +230,8 @@ defmodule ToxicParser.Grammar.Stabs do
 
     token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-    newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
+    newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+    newlines_meta = Meta.newlines_meta(newlines)
 
     # Parse body (or empty if just ->)
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
@@ -275,7 +276,8 @@ defmodule ToxicParser.Grammar.Stabs do
                 stab_base_meta = token_meta(stab_tok.metadata)
                 token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-                newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
+                newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+                newlines_meta = Meta.newlines_meta(newlines)
 
                 with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
                   # Build guarded stab clause
@@ -396,7 +398,8 @@ defmodule ToxicParser.Grammar.Stabs do
     stab_base_meta = token_meta(stab_tok.metadata)
     token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-    newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
+    newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+    newlines_meta = Meta.newlines_meta(newlines)
 
     with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
       parens_meta =
@@ -442,7 +445,8 @@ defmodule ToxicParser.Grammar.Stabs do
                 stab_base_meta = token_meta(stab_tok.metadata)
                 token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-                newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
+                newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+                newlines_meta = Meta.newlines_meta(newlines)
 
                 with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
                   parens_meta =
@@ -498,7 +502,8 @@ defmodule ToxicParser.Grammar.Stabs do
                 stab_base_meta = token_meta(stab_tok.metadata)
                 token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-                newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
+                newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+                newlines_meta = Meta.newlines_meta(newlines)
 
                 with {:ok, body, state, log} <- parse_stab_body(state, ctx, log) do
                   parens_meta =
@@ -687,12 +692,7 @@ defmodule ToxicParser.Grammar.Stabs do
         token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
         {state, newlines_after} = EOE.skip_newlines_only(state, 0)
 
-        newlines =
-          if terminator == :")" do
-            if newlines_after > 0, do: newlines_after, else: token_newlines
-          else
-            max(token_newlines, newlines_after)
-          end
+        newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
 
         stab_meta =
           if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
@@ -801,7 +801,7 @@ defmodule ToxicParser.Grammar.Stabs do
                     # and from the token itself when `->` starts on a new line.
                     token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
                     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
-                    newlines = max(token_newlines, newlines_after)
+                    newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
 
                     stab_meta =
                       if newlines > 0,

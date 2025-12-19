@@ -30,7 +30,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
-        IO.puts(code)
+        # IO.puts(code)
         run_comparison(code)
       end
     end
