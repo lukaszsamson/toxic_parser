@@ -1798,8 +1798,10 @@ defmodule ToxicParser.Generator do
   # no_parens_expr -> at_op_eol no_parens_expr
   # no_parens_expr -> capture_op_eol no_parens_expr
   # no_parens_expr -> ellipsis_op no_parens_expr
+  # no_parens_expr -> unary_op_eol no_parens_expr
   # no_parens_expr -> no_parens_one_ambig_expr
   # no_parens_expr -> no_parens_many_expr
+  # no_parens_expr -> matched_expr no_parens_op_expr
   defp no_parens_expr_raw(%{depth: depth} = state) do
     state = decr_depth(state)
 
@@ -1814,6 +1816,13 @@ defmodule ToxicParser.Generator do
     else
       frequency([
         {6, base},
+        {2, no_parens_expr_binary_raw(state)},
+        {1,
+         bind(unary_op_eol_raw(), fn op ->
+           bind(no_parens_expr_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
         {1,
          bind(at_op_eol_raw(), fn op ->
            bind(no_parens_expr_raw(state), fn expr ->
@@ -1834,6 +1843,86 @@ defmodule ToxicParser.Generator do
          end)}
       ])
     end
+  end
+
+  defp no_parens_expr_binary_raw(state) do
+    bind(no_parens_lhs_raw(state), fn lhs ->
+      bind(no_parens_op_expr_raw(state), fn rhs ->
+        constant(lhs ++ rhs)
+      end)
+    end)
+  end
+
+  # Keep LHS free of :op_identifier (it is context-sensitive and breaks roundtrips).
+  defp no_parens_lhs_raw(state) do
+    frequency([
+      {10, sub_matched_expr_raw(state)},
+      {2,
+       bind(unary_op_eol_no_ternary_raw(), fn op ->
+         bind(sub_matched_expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  # no_parens_op_expr -> *_op_eol no_parens_expr | when_op_eol call_args_no_parens_kw
+  defp no_parens_op_expr_raw(state) do
+    pre = [{:gap_space, 1}]
+
+    frequency([
+      {4, no_parens_bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
+      {3, no_parens_bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
+      {3, no_parens_bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
+      {2, no_parens_bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
+      {2, no_parens_bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
+      {2, no_parens_bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
+      {2, no_parens_bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_pipe_raw(pre, state)},
+      {1, no_parens_bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
+      {1, no_parens_bin_op_rhs_raw(pre, arrow_op_eol_raw(), state)},
+      {1, no_parens_when_kw_rhs_raw(pre, state)}
+    ])
+  end
+
+  defp no_parens_bin_op_rhs_raw(pre, op_eol_gen, state) do
+    bind(op_eol_gen, fn op ->
+      bind(no_parens_expr_raw(state), fn rhs ->
+        constant(pre ++ op ++ rhs)
+      end)
+    end)
+  end
+
+  defp no_parens_bin_op_rhs_pipe_raw(pre, state) do
+    bind(pipe_op_eol_raw(), fn op ->
+      case List.last(op) do
+        {:eol, _} ->
+          bind(no_parens_expr_raw(state), fn rhs ->
+            constant(pre ++ op ++ rhs)
+          end)
+
+        _ ->
+          bind(no_parens_expr_raw(state), fn rhs ->
+            constant(pre ++ op ++ [{:gap_space, 1}] ++ rhs)
+          end)
+      end
+    end)
+  end
+
+  defp no_parens_when_kw_rhs_raw(pre, state) do
+    bind(when_op_eol_raw(), fn op ->
+      bind(call_args_no_parens_kw_raw(state), fn kw ->
+        constant(pre ++ op ++ kw)
+      end)
+    end)
   end
 
   # no_parens_one_ambig_expr -> dot_op_identifier call_args_no_parens_ambig
