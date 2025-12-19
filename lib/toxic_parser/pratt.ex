@@ -538,24 +538,61 @@ defmodule ToxicParser.Pratt do
           # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
           # The @foo becomes the subject, bracket access is handled at outer level
         else
-          if op_token.kind == :at_op and operand_token.kind == :bracket_identifier do
-            op = op_token.value
-            meta = build_meta(op_token.metadata)
-            operand = Builder.Helpers.from_token(operand_token)
-            ast = Builder.Helpers.unary(op, operand, meta)
-
+          if op_token.kind == :at_op do
             at_bp =
               case Precedence.unary(:at_op) do
                 {bp, _assoc} -> bp
                 _ -> 320
               end
 
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"["}, _} ->
-                led_bracket(ast, state, log, at_bp, context, [])
+            # Follow elixir_parser.yrl at_op rules:
+            # - matched_expr -> at_op_eol matched_expr
+            # - unmatched_expr -> at_op_eol expr
+            # - no_parens_expr -> at_op_eol no_parens_expr
+            loose_operand? =
+              case TokenAdapter.peek(state) do
+                {:ok, next_tok, _} ->
+                  operand_end_col = operand_token.metadata.range.end.column
+                  next_start_col = next_tok.metadata.range.start.column
 
-              _ ->
+                  operand_token.kind == :identifier and next_start_col > operand_end_col and
+                    next_tok.kind not in [:dual_op, :dot_op, :"[", :"(", :"{", :"<<"] and
+                    (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok))
+
+                _ ->
+                  false
+              end
+
+            if operand_token.kind == :bracket_identifier do
+              op = op_token.value
+              meta = build_meta(op_token.metadata)
+              operand = Builder.Helpers.from_token(%{operand_token | kind: :identifier})
+              ast = Builder.Helpers.unary(op, operand, meta)
+              {:ok, ast, state, log}
+            else
+              {operand_ctx, operand_min_bp0} =
+                cond do
+                  Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
+                    {Context.no_parens_expr(), at_bp}
+
+                  loose_operand? ->
+                    {Context.expr(), 0}
+
+                  true ->
+                    {Context.matched_expr(), at_bp}
+                end
+
+              operand_min_bp = if operand_token.kind == :at_op and operand_min_bp0 == at_bp, do: 310, else: operand_min_bp0
+
+              with {:ok, operand, state, log} <-
+                     parse_rhs(operand_token, state, operand_ctx, log, operand_min_bp,
+                       unary_operand: true
+                     ) do
+                op = op_token.value
+                meta = build_meta(op_token.metadata)
+                ast = Builder.Helpers.unary(op, operand, meta)
                 {:ok, ast, state, log}
+              end
             end
           else
             # In Elixir's grammar, unary operators take different operand types:
@@ -1033,8 +1070,7 @@ defmodule ToxicParser.Pratt do
       {kind, {bp, assoc}} when is_tuple({bp, assoc}) ->
         allow_extension? = Keyword.get(opts, :allow_no_parens_extension?, true)
 
-        if allow_extension? and min_bp == 0 and
-             is_no_parens_op_expr?(kind) and Context.allow_no_parens_expr?(context) do
+        if allow_extension? and min_bp == 0 and is_no_parens_op_expr?(kind) and Context.allow_no_parens_expr?(context) do
           led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
         else
           # No continuation operator found - push back EOE tokens
@@ -1355,7 +1391,7 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
-      # This only applies when `no_parens_expr` extension is enabled.
+      # Only valid when no-parens extension is enabled.
       {:ok, _rhs_tok, _} when op_token.kind == :when_op and context.allow_no_parens_expr ->
         case Keywords.try_parse_call_args_no_parens_kw(state, context, log) do
           {:ok, kw_list, state, log} ->
@@ -1745,8 +1781,8 @@ defmodule ToxicParser.Pratt do
   # Helper to parse RHS of `when` binary operator
   # Handles both regular RHS and keyword_key returns from quoted keywords
   defp parse_when_binary_rhs(state, left, op_token, rhs_min_bp, min_bp, newlines, context, log) do
-    # Restrict context for RHS parsing to prevent nested operator bypass
-    rhs_context = restrict_no_parens_extension(context)
+    # Keep allow_no_parens_expr enabled for nested `when` RHS (elixir_parser.yrl allows it).
+    rhs_context = context
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
@@ -1895,7 +1931,10 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
-        rhs_opts = Keyword.put(opts, :allow_no_parens_extension?, false)
+        rhs_opts =
+          opts
+          |> Keyword.put(:allow_no_parens_extension?, false)
+          |> Keyword.put(:unary_operand, false)
 
         with {:ok, right, state, log} <-
                parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp, rhs_opts) do
