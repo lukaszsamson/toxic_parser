@@ -3280,6 +3280,22 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 93" do
       assert_conforms("\n\n// if **\n\n@ eggs.\nfoo")
     end
+
+    test "repro 94" do
+      assert_conforms("\n\n;@ bar qux.bar do rescue bar; end + & qux.foo -delta, baz: \nreceive, qux: foo -0")
+    end
+
+    test "repro 95" do
+      assert_conforms("\n;baz\n;unless .. []\n;...  when gamma.eggs when baz: baz gamma +26, bar: qux, bar: \n\nalpha, baz: gamma.\n\nqux, foo: delta beta +39, beta: spam foo.eggs, delta: (beta\n;beta\n\n;receive).delta, delta: alpha, delta: beta, bar: eggs.delta -87;eggs;gamma.foo")
+    end
+
+    test "repro 96" do
+      assert_conforms("& foo || foo.unless do\ngamma.\ndelta end or baz\n\n;beta = @\nqux;true in\nfoo")
+    end
+
+    test "repro 97" do
+      assert_conforms("! gamma.try\n\n;& nil * 31\n;! qux.\ngamma.(gamma,(\ndelta.beta\n;with\n\n;qux (;gamma.\n\nbar\nbeta;(with\n\n;foo\n\nif\n;bar\n;spam;).\nspam\n\ncond).bar bar foo, qux: beta, eggs: \nbar bar -7\n;gamma.alpha\nspam).beta,spam: \nbeta,qux: (eggs.\n\nspam;).\n\ndelta)(for,qux: \n\nspam,alpha: delta,alpha: bar.\n\nbar)\n\n;@ case when ~~~ qux when alpha: delta, foo: alpha spam delta delta baz.spam.delta -0")
+    end
   end
 
   # =============================================================================
