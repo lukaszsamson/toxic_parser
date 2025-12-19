@@ -3296,6 +3296,54 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 97" do
       assert_conforms("! gamma.try\n\n;& nil * 31\n;! qux.\ngamma.(gamma,(\ndelta.beta\n;with\n\n;qux (;gamma.\n\nbar\nbeta;(with\n\n;foo\n\nif\n;bar\n;spam;).\nspam\n\ncond).bar bar foo, qux: beta, eggs: \nbar bar -7\n;gamma.alpha\nspam).beta,spam: \nbeta,qux: (eggs.\n\nspam;).\n\ndelta)(for,qux: \n\nspam,alpha: delta,alpha: bar.\n\nbar)\n\n;@ case when ~~~ qux when alpha: delta, foo: alpha spam delta delta baz.spam.delta -0")
     end
+
+    test "repro 98" do
+      assert_conforms("\n// (beta.qux if, beta: foo\n;).\nbar ** foo")
+    end
+
+    test "repro 99" do
+      assert_conforms("@ @ baz.alpha .. eggs\n")
+    end
+
+    test "repro 100" do
+      assert_conforms("\n<< qux,// ... foo,...  >>\n")
+    end
+
+    test "repro 101" do
+      assert_conforms("@ gamma && @ case do end;delta @ qux, baz: foo")
+    end
+
+    test "repro 102" do
+      assert_conforms("// spam.qux;//\n@ @ State.\n\nState\n\neggs()(\n\ngamma: foo,)")
+    end
+
+    test "repro 103" do
+      assert_conforms("foo do :ok end -@d do :error end")
+    end
+
+    test "repro 104" do
+      assert_conforms("with x <- 0\n@a do x end")
+    end
+
+    test "repro 105" do
+      assert_conforms("def foo() when l;@e do 1 end")
+    end
+
+    test "repro 106" do
+      assert_conforms("@e do :ok end")
+    end
+
+    test "repro 107" do
+      assert_conforms("with \n@b!A <- x do x end")
+    end
+
+    test "repro 108" do
+      assert_conforms("@@c.*")
+    end
+
+    test "repro 109" do
+      assert_conforms("if .b*@a do :ok end")
+    end
   end
 
   # =============================================================================
