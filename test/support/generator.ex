@@ -681,6 +681,91 @@ defmodule ToxicParser.Generator do
     end)
   end
 
+  # call_args_no_parens_all -> call_args_no_parens_one | call_args_no_parens_ambig | call_args_no_parens_many
+  defp call_args_no_parens_all_raw(state) do
+    frequency([
+      {5, call_args_no_parens_one_raw(state)},
+      {1, call_args_no_parens_ambig_raw()},
+      {3, call_args_no_parens_many_raw(state)}
+    ])
+  end
+
+  # call_args_no_parens_ambig -> no_parens_expr
+  defp call_args_no_parens_ambig_raw, do: no_parens_expr_stub_raw()
+
+  # call_args_no_parens_expr (minimal) -> matched_expr
+  defp call_args_no_parens_expr_raw(state), do: matched_expr_raw(decr_depth(state))
+
+  # call_args_no_parens_comma_expr -> matched_expr ',' call_args_no_parens_expr
+  # call_args_no_parens_comma_expr -> call_args_no_parens_comma_expr ',' call_args_no_parens_expr
+  defp call_args_no_parens_comma_expr_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(2..max), fn count ->
+      call_args_no_parens_comma_expr_n_raw(state, count)
+    end)
+  end
+
+  defp call_args_no_parens_comma_expr_n_raw(state, 2) do
+    bind(matched_expr_raw(decr_depth(state)), fn first ->
+      bind(call_args_no_parens_expr_raw(state), fn second ->
+        constant(first ++ [:comma, {:gap_space, 1}] ++ second)
+      end)
+    end)
+  end
+
+  defp call_args_no_parens_comma_expr_n_raw(state, count) when count > 2 do
+    bind(call_args_no_parens_comma_expr_n_raw(state, count - 1), fn prev ->
+      bind(call_args_no_parens_expr_raw(state), fn last ->
+        constant(prev ++ [:comma, {:gap_space, 1}] ++ last)
+      end)
+    end)
+  end
+
+  # call_args_no_parens_many -> matched_expr ',' call_args_no_parens_kw
+  # call_args_no_parens_many -> call_args_no_parens_comma_expr
+  # call_args_no_parens_many -> call_args_no_parens_comma_expr ',' call_args_no_parens_kw
+  defp call_args_no_parens_many_raw(state) do
+    frequency([
+      {2,
+       bind(matched_expr_raw(decr_depth(state)), fn first ->
+         bind(call_args_no_parens_kw_raw(state), fn kw ->
+           constant(first ++ [:comma, {:gap_space, 1}] ++ kw)
+         end)
+       end)},
+      {4, call_args_no_parens_comma_expr_raw(state)},
+      {2,
+       bind(call_args_no_parens_comma_expr_raw(state), fn exprs ->
+         bind(call_args_no_parens_kw_raw(state), fn kw ->
+           constant(exprs ++ [:comma, {:gap_space, 1}] ++ kw)
+         end)
+       end)}
+    ])
+  end
+
+  # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
+  # stab_parens_many -> open_paren call_args_no_parens_many close_paren
+  defp stab_parens_many_raw(state) do
+    frequency([
+      {3,
+       bind(open_paren_raw(), fn open ->
+         bind(call_args_no_parens_kw_raw(state), fn kw ->
+           bind(close_paren_raw(), fn close ->
+             constant(open ++ kw ++ close)
+           end)
+         end)
+       end)},
+      {2,
+       bind(open_paren_raw(), fn open ->
+         bind(call_args_no_parens_many_raw(state), fn many ->
+           bind(close_paren_raw(), fn close ->
+             constant(open ++ many ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
   # dot_identifier -> identifier | matched_expr dot_op identifier
   defp dot_identifier_raw(state) do
     frequency([
@@ -809,8 +894,72 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  # stab_expr -> expr
-  defp stab_expr_raw(state), do: expr_raw(decr_depth(state))
+  # stab_expr has multiple forms in yrl; implement a small subset.
+  defp stab_expr_raw(state) do
+    state = decr_depth(state)
+
+    frequency([
+      {6, expr_raw(state)},
+      {4, stab_op_eol_and_expr_raw(state)},
+      {2,
+       bind(empty_paren_raw(), fn parens ->
+         bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
+           constant(parens ++ [{:gap_space, 1}] ++ op_and_rhs)
+         end)
+       end)},
+      {1,
+       bind(empty_paren_raw(), fn parens ->
+         bind(expr_raw(state), fn when_expr ->
+           bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
+             constant(parens ++ [{:gap_space, 1}] ++ when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs)
+           end)
+         end)
+       end)},
+      {2,
+       bind(call_args_no_parens_all_raw(state), fn args ->
+         bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
+           constant(args ++ [{:gap_space, 1}] ++ op_and_rhs)
+         end)
+       end)},
+      {2,
+       bind(stab_parens_many_raw(state), fn parens_many ->
+         bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
+           constant(parens_many ++ [{:gap_space, 1}] ++ op_and_rhs)
+         end)
+       end)},
+      {1,
+       bind(stab_parens_many_raw(state), fn parens_many ->
+         bind(expr_raw(state), fn when_expr ->
+           bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
+             constant(parens_many ++ [{:gap_space, 1}] ++ when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs)
+           end)
+         end)
+       end)},
+      {1, stab_op_eol_raw()}
+    ])
+  end
+
+  # stab_op_eol -> stab_op | stab_op eol
+  defp stab_op_eol_raw do
+    frequency([
+      {4, constant([{:stab_op, :->, 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:stab_op, :->, 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp when_op_raw, do: [{:when_op, :when, 0}, {:gap_space, 1}]
+
+  # stab_op_eol_and_expr -> stab_op_eol expr
+  defp stab_op_eol_and_expr_raw(state) do
+    bind(stab_op_eol_raw(), fn op ->
+      bind(expr_raw(state), fn rhs ->
+        constant(op ++ rhs)
+      end)
+    end)
+  end
 
   # stab -> stab_expr | stab eoe stab_expr
   defp stab_raw(state) do
@@ -2047,6 +2196,11 @@ defmodule ToxicParser.Generator do
     do_coalesce_eols([{:when_op, op, extra + n} | rest], acc)
   end
 
+  defp do_coalesce_eols([{:eol, n}, {:stab_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:stab_op, op, extra + n} | rest], acc)
+  end
+
   # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
   defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
   defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:comma, a + b} | rest], acc)
@@ -2226,6 +2380,13 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + String.length(Atom.to_string(op))}
     {{:arrow_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:stab_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:stab_op, {start, stop, extra}, op}, stop}
   end
 
   defp materialize_token({:ternary_op, op}, pos), do: materialize_token({:ternary_op, op, 0}, pos)

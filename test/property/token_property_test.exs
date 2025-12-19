@@ -54,6 +54,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:in_match_op, meta, op}), do: {:in_match_op, op, elem(meta, 2) || 0}
   defp normalize_token({:type_op, meta, op}), do: {:type_op, op, elem(meta, 2) || 0}
   defp normalize_token({:when_op, meta, _op}), do: {:when_op, :when, elem(meta, 2) || 0}
+  defp normalize_token({:stab_op, meta, op}), do: {:stab_op, op, elem(meta, 2) || 0}
   defp normalize_token({:comp_op, meta, op}), do: {:comp_op, op, elem(meta, 2) || 0}
   defp normalize_token({:rel_op, meta, op}), do: {:rel_op, op, elem(meta, 2) || 0}
   defp normalize_token({:arrow_op, meta, op}), do: {:arrow_op, op, elem(meta, 2) || 0}
