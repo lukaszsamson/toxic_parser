@@ -3140,6 +3140,22 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 60" do
       assert_conforms("fn (a, d\n) -> :ok end")
     end
+
+    test "repro 61" do
+      assert_conforms("@ Config;delta / %{spam|\nqux: \n\nunless,alpha: spam.\nunless}\n\nunless;qux in !\nbaz foo")
+    end
+
+    test "repro 62" do
+      assert_conforms("with\n@ delta && foo.delta;foo @\n\nalpha <-\nalpha.gamma spam: @\nfor.{\nalpha,alpha.spam}, gamma: %{beta|\n\nbeta: gamma,alpha: alpha,foo: gamma.try\n\n} +\n\nfoo, delta: [cond,alpha,spam] / - spam.\nbaz;beta\n\nbar spam -54 = - & delta if")
+    end
+
+    test "repro 63" do
+      assert_conforms("\n;qux.spam\n\n..\nspam.delta ! ... beta.foo")
+    end
+
+    test "repro 64" do
+      assert_conforms("^ ! eggs -62\n\n..\n^ delta[foo]")
+    end
   end
 
   # =============================================================================
