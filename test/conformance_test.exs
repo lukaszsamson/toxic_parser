@@ -3256,6 +3256,30 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 87" do
       assert_conforms("receive\n:bar =\n... ;// (\n) / alpha.\nfoo")
     end
+
+    test "repro 88" do
+      assert_conforms("foo.gamma;not &\n\nspam\n;// @ alpha ** if")
+    end
+
+    test "repro 89" do
+      assert_conforms("\nqux -61 .. ... \n;! eggs;eggs\n\n;//\n:baz ** beta\n\n- + baz.bar ** !\n\n(gamma;).foo ++ + foo")
+    end
+
+    test "repro 90" do
+      assert_conforms("\n\n// if **\n\n@ eggs.\nfoo")
+    end
+
+    test "repro 91" do
+      assert_conforms("//\n\ntry ** try\n")
+    end
+
+    test "repro 92" do
+      assert_conforms("\nqux -61 .. ... \n;! eggs;eggs\n\n;//\n:baz ** beta\n\n- + baz.bar ** !\n\n(gamma;).foo ++ + foo")
+    end
+
+    test "repro 93" do
+      assert_conforms("\n\n// if **\n\n@ eggs.\nfoo")
+    end
   end
 
   # =============================================================================

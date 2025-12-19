@@ -706,8 +706,15 @@ defmodule ToxicParser.Pratt do
     # Parse the operand with unary precedence
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
-        {mult_bp, _assoc} = Precedence.binary(:mult_op)
-        operand_min_bp = mult_bp + 1
+        operand_min_bp =
+          if operand_token.kind == :"(" do
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :")"}, _} -> 300
+              _ -> 221
+            end
+          else
+            300
+          end
 
         with {:ok, operand, state, log} <-
                parse_rhs(operand_token, state, context, log, operand_min_bp, unary_operand: true) do
