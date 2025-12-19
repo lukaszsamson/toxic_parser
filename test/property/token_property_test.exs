@@ -21,6 +21,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_tokens(tokens), do: Enum.map(tokens, &normalize_token/1)
 
   defp normalize_token({:identifier, _meta, atom}), do: {:identifier, atom}
+  defp normalize_token({:paren_identifier, _meta, atom}), do: {:paren_identifier, atom}
   defp normalize_token({:bracket_identifier, _meta, atom}), do: {:bracket_identifier, atom}
   defp normalize_token({:alias, _meta, atom}), do: {:alias, atom}
   defp normalize_token({:at_op, _meta, :@}), do: :at
@@ -49,6 +50,7 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:",", _meta}), do: :comma
   defp normalize_token({:";", _meta}), do: {:";"}
   defp normalize_token({:., _meta}), do: :dot
+  defp normalize_token({:dot_call_op, _meta, :.}), do: :dot_call_op
   defp normalize_token({:"(", _meta}), do: {:"("}
   defp normalize_token({:")", _meta}), do: {:")"}
   defp normalize_token({true, _meta}), do: true
