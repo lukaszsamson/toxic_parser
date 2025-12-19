@@ -116,6 +116,14 @@ defmodule ToxicParser.Generator do
     ])
   end
 
+  defp expr_no_ternary_prefix_raw(state) do
+    frequency([
+      {8, matched_expr_no_ternary_prefix_raw(state)},
+      {2, no_parens_expr_no_ternary_prefix_raw(state)},
+      {2, unmatched_expr_no_ternary_prefix_raw(state)}
+    ])
+  end
+
   # matched_expr -> sub_matched_expr
   # matched_expr -> no_parens_one_expr
   defp matched_expr_raw(%{depth: depth} = state) do
@@ -392,7 +400,7 @@ defmodule ToxicParser.Generator do
   end
 
   defp concat_op_eol_raw do
-    bind(member_of([:++, :--, :+++, :---]), fn op ->
+    bind(member_of([:++, :--, :+++, :---, :<>]), fn op ->
       frequency([
         {4, constant([{:concat_op, op, 0}, {:gap_space, 1}])},
         {1,
@@ -449,13 +457,15 @@ defmodule ToxicParser.Generator do
   end
 
   defp in_op_eol_raw do
-    frequency([
-      {4, constant([{:in_op, :in, 0}, {:gap_space, 1}])},
-      {1,
-       bind(eol_raw(), fn eol ->
-         constant([{:in_op, :in, 0}] ++ eol)
-       end)}
-    ])
+    bind(member_of([:in, :"not in"]), fn op ->
+      frequency([
+        {4, constant([{:in_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:in_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
   end
 
   defp in_match_op_eol_raw do
@@ -1440,6 +1450,8 @@ defmodule ToxicParser.Generator do
       frequency([
         {4, constant([{:unary_op, :!}])},
         {1, constant([{:unary_op, :^}])},
+        {2, constant([{:unary_op, :not}])},
+        {1, constant([{:unary_op, :"~~~"}])},
         {2, constant([{:dual_op, :+}])},
         {2, constant([{:dual_op, :-}])},
         {1, constant([{:ternary_op, :"//", 0}])}
@@ -1600,6 +1612,8 @@ defmodule ToxicParser.Generator do
       frequency([
         {4, constant([{:unary_op, :!}])},
         {1, constant([{:unary_op, :^}])},
+        {2, constant([{:unary_op, :not}])},
+        {1, constant([{:unary_op, :"~~~"}])},
         {2, constant([{:dual_op, :+}])},
         {2, constant([{:dual_op, :-}])}
       ])
@@ -1968,7 +1982,14 @@ defmodule ToxicParser.Generator do
         {2, no_parens_expr_binary_raw(state)},
         {1,
          bind(unary_op_eol_raw(), fn op ->
-           bind(no_parens_expr_raw(state), fn expr ->
+           rhs_gen =
+             case {List.first(op), List.last(op)} do
+               {{:ternary_op, _, _}, _} -> no_parens_expr_raw(state)
+               {_, {:eol, _}} -> no_parens_expr_raw(state)
+               _ -> no_parens_expr_no_ternary_prefix_raw(state)
+             end
+
+           bind(rhs_gen, fn expr ->
              constant(op ++ expr)
            end)
          end)},
@@ -1987,6 +2008,49 @@ defmodule ToxicParser.Generator do
         {1,
          bind(ellipsis_op_raw(), fn op ->
            bind(no_parens_expr_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)}
+      ])
+    end
+  end
+
+  defp no_parens_expr_no_ternary_prefix_raw(%{depth: depth} = state) do
+    state = decr_depth(state)
+
+    base =
+      frequency([
+        {6, no_parens_one_ambig_expr_raw(state)},
+        {4, no_parens_many_expr_raw(state)}
+      ])
+
+    if depth <= 0 do
+      base
+    else
+      frequency([
+        {6, base},
+        {2, no_parens_expr_binary_raw(state)},
+        {1,
+         bind(unary_op_eol_no_ternary_raw(), fn op ->
+           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
+        {1,
+         bind(at_op_eol_raw(), fn op ->
+           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
+        {1,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
+        {1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
              constant(op ++ expr)
            end)
          end)}
@@ -2044,7 +2108,13 @@ defmodule ToxicParser.Generator do
 
   defp no_parens_bin_op_rhs_raw(pre, op_eol_gen, state) do
     bind(op_eol_gen, fn op ->
-      bind(no_parens_expr_raw(state), fn rhs ->
+      rhs_gen =
+        case List.last(op) do
+          {:eol, _} -> no_parens_expr_raw(state)
+          _ -> no_parens_expr_no_ternary_prefix_raw(state)
+        end
+
+      bind(rhs_gen, fn rhs ->
         constant(pre ++ op ++ rhs)
       end)
     end)
@@ -2299,8 +2369,30 @@ defmodule ToxicParser.Generator do
     end
   end
 
+  defp unmatched_expr_no_ternary_prefix_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      matched_expr_no_ternary_prefix_raw(state)
+    else
+      state = decr_depth(state)
+
+      frequency([
+        {10, unmatched_expr_no_binary_no_ternary_prefix_raw(state)},
+        {2, unmatched_expr_matched_unmatched_no_ternary_prefix_raw(state)},
+        {3, unmatched_expr_binary_no_ternary_prefix_raw(state)}
+      ])
+    end
+  end
+
   defp unmatched_expr_matched_unmatched_raw(state) do
     bind(matched_expr_raw(state), fn lhs ->
+      bind(unmatched_op_expr_raw(state), fn rhs ->
+        constant(lhs ++ rhs)
+      end)
+    end)
+  end
+
+  defp unmatched_expr_matched_unmatched_no_ternary_prefix_raw(state) do
+    bind(matched_expr_no_ternary_prefix_raw(state), fn lhs ->
       bind(unmatched_op_expr_raw(state), fn rhs ->
         constant(lhs ++ rhs)
       end)
@@ -2313,6 +2405,43 @@ defmodule ToxicParser.Generator do
       {1, block_expr_raw(state)},
       {2,
        bind(unary_op_eol_raw(), fn op ->
+         rhs_gen =
+           case List.last(op) do
+             {:eol, _} -> expr_raw(state)
+             _ -> expr_no_ternary_prefix_raw(state)
+           end
+
+         bind(rhs_gen, fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(at_op_eol_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(capture_op_eol_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  defp unmatched_expr_no_binary_no_ternary_prefix_raw(state) do
+    frequency([
+      {10, matched_expr_no_ternary_prefix_raw(state)},
+      {1, block_expr_raw(state)},
+      {2,
+       bind(unary_op_eol_no_ternary_raw(), fn op ->
          bind(expr_raw(state), fn rhs ->
            constant(op ++ rhs)
          end)
@@ -2340,6 +2469,21 @@ defmodule ToxicParser.Generator do
 
   defp unmatched_expr_binary_raw(state) do
     bind(unmatched_expr_no_binary_raw(state), fn lhs ->
+      bind(
+        frequency([
+          {4, matched_op_expr_raw(state)},
+          {4, unmatched_op_expr_raw(state)},
+          {2, no_parens_op_expr_raw(state)}
+        ]),
+        fn rhs ->
+          constant(lhs ++ rhs)
+        end
+      )
+    end)
+  end
+
+  defp unmatched_expr_binary_no_ternary_prefix_raw(state) do
+    bind(unmatched_expr_no_binary_no_ternary_prefix_raw(state), fn lhs ->
       bind(
         frequency([
           {4, matched_op_expr_raw(state)},
@@ -2381,7 +2525,13 @@ defmodule ToxicParser.Generator do
 
   defp unmatched_bin_op_rhs_raw(pre, op_eol_gen, state) do
     bind(op_eol_gen, fn op ->
-      bind(unmatched_expr_raw(state), fn rhs ->
+      rhs_gen =
+        case List.last(op) do
+          {:eol, _} -> unmatched_expr_raw(state)
+          _ -> unmatched_expr_no_ternary_prefix_raw(state)
+        end
+
+      bind(rhs_gen, fn rhs ->
         constant(pre ++ op ++ rhs)
       end)
     end)
@@ -2723,7 +2873,7 @@ defmodule ToxicParser.Generator do
 
   defp materialize_token({:unary_op, op}, {line, col}) do
     start = {line, col}
-    stop = {line, col + 1}
+    stop = {line, col + String.length(Atom.to_string(op))}
     {{:unary_op, {start, stop, nil}, op}, stop}
   end
 
@@ -2790,10 +2940,21 @@ defmodule ToxicParser.Generator do
   end
 
   defp materialize_token({:in_op, op, extra}, {line, col}) do
-    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    extra = if extra in [0, nil], do: nil, else: extra
+    {line, col} = if is_integer(extra) and extra > 0, do: {line + extra, 1}, else: {line, col}
     start = {line, col}
-    stop = {line, col + String.length(Atom.to_string(op))}
-    {{:in_op, {start, stop, extra}, op}, stop}
+
+    case op do
+      :"not in" ->
+        stop = {line, col + String.length(Atom.to_string(op))}
+        in_start = {line, col + 4}
+        in_meta = {in_start, stop, nil}
+        {{:in_op, {start, stop, extra}, op, in_meta}, stop}
+
+      _ ->
+        stop = {line, col + String.length(Atom.to_string(op))}
+        {{:in_op, {start, stop, extra}, op}, stop}
+    end
   end
 
   defp materialize_token({:in_match_op, op, extra}, {line, col}) do
