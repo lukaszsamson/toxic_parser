@@ -4,6 +4,7 @@ defmodule ToxicParser.Generator do
   import StreamData
 
   @identifiers ~w(foo bar baz qux spam eggs alpha beta gamma delta)a
+  @do_identifiers ~w(if case cond unless with for try receive)a
 
   # Minimal grammar-faithful token generator (starter subset).
   #
@@ -150,7 +151,53 @@ defmodule ToxicParser.Generator do
     end)
   end
 
-  defp no_parens_zero_expr_raw(_state), do: identifier_raw()
+  # no_parens_zero_expr -> dot_do_identifier | dot_identifier
+  defp no_parens_zero_expr_raw(state) do
+    frequency([
+      {2, dot_do_identifier_raw(state)},
+      {8, dot_identifier_raw(state)}
+    ])
+  end
+
+  # dot_identifier -> identifier | matched_expr dot_op identifier
+  defp dot_identifier_raw(state) do
+    frequency([
+      {5, identifier_raw()},
+      {2,
+       bind(dot_lhs_raw(state), fn lhs ->
+         bind(identifier_raw(), fn rhs ->
+           constant(lhs ++ [:dot] ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  # dot_do_identifier -> do_identifier | matched_expr dot_op do_identifier
+  defp dot_do_identifier_raw(state) do
+    frequency([
+      {3, do_identifier_raw()},
+      {1,
+       bind(dot_lhs_raw(state), fn lhs ->
+         bind(do_identifier_raw(), fn rhs ->
+           constant(lhs ++ [:dot] ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  # Minimal lhs for dotted identifiers.
+  defp dot_lhs_raw(state) do
+    frequency([
+      {5, identifier_raw()},
+      {1, parens_raw(state)}
+    ])
+  end
+
+  defp do_identifier_raw do
+    # TODO: should be a do_identifier
+    member_of(@do_identifiers)
+    |> map(fn atom -> [{:identifier, atom}] end)
+  end
 
   defp identifier_raw do
     member_of(@identifiers)
@@ -164,18 +211,77 @@ defmodule ToxicParser.Generator do
   defp ellipsis_op_raw, do: constant([{:ellipsis_op, :...}])
 
   # Minimal subset of access_expr (yrl has many more).
+  # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom.
   defp access_expr_raw(state) do
     frequency([
       {5, empty_paren_raw()},
+      {4, bracket_expr_raw(state)},
+      {2, bracket_at_expr_raw(state)},
+      {2, capture_int_int_raw()},
       {3, int_raw()},
+      {2, flt_raw()},
+      {2, char_raw()},
+      {2, atom_raw()},
       {1, true_raw()},
       {1, false_raw()},
       {1, nil_raw()},
-      {3, parens_raw(state)}
+      {2, parens_raw(state)}
     ])
   end
 
   defp empty_paren_raw, do: constant([:lparen, :rparen])
+
+  defp bracket_expr_raw(_state) do
+    bind(bracket_identifier_raw(), fn lhs ->
+      bind(identifier_raw(), fn idx ->
+        constant(lhs ++ [:lbracket] ++ idx ++ [:rbracket])
+      end)
+    end)
+  end
+
+  defp bracket_at_expr_raw(_state) do
+    bind(bracket_identifier_raw(), fn lhs ->
+      bind(identifier_raw(), fn idx ->
+        # If we ever decide to allow eol between @ and identifier, we'd need more rules.
+        constant([:at] ++ lhs ++ [:lbracket] ++ idx ++ [:rbracket])
+      end)
+    end)
+  end
+
+  defp bracket_identifier_raw do
+    member_of(@identifiers)
+    |> map(fn atom -> [{:bracket_identifier, atom}] end)
+  end
+
+  defp capture_int_int_raw do
+    bind(int_raw(), fn int ->
+      constant([:capture_int] ++ int)
+    end)
+  end
+
+  defp flt_raw do
+    # Small, simple floats only (avoid exponent/underscores for now).
+    tuple({integer(0..100), integer(0..99)})
+    |> map(fn {a, b} ->
+      frac = String.pad_leading(Integer.to_string(b), 2, "0")
+      str = Integer.to_string(a) <> "." <> frac
+      [{:flt, String.to_charlist(str)}]
+    end)
+  end
+
+  defp char_raw do
+    member_of([
+      {~c"?a", ?a},
+      {~c"?b", ?b},
+      {~c"?z", ?z}
+    ])
+    |> map(fn {repr, cp} -> [{:char, repr, cp}] end)
+  end
+
+  defp atom_raw do
+    member_of([:ok, :error, :foo, :bar, :baz])
+    |> map(fn atom -> [{:atom, atom}] end)
+  end
 
   defp true_raw, do: constant([true])
   defp false_raw, do: constant([false])
@@ -228,6 +334,36 @@ defmodule ToxicParser.Generator do
     {{:";", {start, stop, 0}}, stop}
   end
 
+  defp materialize_token(:dot, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:., {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token(:at, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:at_op, {start, stop, nil}, :@}, stop}
+  end
+
+  defp materialize_token(:capture_int, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:capture_int, {start, stop, nil}, :&}, stop}
+  end
+
+  defp materialize_token(:lbracket, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:"[", {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token(:rbracket, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:"]", {start, stop, nil}}, stop}
+  end
+
   defp materialize_token(:lparen, {line, col}) do
     start = {line, col}
     stop = {line, col + 1}
@@ -244,7 +380,42 @@ defmodule ToxicParser.Generator do
     text = Atom.to_string(atom)
     start = {line, col}
     stop = {line, col + String.length(text)}
-    {{:identifier, {start, stop, nil}, atom}, stop}
+    {{:identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:bracket_identifier, atom}, {line, col}) do
+    text = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+    {{:bracket_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:atom, atom}, {line, col}) do
+    name = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + 1 + String.length(name)}
+    {{:atom, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:flt, chars}, {line, col}) do
+    text = List.to_string(chars)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+
+    extra =
+      case Float.parse(text) do
+        {f, ""} -> f
+        _ -> nil
+      end
+
+    {{:flt, {start, stop, extra}, chars}, stop}
+  end
+
+  defp materialize_token({:char, repr, cp}, {line, col}) do
+    text = List.to_string(repr)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+    {{:char, {start, stop, repr}, cp}, stop}
   end
 
   defp materialize_token({:int, chars}, {line, col}) do
