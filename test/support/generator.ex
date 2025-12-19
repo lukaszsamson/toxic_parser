@@ -109,7 +109,17 @@ defmodule ToxicParser.Generator do
   defp expr_raw(state), do: matched_expr_raw(state)
 
   # matched_expr -> sub_matched_expr
-  defp matched_expr_raw(state), do: sub_matched_expr_raw(state)
+  # matched_expr -> no_parens_one_expr
+  defp matched_expr_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      sub_matched_expr_raw(state)
+    else
+      frequency([
+        {10, sub_matched_expr_raw(state)},
+        {2, no_parens_one_expr_raw(decr_depth(state))}
+      ])
+    end
+  end
 
   # sub_matched_expr -> no_parens_zero_expr
   # sub_matched_expr -> range_op
@@ -159,6 +169,100 @@ defmodule ToxicParser.Generator do
       {2, dot_do_identifier_raw(state)},
       {8, dot_identifier_raw(state)}
     ])
+  end
+
+  # no_parens_one_expr -> dot_op_identifier call_args_no_parens_one
+  # no_parens_one_expr -> dot_identifier call_args_no_parens_one
+  defp no_parens_one_expr_raw(state) do
+    frequency([
+      {3,
+       bind(dot_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_one_raw(state), fn args ->
+           constant(fun ++ [{:gap_space, 1}] ++ args)
+         end)
+       end)},
+      {2,
+       bind(dot_op_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_one_for_op_identifier_raw(state), fn args ->
+           constant(fun ++ [{:gap_space, 1}] ++ args)
+         end)
+       end)}
+    ])
+  end
+
+  # dot_op_identifier -> op_identifier | matched_expr dot_op op_identifier
+  defp dot_op_identifier_raw(state) do
+    frequency([
+      {5, op_identifier_raw()},
+      {2,
+       bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(dot_op_raw(), fn dot ->
+           bind(op_identifier_raw(), fn rhs ->
+             constant(lhs ++ dot ++ rhs)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  defp op_identifier_raw do
+    member_of(@identifiers)
+    |> map(fn atom -> [{:op_identifier, atom}] end)
+  end
+
+  # call_args_no_parens_one -> call_args_no_parens_kw | matched_expr
+  defp call_args_no_parens_one_raw(state) do
+    frequency([
+      {2, call_args_no_parens_kw_raw(state)},
+      {4, matched_expr_raw(decr_depth(state))}
+    ])
+  end
+
+  # For op_identifier calls, keep RHS from starting with `//` and keep unary operators tight
+  # so the lexer re-emits :op_identifier (e.g. `foo +1`).
+  defp call_args_no_parens_one_for_op_identifier_raw(state), do: unary_tight_arg_raw(state)
+
+  defp unary_tight_arg_raw(_state) do
+    bind(member_of([:+, :-]), fn op ->
+      bind(frequency([{3, int_raw()}, {1, identifier_raw()}]), fn rhs ->
+        constant([{:dual_op, op}] ++ rhs)
+      end)
+    end)
+  end
+
+  # call_args_no_parens_kw_expr -> kw_eol matched_expr | kw_eol no_parens_expr
+  defp call_args_no_parens_kw_expr_raw(state) do
+    bind(kw_eol_raw(), fn kw ->
+      frequency([
+        {4,
+         bind(matched_expr_raw(decr_depth(state)), fn expr ->
+           constant(kw ++ expr)
+         end)},
+        {1,
+         bind(no_parens_expr_stub_raw(), fn expr ->
+           constant(kw ++ expr)
+         end)}
+      ])
+    end)
+  end
+
+  # call_args_no_parens_kw -> kw_expr | kw_expr ',' call_args_no_parens_kw
+  defp call_args_no_parens_kw_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(1..max), fn count ->
+      call_args_no_parens_kw_n_raw(state, count)
+    end)
+  end
+
+  defp call_args_no_parens_kw_n_raw(state, 1), do: call_args_no_parens_kw_expr_raw(state)
+
+  defp call_args_no_parens_kw_n_raw(state, count) when count > 1 do
+    bind(call_args_no_parens_kw_expr_raw(state), fn first ->
+      bind(call_args_no_parens_kw_n_raw(state, count - 1), fn rest ->
+        constant(first ++ [:comma, {:gap_space, 1}] ++ rest)
+      end)
+    end)
   end
 
   # dot_identifier -> identifier | matched_expr dot_op identifier
@@ -1429,6 +1533,13 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + String.length(text)}
     {{:paren_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:op_identifier, atom}, {line, col}) do
+    text = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+    {{:op_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
   end
 
   defp materialize_token({:kw_identifier, atom}, {line, col}) do
