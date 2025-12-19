@@ -4,6 +4,7 @@ defmodule ToxicParser.Generator do
   import StreamData
 
   @identifiers ~w(foo bar baz qux spam eggs alpha beta gamma delta)a
+  @aliases ~w(Foo Bar Baz Qux Remote Mod State Schema Context Config Default MyApp Context Kernel String)a
   @do_identifiers ~w(if case cond unless with for try receive)a
 
   # Minimal grammar-faithful token generator (starter subset).
@@ -14,6 +15,7 @@ defmodule ToxicParser.Generator do
 
   def tokens_gen(opts \\ []) do
     grammar_raw(opts)
+    |> map(&coalesce_eols/1)
     |> map(&materialize/1)
   end
 
@@ -165,8 +167,10 @@ defmodule ToxicParser.Generator do
       {5, identifier_raw()},
       {2,
        bind(dot_lhs_raw(state), fn lhs ->
-         bind(identifier_raw(), fn rhs ->
-           constant(lhs ++ [:dot] ++ rhs)
+         bind(dot_op_raw(), fn dot ->
+           bind(identifier_raw(), fn rhs ->
+             constant(lhs ++ dot ++ rhs)
+           end)
          end)
        end)}
     ])
@@ -178,8 +182,10 @@ defmodule ToxicParser.Generator do
       {3, do_identifier_raw()},
       {1,
        bind(dot_lhs_raw(state), fn lhs ->
-         bind(do_identifier_raw(), fn rhs ->
-           constant(lhs ++ [:dot] ++ rhs)
+         bind(dot_op_raw(), fn dot ->
+           bind(do_identifier_raw(), fn rhs ->
+             constant(lhs ++ dot ++ rhs)
+           end)
          end)
        end)}
     ])
@@ -194,9 +200,21 @@ defmodule ToxicParser.Generator do
   end
 
   defp do_identifier_raw do
-    # TODO: should be a do_identifier
+    # NOTE: these lex as :identifier unless used in a do-block context.
     member_of(@do_identifiers)
     |> map(fn atom -> [{:identifier, atom}] end)
+  end
+
+  # dot_op -> '.' | '.' eol
+  # NOTE: Toxic does NOT emit a standalone :eol token after '.', it only shifts the
+  # next token's position to the next line.
+  defp dot_op_raw do
+    frequency([
+      {4, constant([:dot])},
+      {1,
+       integer(1..2)
+       |> map(fn n -> [:dot, {:gap_eol, n}] end)}
+    ])
   end
 
   defp identifier_raw do
@@ -211,10 +229,11 @@ defmodule ToxicParser.Generator do
   defp ellipsis_op_raw, do: constant([{:ellipsis_op, :...}])
 
   # Minimal subset of access_expr (yrl has many more).
-  # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom.
+  # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom, dot_alias.
   defp access_expr_raw(state) do
     frequency([
       {5, empty_paren_raw()},
+      {3, dot_alias_raw(state)},
       {4, bracket_expr_raw(state)},
       {2, bracket_at_expr_raw(state)},
       {2, capture_int_int_raw()},
@@ -283,6 +302,82 @@ defmodule ToxicParser.Generator do
     |> map(fn atom -> [{:atom, atom}] end)
   end
 
+  # dot_alias -> alias | matched_expr dot_op alias
+  # (dot container variants omitted for now)
+  defp dot_alias_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      alias_raw()
+    else
+      frequency([
+        # dot_alias -> alias
+        {4, alias_raw()},
+        # dot_alias -> matched_expr dot_op alias
+        {3,
+         bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+           bind(dot_op_raw(), fn dot ->
+             bind(alias_raw(), fn rhs ->
+               constant(lhs ++ dot ++ rhs)
+             end)
+           end)
+         end)},
+        # dot_alias -> matched_expr dot_op open_curly '}'
+        {1,
+         bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+           bind(dot_op_raw(), fn dot ->
+             bind(open_curly_raw(), fn open ->
+              constant(lhs ++ dot ++ open ++ [{:rcurly, nil}])
+             end)
+           end)
+         end)},
+        # dot_alias -> matched_expr dot_op open_curly container_args close_curly
+        {1,
+         bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+           bind(dot_op_raw(), fn dot ->
+             bind(open_curly_raw(), fn open ->
+               bind(container_args_raw(decr_depth(state)), fn args ->
+                 bind(close_curly_raw(), fn close ->
+                   constant(lhs ++ dot ++ open ++ args ++ close)
+                 end)
+               end)
+             end)
+           end)
+         end)}
+      ])
+    end
+  end
+
+  defp open_curly_raw do
+    frequency([
+      {3, constant([:lcurly])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([:lcurly] ++ eol)
+       end)}
+    ])
+  end
+
+  defp close_curly_raw do
+    frequency([
+      {3, constant([{:rcurly, nil}])},
+      {1,
+       bind(eol_raw(), fn [{:eol, _n}] = eol ->
+         constant(eol ++ [{:rcurly, nil}])
+       end)}
+    ])
+  end
+
+  defp container_args_raw(_state) do
+    frequency([
+      {3, identifier_raw()},
+      {2, int_raw()}
+    ])
+  end
+
+  defp alias_raw do
+    member_of(@aliases)
+    |> map(fn atom -> [{:alias, atom}] end)
+  end
+
   defp true_raw, do: constant([true])
   defp false_raw, do: constant([false])
   defp nil_raw, do: constant([nil])
@@ -318,8 +413,30 @@ defmodule ToxicParser.Generator do
   # ---------------------------------------------------------------------------
 
   defp materialize(raw_tokens) do
-    {tokens, _pos} = Enum.map_reduce(raw_tokens, {1, 1}, &materialize_token/2)
-    tokens
+    {tokens_rev, _pos, _prev_raw} =
+      Enum.reduce(raw_tokens, {[], {1, 1}, nil}, fn raw, {acc, pos, prev_raw} ->
+        raw =
+          case {raw, prev_raw} do
+            {{:rcurly, nil}, {:eol, n}} when is_integer(n) -> {:rcurly, n}
+            _ -> raw
+          end
+
+        {tok, pos} = materialize_token(raw, pos)
+        acc = if is_nil(tok), do: acc, else: [tok | acc]
+        {acc, pos, raw}
+      end)
+
+    Enum.reverse(tokens_rev)
+  end
+
+  defp coalesce_eols(raw_tokens), do: do_coalesce_eols(raw_tokens, [])
+
+  defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:eol, a + b} | rest], acc)
+  defp do_coalesce_eols([h | t], acc), do: do_coalesce_eols(t, [h | acc])
+  defp do_coalesce_eols([], acc), do: Enum.reverse(acc)
+
+  defp materialize_token({:gap_eol, n}, {line, _col}) do
+    {nil, {line + n, 1}}
   end
 
   defp materialize_token({:eol, n}, {line, col}) do
@@ -364,6 +481,18 @@ defmodule ToxicParser.Generator do
     {{:"]", {start, stop, nil}}, stop}
   end
 
+  defp materialize_token(:lcurly, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:"{", {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token({:rcurly, extra}, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:"}", {start, stop, extra}}, stop}
+  end
+
   defp materialize_token(:lparen, {line, col}) do
     start = {line, col}
     stop = {line, col + 1}
@@ -388,6 +517,13 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + String.length(text)}
     {{:bracket_identifier, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
+  end
+
+  defp materialize_token({:alias, atom}, {line, col}) do
+    text = Atom.to_string(atom)
+    start = {line, col}
+    stop = {line, col + String.length(text)}
+    {{:alias, {start, stop, Atom.to_charlist(atom)}, atom}, stop}
   end
 
   defp materialize_token({:atom, atom}, {line, col}) do
