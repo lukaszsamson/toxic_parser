@@ -655,7 +655,7 @@ defmodule ToxicParser.Generator do
            constant(kw ++ expr)
          end)},
         {1,
-         bind(no_parens_expr_stub_raw(), fn expr ->
+         bind(no_parens_expr_raw(decr_depth(state)), fn expr ->
            constant(kw ++ expr)
          end)}
       ])
@@ -685,13 +685,29 @@ defmodule ToxicParser.Generator do
   defp call_args_no_parens_all_raw(state) do
     frequency([
       {5, call_args_no_parens_one_raw(state)},
-      {1, call_args_no_parens_ambig_raw()},
+      {1, call_args_no_parens_ambig_raw(state)},
       {3, call_args_no_parens_many_raw(state)}
     ])
   end
 
   # call_args_no_parens_ambig -> no_parens_expr
-  defp call_args_no_parens_ambig_raw, do: no_parens_expr_stub_raw()
+  # call_args_no_parens_ambig -> no_parens_expr
+  defp call_args_no_parens_ambig_raw(state), do: no_parens_expr_raw(decr_depth(state))
+
+  # call_args_no_parens_many_strict -> call_args_no_parens_many
+  # (error-producing strict-parens variants intentionally not generated)
+  defp call_args_no_parens_many_strict_raw(state), do: call_args_no_parens_many_raw(state)
+
+  # For :op_identifier stability, ensure first arg is a tight unary (+1/-1) form.
+  defp call_args_no_parens_ambig_for_op_identifier_raw(state), do: unary_tight_arg_raw(state)
+
+  defp call_args_no_parens_many_strict_for_op_identifier_raw(state) do
+    bind(unary_tight_arg_raw(state), fn first ->
+      bind(call_args_no_parens_kw_raw(state), fn kw ->
+        constant(first ++ [:comma, {:gap_space, 1}] ++ kw)
+      end)
+    end)
+  end
 
   # call_args_no_parens_expr (minimal) -> matched_expr
   defp call_args_no_parens_expr_raw(state), do: matched_expr_raw(decr_depth(state))
@@ -1723,7 +1739,7 @@ defmodule ToxicParser.Generator do
        end)},
       {1,
        bind(open_paren_raw(), fn open ->
-         bind(no_parens_expr_stub_raw(), fn expr ->
+         bind(no_parens_expr_raw(decr_depth(state)), fn expr ->
            bind(close_paren_raw(), fn close ->
              constant(open ++ expr ++ close)
            end)
@@ -1778,9 +1794,86 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  # Stubbed: no_parens_expr -> "foo 1, 2"
-  defp no_parens_expr_stub_raw do
-    constant([{:identifier, :foo}, {:gap_space, 1}, {:int, ~c"1"}, :comma, {:gap_space, 1}, {:int, ~c"2"}])
+  # no_parens_expr
+  # no_parens_expr -> at_op_eol no_parens_expr
+  # no_parens_expr -> capture_op_eol no_parens_expr
+  # no_parens_expr -> ellipsis_op no_parens_expr
+  # no_parens_expr -> no_parens_one_ambig_expr
+  # no_parens_expr -> no_parens_many_expr
+  defp no_parens_expr_raw(%{depth: depth} = state) do
+    state = decr_depth(state)
+
+    base =
+      frequency([
+        {6, no_parens_one_ambig_expr_raw(state)},
+        {4, no_parens_many_expr_raw(state)}
+      ])
+
+    if depth <= 0 do
+      base
+    else
+      frequency([
+        {6, base},
+        {1,
+         bind(at_op_eol_raw(), fn op ->
+           bind(no_parens_expr_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
+        {1,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(no_parens_expr_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)},
+        {1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(no_parens_expr_raw(state), fn expr ->
+             constant(op ++ expr)
+           end)
+         end)}
+      ])
+    end
+  end
+
+  # no_parens_one_ambig_expr -> dot_op_identifier call_args_no_parens_ambig
+  # no_parens_one_ambig_expr -> dot_identifier call_args_no_parens_ambig
+  defp no_parens_one_ambig_expr_raw(state) do
+    frequency([
+      {3,
+       bind(dot_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_ambig_raw(state), fn arg ->
+           constant(fun ++ [{:gap_space, 1}] ++ arg)
+         end)
+       end)},
+      # :op_identifier is only stable when followed by a tight unary (+1/-1) form.
+      {2,
+       bind(dot_op_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_ambig_for_op_identifier_raw(state), fn arg ->
+           constant(fun ++ [{:gap_space, 1}] ++ arg)
+         end)
+       end)}
+    ])
+  end
+
+  # no_parens_many_expr -> dot_op_identifier call_args_no_parens_many_strict
+  # no_parens_many_expr -> dot_identifier call_args_no_parens_many_strict
+  defp no_parens_many_expr_raw(state) do
+    frequency([
+      {3,
+       bind(dot_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_many_strict_raw(state), fn args ->
+           constant(fun ++ [{:gap_space, 1}] ++ args)
+         end)
+       end)},
+      # :op_identifier is only stable when the first arg is a tight unary (+1/-1) form.
+      {2,
+       bind(dot_op_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_many_strict_for_op_identifier_raw(state), fn args ->
+           constant(fun ++ [{:gap_space, 1}] ++ args)
+         end)
+       end)}
+    ])
   end
 
   # kw_call is close enough to kw_data for this property test.
