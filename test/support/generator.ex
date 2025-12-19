@@ -117,41 +117,179 @@ defmodule ToxicParser.Generator do
       state = decr_depth(state)
 
       frequency([
-        {12, sub_matched_expr_raw(state)},
-        {3, no_parens_one_expr_raw(state)},
-        {2,
-         bind(unary_op_eol_no_ternary_raw(), fn op ->
-           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {1,
-         bind(ternary_op_eol_raw(), fn op ->
-           bind(matched_expr_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {2,
-         bind(at_op_eol_raw(), fn op ->
-           # `@` only lexes as :at_op when applied to an identifier-ish target.
-           bind(map_at_target_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {2,
-         bind(capture_op_eol_raw(), fn op ->
-           bind(matched_expr_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {1,
-         bind(ellipsis_op_raw(), fn op ->
-           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)}
+        {10, matched_expr_no_binary_raw(state)},
+        {3, matched_expr_binary_raw(state)}
       ])
     end
+  end
+
+  defp matched_expr_no_binary_raw(state) do
+    frequency([
+      {12, sub_matched_expr_raw(state)},
+      {3, no_parens_one_expr_raw(state)},
+      {2,
+       bind(unary_op_eol_no_ternary_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ternary_op_eol_raw(), fn op ->
+         bind(matched_expr_no_binary_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(at_op_eol_raw(), fn op ->
+         # `@` only lexes as :at_op when applied to an identifier-ish target.
+         bind(map_at_target_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(capture_op_eol_raw(), fn op ->
+         bind(matched_expr_no_binary_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  defp matched_expr_binary_raw(state) do
+    bind(matched_expr_no_binary_no_nullary_raw(state), fn lhs ->
+      bind(matched_op_expr_raw(state), fn rhs ->
+        constant(lhs ++ rhs)
+      end)
+    end)
+  end
+
+  defp matched_expr_no_binary_no_nullary_raw(state) do
+    frequency([
+      {12, sub_matched_expr_no_nullary_raw(state)},
+      {3, no_parens_one_expr_raw(state)},
+      {2,
+       bind(unary_op_eol_no_ternary_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ternary_op_eol_raw(), fn op ->
+         bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(at_op_eol_raw(), fn op ->
+         bind(map_at_target_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(capture_op_eol_raw(), fn op ->
+         bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  defp matched_op_expr_raw(state) do
+    pre = [{:gap_space, 1}]
+
+    frequency([
+      {4, bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
+      {3, bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
+      {3, bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
+      {2, bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
+      {2, bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
+      {2, bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
+      {2, bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
+      {1, bin_op_rhs_pipe_raw(pre, state)},
+      {1, bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
+      {1, bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
+      {1, bin_op_rhs_arrow_raw(pre, state)},
+      {1, bin_op_rhs_arrow_no_parens_raw(pre, state)}
+    ])
+  end
+
+  defp bin_op_rhs_arrow_raw(pre, state) do
+    frequency([
+      {3,
+       bind(arrow_op_no_eol_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(pre ++ op ++ [{:gap_space, 1}] ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(arrow_op_no_eol_raw(), fn op ->
+         bind(eol_raw(), fn eol ->
+           bind(matched_expr_no_binary_raw(state), fn rhs ->
+             constant(pre ++ op ++ eol ++ rhs)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  defp bin_op_rhs_raw(pre, op_eol_gen, state) do
+    bind(op_eol_gen, fn op ->
+      rhs_gen =
+        case List.last(op) do
+          {:eol, _} -> matched_expr_no_binary_raw(state)
+          _ -> matched_expr_no_ternary_prefix_raw(state)
+        end
+
+      bind(rhs_gen, fn rhs ->
+        constant(pre ++ op ++ rhs)
+      end)
+    end)
+  end
+
+  defp bin_op_rhs_pipe_raw(pre, state) do
+    frequency([
+      {3,
+       bind(pipe_op_no_eol_raw(), fn op ->
+         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+           constant(pre ++ op ++ [{:gap_space, 1}] ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(pipe_op_no_eol_raw(), fn op ->
+         bind(eol_raw(), fn eol ->
+           bind(matched_expr_no_binary_raw(state), fn rhs ->
+             constant(pre ++ op ++ eol ++ rhs)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  defp bin_op_rhs_arrow_no_parens_raw(pre, state) do
+    bind(arrow_op_eol_raw(), fn op ->
+      bind(no_parens_one_expr_raw(state), fn rhs ->
+        constant(pre ++ op ++ rhs)
+      end)
+    end)
   end
 
   defp matched_expr_no_ternary_prefix_raw(%{depth: depth} = state) do
@@ -201,6 +339,193 @@ defmodule ToxicParser.Generator do
     ])
   end
 
+  defp match_op_eol_raw do
+    frequency([
+      {4, constant([{:match_op, :=, 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:match_op, :=, 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp dual_op_eol_raw do
+    bind(member_of([:+, :-]), fn op ->
+      frequency([
+        {4, constant([{:dual_op, op}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:dual_op, op}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp mult_op_eol_raw do
+    bind(member_of([:*, :/]), fn op ->
+      frequency([
+        {4, constant([{:mult_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:mult_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp power_op_eol_raw do
+    frequency([
+      {4, constant([{:power_op, :**, 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:power_op, :**, 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp concat_op_eol_raw do
+    bind(member_of([:++, :--, :+++, :---]), fn op ->
+      frequency([
+        {4, constant([{:concat_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:concat_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp range_op_eol_raw do
+    # range_op carries leading EOL count in meta.extra
+    frequency([
+      {4, constant([{:range_op, :.., 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:range_op, :.., 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp xor_op_eol_raw do
+    frequency([
+      {4, constant([{:xor_op, :"^^^", 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:xor_op, :"^^^", 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp and_op_eol_raw do
+    bind(member_of([:and, :&&, :&&&]), fn op ->
+      frequency([
+        {4, constant([{:and_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:and_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp or_op_eol_raw do
+    bind(member_of([:or, :||, :|||]), fn op ->
+      frequency([
+        {4, constant([{:or_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:or_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp in_op_eol_raw do
+    frequency([
+      {4, constant([{:in_op, :in, 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:in_op, :in, 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp in_match_op_eol_raw do
+    bind(member_of([:<-, :"\\\\"]), fn op ->
+      frequency([
+        {4, constant([{:in_match_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:in_match_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp type_op_eol_raw do
+    frequency([
+      {4, constant([{:type_op, :"::", 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:type_op, :"::", 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp when_op_eol_raw do
+    frequency([
+      {4, constant([{:when_op, :when, 0}, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([{:when_op, :when, 0}] ++ eol)
+       end)}
+    ])
+  end
+
+  defp pipe_op_no_eol_raw, do: pipe_op_raw()
+
+  defp arrow_op_no_eol_raw do
+    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :<|>, :"<|>"]), fn op ->
+      constant([{:arrow_op, op, 0}])
+    end)
+  end
+
+  defp comp_op_eol_raw do
+    bind(member_of([:==, :!=, :=~, :===, :!==]), fn op ->
+      frequency([
+        {4, constant([{:comp_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:comp_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp rel_op_eol_raw do
+    bind(member_of([:<, :>, :<=, :>=]), fn op ->
+      frequency([
+        {4, constant([{:rel_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:rel_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp arrow_op_eol_raw do
+    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :<|>, :"<|>"]), fn op ->
+      frequency([
+        {4, constant([{:arrow_op, op, 0}, {:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant([{:arrow_op, op, 0}] ++ eol)
+         end)}
+      ])
+    end)
+  end
+
   # sub_matched_expr -> no_parens_zero_expr
   # sub_matched_expr -> range_op
   # sub_matched_expr -> ellipsis_op
@@ -214,6 +539,17 @@ defmodule ToxicParser.Generator do
         {10, no_parens_zero_expr_raw(state)},
         {1, range_op_raw()},
         {1, ellipsis_op_raw()},
+        {4, access_expr_raw(decr_depth(state))}
+      ])
+    end
+  end
+
+  defp sub_matched_expr_no_nullary_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      no_parens_zero_expr_raw(state)
+    else
+      frequency([
+        {10, no_parens_zero_expr_raw(state)},
         {4, access_expr_raw(decr_depth(state))}
       ])
     end
@@ -1444,6 +1780,76 @@ defmodule ToxicParser.Generator do
     do_coalesce_eols([{:ternary_op, op, extra + n} | rest], acc)
   end
 
+  defp do_coalesce_eols([{:eol, n}, {:concat_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:concat_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:comp_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:comp_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:rel_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:rel_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:arrow_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:arrow_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:match_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:match_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:mult_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:mult_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:power_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:power_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:xor_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:xor_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:and_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:and_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:or_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:or_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:in_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:in_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:in_match_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:in_match_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:type_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:type_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:when_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:when_op, op, extra + n} | rest], acc)
+  end
+
   # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
   defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
   defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:comma, a + b} | rest], acc)
@@ -1516,8 +1922,106 @@ defmodule ToxicParser.Generator do
   defp materialize_token({:ternary_op, op, extra}, {line, col}) do
     {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
     start = {line, col}
-    stop = {line, col + 2}
+    stop = {line, col + String.length(Atom.to_string(op))}
     {{:ternary_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:match_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:match_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:mult_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:mult_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:power_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:power_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:concat_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:concat_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:xor_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:xor_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:and_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:and_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:or_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:or_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:in_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:in_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:in_match_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:in_match_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:type_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:type_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:when_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:when_op, {start, stop, extra}, :when}, stop}
+  end
+
+  defp materialize_token({:comp_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:comp_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:rel_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:rel_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:arrow_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + String.length(Atom.to_string(op))}
+    {{:arrow_op, {start, stop, extra}, op}, stop}
   end
 
   defp materialize_token({:ternary_op, op}, pos), do: materialize_token({:ternary_op, op, 0}, pos)

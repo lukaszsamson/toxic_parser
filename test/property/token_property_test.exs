@@ -43,6 +43,20 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:unary_op, _meta, op}), do: {:unary_op, op}
   defp normalize_token({:dual_op, _meta, op}), do: {:dual_op, op}
   defp normalize_token({:ternary_op, meta, op}), do: {:ternary_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:match_op, meta, op}), do: {:match_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:mult_op, meta, op}), do: {:mult_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:power_op, meta, op}), do: {:power_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:concat_op, meta, op}), do: {:concat_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:xor_op, meta, op}), do: {:xor_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:and_op, meta, op}), do: {:and_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:or_op, meta, op}), do: {:or_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:in_op, meta, op}), do: {:in_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:in_match_op, meta, op}), do: {:in_match_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:type_op, meta, op}), do: {:type_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:when_op, meta, _op}), do: {:when_op, :when, elem(meta, 2) || 0}
+  defp normalize_token({:comp_op, meta, op}), do: {:comp_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:rel_op, meta, op}), do: {:rel_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:arrow_op, meta, op}), do: {:arrow_op, op, elem(meta, 2) || 0}
   defp normalize_token({:"[", _meta}), do: :lbracket
   defp normalize_token({:"]", meta}), do: {:rbracket, elem(meta, 2) || 0}
   defp normalize_token({:"<<", _meta}), do: :open_bit
