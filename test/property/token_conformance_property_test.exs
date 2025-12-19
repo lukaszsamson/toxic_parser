@@ -21,7 +21,6 @@ defmodule ToxicParser.TokenConformancePropertyTest do
   # ===========================================================================
 
   describe "token conformance" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "generated tokens produce conformant ASTs" do
@@ -38,7 +37,6 @@ defmodule ToxicParser.TokenConformancePropertyTest do
   end
 
   describe "token conformance - shallow" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "shallow generated tokens produce conformant ASTs" do
@@ -54,12 +52,283 @@ defmodule ToxicParser.TokenConformancePropertyTest do
   end
 
   describe "token conformance - deep" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "deep generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 5, depth: 4),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - random flags" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with random feature flags produce conformant ASTs" do
+      check all(
+              flags <- Generator.flags_gen(),
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - minimal features" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with all optional features disabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: false,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - lists only" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with only lists enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: true,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - calls only" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with only calls enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: true,
+          enable_no_parens_calls: true
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - operators only" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with only operators enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: true,
+          enable_unary_op: true,
+          enable_kw: false,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - fn and stabs" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with fn and stabs enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: true,
+          enable_bitstrings: false,
+          enable_fn: true,
+          enable_parens_stab: true,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: false,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - do blocks" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with do blocks enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: true,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: true,
+          enable_no_parens_calls: true
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - maps and structs" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with maps enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: true,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+              max_runs: 50_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+  end
+
+  describe "token conformance - bitstrings" do
+    @tag :property
+    @tag timeout: 120_000
+    property "generated tokens with bitstrings enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: false,
+          enable_bitstrings: true,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: false,
+          enable_no_parens_calls: false
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
               max_runs: 50_000,
               max_shrinking_steps: 50
             ) do

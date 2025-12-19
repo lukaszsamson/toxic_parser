@@ -3156,6 +3156,22 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 64" do
       assert_conforms("^ ! eggs -62\n\n..\n^ delta[foo]")
     end
+
+    test "repro 65" do
+      assert_conforms("\n\n;Bar;(\n\n->\ngamma;() ->\ndelta\n);eggs\n")
+    end
+
+    test "repro 66" do
+      assert_conforms("alpha.baz\n\n..\nfoo")
+    end
+
+    test "repro 67" do
+      assert_conforms("alpha.baz\n\n..\nfoo")
+    end
+
+    test "repro 68" do
+      assert_conforms("not foo\n\n..\n+ ^ foo")
+    end
   end
 
   # =============================================================================

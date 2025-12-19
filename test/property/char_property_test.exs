@@ -1173,7 +1173,6 @@ defmodule ToxicParser.CharPropertyTest do
   # ===========================================================================
 
   describe "ascii in contexts" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "grammar trees round-trip through Toxic in all contexts" do
@@ -1189,7 +1188,6 @@ defmodule ToxicParser.CharPropertyTest do
 
   # Individual context tests for targeted debugging
   describe "ascii standalone" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "standalone expressions" do
@@ -1204,7 +1202,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii bitstring" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside bitstring" do
@@ -1223,7 +1220,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii before_do" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "before do block" do
@@ -1238,7 +1234,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii after_do" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "after do block" do
@@ -1249,7 +1244,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii fn" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside fn expressions" do
@@ -1273,7 +1267,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii inside_do" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside do block" do
@@ -1288,7 +1281,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii calls" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside function calls" do
@@ -1307,7 +1299,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii bracket_access" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside bracket access" do
@@ -1329,7 +1320,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii containers" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside containers (map, tuple, list, struct)" do
@@ -1358,7 +1348,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii interpolation" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside string interpolation" do
@@ -1373,7 +1362,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii operators" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "after operators (pipe, assignment)" do
@@ -1390,7 +1378,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii struct_arg" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside struct arg" do
@@ -1405,7 +1392,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii between_do_blocks" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "between do blocks" do
@@ -1420,7 +1406,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii ternary" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside ternary range expressions" do
@@ -1438,7 +1423,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii map_update" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside map update expressions" do
@@ -1460,7 +1444,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii after_parens_call" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "after parens call" do
@@ -1475,7 +1458,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii no_parens_call_middle" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside no parens call middle" do
@@ -1490,7 +1472,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii dot" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside dot expressions" do
@@ -1509,7 +1490,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii between_operators" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "between operators" do
@@ -1524,7 +1504,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii unary" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "after unary operators" do
@@ -1546,7 +1525,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii interpolated_atom_keyword" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside interpolated atoms and keywords" do
@@ -1563,7 +1541,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii charlist_interpolation" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside charlist interpolation" do
@@ -1578,7 +1555,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii heredoc_interpolation" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside heredoc interpolation" do
@@ -1599,7 +1575,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii sigil_interpolation" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside sigil interpolation" do
@@ -1616,7 +1591,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii fn_when" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside fn when guard" do
@@ -1627,7 +1601,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii def" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside def expressions" do
@@ -1645,7 +1618,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii keyword/kv_data" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside keyword lists, maps, structs and keyword args" do
@@ -1666,7 +1638,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii stabs/control-flow" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside case/cond/fn clauses and do/else/after" do
@@ -1693,7 +1664,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii call_args variants" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside multi-arg calls and nested no-parens calls" do
@@ -1712,7 +1682,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii comprehensions/with" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside for/with generators and filters/else" do
@@ -1732,7 +1701,6 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   describe "ascii bitstring specs" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
     property "inside bitstring segment spec" do
