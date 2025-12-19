@@ -18,6 +18,56 @@ defmodule ToxicParser.TokenPropertyTest do
     end
   end
 
+
+  @tag :property
+  property "generated token lists round-trip with random feature flags" do
+    check all(
+            flags <- Generator.flags_gen(),
+            tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+            max_runs: 5_000
+          ) do
+      code = Toxic.to_string(tokens)
+
+      lexed =
+        Toxic.new(code, 1, 1, error_mode: :strict, insert_structural_closers: false)
+        |> Toxic.to_stream()
+        |> Enum.to_list()
+
+      assert normalize_tokens(lexed) == normalize_tokens(tokens)
+    end
+  end
+
+  @tag :property
+  property "generated token lists round-trip with all optional features disabled" do
+    flags =
+      Generator.default_flags()
+      |> Map.merge(%{
+        enable_lists: false,
+        enable_maps: false,
+        enable_do_blocks: false,
+        enable_tuples: false,
+        enable_bitstrings: false,
+        enable_fn: false,
+        enable_parens_stab: false,
+        enable_binary_op: false,
+        enable_unary_op: false,
+        enable_kw: false,
+        enable_parens_calls: false,
+        enable_no_parens_calls: false
+      })
+
+    check all(tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2), max_runs: 2_000) do
+      code = Toxic.to_string(tokens)
+
+      lexed =
+        Toxic.new(code, 1, 1, error_mode: :strict, insert_structural_closers: false)
+        |> Toxic.to_stream()
+        |> Enum.to_list()
+
+      assert normalize_tokens(lexed) == normalize_tokens(tokens)
+    end
+  end
+
   defp normalize_tokens(tokens) do
     tokens
     |> Enum.map(&normalize_token/1)

@@ -7,6 +7,32 @@ defmodule ToxicParser.Generator do
   @aliases ~w(Foo Bar Baz Qux Remote Mod State Schema Context Config Default MyApp Context Kernel String)a
   @do_identifiers ~w(if case cond unless with for try receive)a
 
+  @flag_keys ~w(
+    enable_lists
+    enable_maps
+    enable_do_blocks
+    enable_tuples
+    enable_bitstrings
+    enable_fn
+    enable_parens_stab
+    enable_binary_op
+    enable_unary_op
+    enable_kw
+    enable_parens_calls
+    enable_no_parens_calls
+  )a
+
+  def default_flags do
+    @flag_keys
+    |> Enum.map(&{&1, true})
+    |> Map.new()
+  end
+
+  def flags_gen do
+    fixed_map(@flag_keys |> Enum.map(&{&1, boolean()}) |> Map.new())
+  end
+
+
   # Minimal grammar-faithful token generator (starter subset).
   #
   # Generates *Toxic streaming tokens* (with ranged metas) in a way that matches
@@ -24,9 +50,12 @@ defmodule ToxicParser.Generator do
   # ---------------------------------------------------------------------------
 
   defp grammar_raw(opts) do
+    flags = flags_from_opts(opts)
+
     state = %{
       depth: Keyword.get(opts, :depth, 2),
-      max_forms: Keyword.get(opts, :max_forms, 3)
+      max_forms: Keyword.get(opts, :max_forms, 3),
+      flags: flags
     }
 
     grammar_state_raw(state)
@@ -109,19 +138,27 @@ defmodule ToxicParser.Generator do
   # expr -> no_parens_expr
   # expr -> unmatched_expr
   defp expr_raw(state) do
-    frequency([
-      {8, matched_expr_raw(state)},
-      {2, no_parens_expr_raw(state)},
-      {2, unmatched_expr_raw(state)}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:always, 8, matched_expr_raw(state)},
+        {:enable_no_parens_calls, 2, no_parens_expr_raw(state)},
+        {:always, 2, unmatched_expr_raw(state)}
+      ],
+      matched_expr_raw(state)
+    )
   end
 
   defp expr_no_ternary_prefix_raw(state) do
-    frequency([
-      {8, matched_expr_no_ternary_prefix_raw(state)},
-      {2, no_parens_expr_no_ternary_prefix_raw(state)},
-      {2, unmatched_expr_no_ternary_prefix_raw(state)}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:always, 8, matched_expr_no_ternary_prefix_raw(state)},
+        {:enable_no_parens_calls, 2, no_parens_expr_no_ternary_prefix_raw(state)},
+        {:always, 2, unmatched_expr_no_ternary_prefix_raw(state)}
+      ],
+      matched_expr_no_ternary_prefix_raw(state)
+    )
   end
 
   # matched_expr -> sub_matched_expr
@@ -132,49 +169,62 @@ defmodule ToxicParser.Generator do
     else
       state = decr_depth(state)
 
-      frequency([
-        {10, matched_expr_no_binary_raw(state)},
-        {3, matched_expr_binary_raw(state)}
-      ])
+      freq_enabled(
+        state,
+        [
+          {:always, 10, matched_expr_no_binary_raw(state)},
+          {:enable_binary_op, 3, matched_expr_binary_raw(state)}
+        ],
+        matched_expr_no_binary_raw(state)
+      )
     end
   end
 
   defp matched_expr_no_binary_raw(state) do
-    frequency([
-      {12, sub_matched_expr_raw(state)},
-      {3, no_parens_one_expr_raw(state)},
-      {2,
-       bind(unary_op_eol_no_ternary_raw(), fn op ->
-         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {1,
-       bind(ternary_op_eol_raw(), fn op ->
-         bind(matched_expr_no_binary_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(at_op_eol_raw(), fn op ->
-         # `@` only lexes as :at_op when applied to an identifier-ish target.
-         bind(map_at_target_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(capture_op_eol_raw(), fn op ->
-         bind(matched_expr_no_binary_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {1,
-       bind(ellipsis_op_raw(), fn op ->
-         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:always, 12, sub_matched_expr_raw(state)},
+        {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
+        {:enable_unary_op,
+         2,
+         bind(unary_op_eol_no_ternary_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         1,
+         bind(ternary_op_eol_raw(), fn op ->
+           bind(matched_expr_no_binary_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(at_op_eol_raw(), fn op ->
+           # `@` only lexes as :at_op when applied to an identifier-ish target.
+           bind(map_at_target_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(matched_expr_no_binary_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)}
+      ],
+      sub_matched_expr_raw(state)
+    )
   end
 
   defp matched_expr_binary_raw(state) do
@@ -186,66 +236,78 @@ defmodule ToxicParser.Generator do
   end
 
   defp matched_expr_no_binary_no_nullary_raw(state) do
-    frequency([
-      {12, sub_matched_expr_no_nullary_raw(state)},
-      {3, no_parens_one_expr_raw(state)},
-      {2,
-       bind(unary_op_eol_no_ternary_raw(), fn op ->
-         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {1,
-       bind(ternary_op_eol_raw(), fn op ->
-         bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(at_op_eol_raw(), fn op ->
-         bind(map_at_target_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(capture_op_eol_raw(), fn op ->
-         bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {1,
-       bind(ellipsis_op_raw(), fn op ->
-         bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:always, 12, sub_matched_expr_no_nullary_raw(state)},
+        {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
+        {:enable_unary_op,
+         2,
+         bind(unary_op_eol_no_ternary_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         1,
+         bind(ternary_op_eol_raw(), fn op ->
+           bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(at_op_eol_raw(), fn op ->
+           bind(map_at_target_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)}
+      ],
+      sub_matched_expr_no_nullary_raw(state)
+    )
   end
 
   defp matched_op_expr_raw(state) do
     pre = [{:gap_space, 1}]
 
-    frequency([
-      {4, bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
-      {3, bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
-      {3, bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
-      {2, bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
-      {2, bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
-      {2, bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
-      {2, bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
-      {1, bin_op_rhs_pipe_raw(pre, state)},
-      {1, bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
-      {1, bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
-      {1, bin_op_rhs_arrow_raw(pre, state)},
-      {1, bin_op_rhs_arrow_no_parens_raw(pre, state)}
-    ])
+    entries =
+      [
+        {:always, 4, bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
+        {:always, 3, bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
+        {:always, 3, bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
+        {:always, 2, bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
+        {:always, 2, bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
+        {:always, 2, bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
+        {:always, 2, bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_pipe_raw(pre, state)},
+        {:always, 1, bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
+        {:always, 1, bin_op_rhs_arrow_raw(pre, state)},
+        {:enable_no_parens_calls, 1, bin_op_rhs_arrow_no_parens_raw(pre, state)}
+      ]
+
+    freq_enabled(state, entries, bin_op_rhs_raw(pre, match_op_eol_raw(), state))
   end
 
   defp bin_op_rhs_arrow_raw(pre, state) do
@@ -314,34 +376,42 @@ defmodule ToxicParser.Generator do
     else
       state = decr_depth(state)
 
-      frequency([
-        {12, sub_matched_expr_raw(state)},
-        {3, no_parens_one_expr_raw(state)},
-        {2,
-         bind(unary_op_eol_no_ternary_raw(), fn op ->
-           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {2,
-         bind(at_op_eol_raw(), fn op ->
-           bind(map_at_target_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {2,
-         bind(capture_op_eol_raw(), fn op ->
-           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)},
-        {1,
-         bind(ellipsis_op_raw(), fn op ->
-           bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
-             constant(op ++ rhs)
-           end)
-         end)}
-      ])
+      freq_enabled(
+        state,
+        [
+          {:always, 12, sub_matched_expr_raw(state)},
+          {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
+          {:enable_unary_op,
+           2,
+           bind(unary_op_eol_no_ternary_raw(), fn op ->
+             bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+               constant(op ++ rhs)
+             end)
+           end)},
+          {:enable_unary_op,
+           2,
+           bind(at_op_eol_raw(), fn op ->
+             bind(map_at_target_raw(state), fn rhs ->
+               constant(op ++ rhs)
+             end)
+           end)},
+          {:enable_unary_op,
+           2,
+           bind(capture_op_eol_raw(), fn op ->
+             bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+               constant(op ++ rhs)
+             end)
+           end)},
+          {:enable_unary_op,
+           1,
+           bind(ellipsis_op_raw(), fn op ->
+             bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
+               constant(op ++ rhs)
+             end)
+           end)}
+        ],
+        sub_matched_expr_raw(state)
+      )
     end
   end
 
@@ -646,10 +716,14 @@ defmodule ToxicParser.Generator do
 
   # call_args_no_parens_one -> call_args_no_parens_kw | matched_expr
   defp call_args_no_parens_one_raw(state) do
-    frequency([
-      {2, call_args_no_parens_kw_raw(state)},
-      {4, matched_expr_raw(decr_depth(state))}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:enable_kw, 2, call_args_no_parens_kw_raw(state)},
+        {:always, 4, matched_expr_raw(decr_depth(state))}
+      ],
+      matched_expr_raw(decr_depth(state))
+    )
   end
 
   # For op_identifier calls, keep RHS from starting with `//` and keep unary operators tight
@@ -760,44 +834,64 @@ defmodule ToxicParser.Generator do
   # call_args_no_parens_many -> call_args_no_parens_comma_expr
   # call_args_no_parens_many -> call_args_no_parens_comma_expr ',' call_args_no_parens_kw
   defp call_args_no_parens_many_raw(state) do
-    frequency([
-      {2,
-       bind(matched_expr_raw(decr_depth(state)), fn first ->
-         bind(call_args_no_parens_kw_raw(state), fn kw ->
-           constant(first ++ [:comma, {:gap_space, 1}] ++ kw)
-         end)
-       end)},
-      {4, call_args_no_parens_comma_expr_raw(state)},
-      {2,
-       bind(call_args_no_parens_comma_expr_raw(state), fn exprs ->
-         bind(call_args_no_parens_kw_raw(state), fn kw ->
-           constant(exprs ++ [:comma, {:gap_space, 1}] ++ kw)
-         end)
-       end)}
-    ])
+    entries =
+      [
+        {:enable_kw,
+         2,
+         bind(matched_expr_raw(decr_depth(state)), fn first ->
+           bind(call_args_no_parens_kw_raw(state), fn kw ->
+             constant(first ++ [:comma, {:gap_space, 1}] ++ kw)
+           end)
+         end)},
+        {:always, 4, call_args_no_parens_comma_expr_raw(state)},
+        {:enable_kw,
+         2,
+         bind(call_args_no_parens_comma_expr_raw(state), fn exprs ->
+           bind(call_args_no_parens_kw_raw(state), fn kw ->
+             constant(exprs ++ [:comma, {:gap_space, 1}] ++ kw)
+           end)
+         end)}
+      ]
+
+    freq_enabled(state, entries, call_args_no_parens_comma_expr_raw(state))
   end
 
   # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
   # stab_parens_many -> open_paren call_args_no_parens_many close_paren
   defp stab_parens_many_raw(state) do
-    frequency([
-      {3,
-       bind(open_paren_raw(), fn open ->
-         bind(call_args_no_parens_kw_raw(state), fn kw ->
-           bind(close_paren_raw(), fn close ->
-             constant(open ++ kw ++ close)
+    entries =
+      [
+        {:enable_kw,
+         3,
+         bind(open_paren_raw(), fn open ->
+           bind(call_args_no_parens_kw_raw(state), fn kw ->
+             bind(close_paren_raw(), fn close ->
+               constant(open ++ kw ++ close)
+             end)
            end)
-         end)
-       end)},
-      {2,
-       bind(open_paren_raw(), fn open ->
-         bind(call_args_no_parens_many_raw(state), fn many ->
-           bind(close_paren_raw(), fn close ->
-             constant(open ++ many ++ close)
+         end)},
+        {:always,
+         2,
+         bind(open_paren_raw(), fn open ->
+           bind(call_args_no_parens_many_raw(state), fn many ->
+             bind(close_paren_raw(), fn close ->
+               constant(open ++ many ++ close)
+             end)
            end)
-         end)
-       end)}
-    ])
+         end)}
+      ]
+
+    freq_enabled(
+      state,
+      entries,
+      bind(open_paren_raw(), fn open ->
+        bind(call_args_no_parens_many_raw(state), fn many ->
+          bind(close_paren_raw(), fn close ->
+            constant(open ++ many ++ close)
+          end)
+        end)
+      end)
+    )
   end
 
   # dot_identifier -> identifier | matched_expr dot_op identifier
@@ -871,28 +965,32 @@ defmodule ToxicParser.Generator do
   # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom, dot_alias,
   # list/tuple/bitstring.
   defp access_expr_raw(state) do
-    frequency([
-      {5, empty_paren_raw()},
-      {1, fn_stab_raw(state)},
-      {1, paren_stab_raw(state)},
-      {3, list_raw(state)},
-      {2, tuple_raw(state)},
-      {2, bitstring_raw(state)},
-      {2, map_raw(state)},
-      {3, parens_call_raw(state)},
-      {3, dot_alias_raw(state)},
-      {4, bracket_expr_raw(state)},
-      {2, bracket_at_expr_raw(state)},
-      {2, capture_int_int_raw()},
-      {3, int_raw()},
-      {2, flt_raw()},
-      {2, char_raw()},
-      {2, atom_raw()},
-      {1, true_raw()},
-      {1, false_raw()},
-      {1, nil_raw()},
-      {2, parens_raw(state)}
-    ])
+    freq_enabled(
+      state,
+      [
+        {:always, 5, empty_paren_raw()},
+        {:enable_fn, 1, fn_stab_raw(state)},
+        {:enable_parens_stab, 1, paren_stab_raw(state)},
+        {:enable_lists, 3, list_raw(state)},
+        {:enable_tuples, 2, tuple_raw(state)},
+        {:enable_bitstrings, 2, bitstring_raw(state)},
+        {:enable_maps, 2, map_raw(state)},
+        {:enable_parens_calls, 3, parens_call_raw(state)},
+        {:always, 3, dot_alias_raw(state)},
+        {:always, 4, bracket_expr_raw(state)},
+        {:always, 2, bracket_at_expr_raw(state)},
+        {:always, 2, capture_int_int_raw()},
+        {:always, 3, int_raw()},
+        {:always, 2, flt_raw()},
+        {:always, 2, char_raw()},
+        {:always, 2, atom_raw()},
+        {:always, 1, true_raw()},
+        {:always, 1, false_raw()},
+        {:always, 1, nil_raw()},
+        {:always, 2, parens_raw(state)}
+      ],
+      empty_paren_raw()
+    )
   end
 
   defp empty_paren_raw, do: constant([:lparen, :rparen])
@@ -1243,20 +1341,29 @@ defmodule ToxicParser.Generator do
   # list_args -> container_args_base ','
   # list_args -> container_args_base ',' kw_data
   defp list_args_raw(state) do
-    frequency([
-      {2, kw_data_raw(state)},
-      {5,
-       bind(container_args_base_raw(state), fn base ->
-         frequency([
-           {5, constant(base)},
-           {2, constant(base ++ [:comma])},
-           {2,
-            bind(kw_data_raw(state), fn kw ->
-              constant(base ++ [:comma] ++ kw)
-            end)}
-         ])
-       end)}
-    ])
+    if enabled?(state, :enable_kw) do
+      frequency([
+        {2, kw_data_raw(state)},
+        {5,
+         bind(container_args_base_raw(state), fn base ->
+           frequency([
+             {5, constant(base)},
+             {2, constant(base ++ [:comma])},
+             {2,
+              bind(kw_data_raw(state), fn kw ->
+                constant(base ++ [:comma] ++ kw)
+              end)}
+           ])
+         end)}
+      ])
+    else
+      bind(container_args_base_raw(state), fn base ->
+        frequency([
+          {5, constant(base)},
+          {2, constant(base ++ [:comma])}
+        ])
+      end)
+    end
   end
 
   # list -> open_bracket ']'
@@ -1662,28 +1769,42 @@ defmodule ToxicParser.Generator do
   # map_close -> assoc close_curly
   # map_close -> assoc_base ',' kw_data close_curly
   defp map_close_raw(state) do
-    frequency([
-      {3,
-       bind(kw_data_raw(state), fn kw ->
-         bind(close_curly_raw(), fn close ->
-           constant(kw ++ close)
-         end)
-       end)},
-      {5,
-       bind(assoc_raw(state), fn assoc ->
-         bind(close_curly_raw(), fn close ->
-           constant(assoc ++ close)
-         end)
-       end)},
-      {1,
-       bind(assoc_base_raw(state), fn base ->
+    entries =
+      [
+        {:enable_kw,
+         3,
          bind(kw_data_raw(state), fn kw ->
            bind(close_curly_raw(), fn close ->
-             constant(base ++ [:comma] ++ kw ++ close)
+             constant(kw ++ close)
            end)
-         end)
-       end)}
-    ])
+         end)},
+        {:always,
+         5,
+         bind(assoc_raw(state), fn assoc ->
+           bind(close_curly_raw(), fn close ->
+             constant(assoc ++ close)
+           end)
+         end)},
+        {:enable_kw,
+         1,
+         bind(assoc_base_raw(state), fn base ->
+           bind(kw_data_raw(state), fn kw ->
+             bind(close_curly_raw(), fn close ->
+               constant(base ++ [:comma] ++ kw ++ close)
+             end)
+           end)
+         end)}
+      ]
+
+    freq_enabled(
+      state,
+      entries,
+      bind(assoc_raw(state), fn assoc ->
+        bind(close_curly_raw(), fn close ->
+          constant(assoc ++ close)
+        end)
+      end)
+    )
   end
 
   # map_args -> open_curly '}'
@@ -1693,52 +1814,69 @@ defmodule ToxicParser.Generator do
   # map_args -> open_curly assoc_update ',' map_close
   # map_args -> open_curly assoc_update_kw close_curly
   defp map_args_raw(state) do
-    frequency([
-      {3,
-       bind(open_curly_raw(), fn open ->
-         bind(close_curly_raw(), fn close ->
-           constant(open ++ close)
-         end)
-       end)},
-      {4,
-       bind(open_curly_raw(), fn open ->
-         bind(map_close_raw(state), fn close ->
-           constant(open ++ close)
-         end)
-       end)},
-      {2,
-       bind(open_curly_raw(), fn open ->
-         bind(assoc_update_raw(state), fn upd ->
+    entries =
+      [
+        {:always,
+         3,
+         bind(open_curly_raw(), fn open ->
            bind(close_curly_raw(), fn close ->
-             constant(open ++ upd ++ close)
+             constant(open ++ close)
            end)
-         end)
-       end)},
-      {1,
-       bind(open_curly_raw(), fn open ->
-         bind(assoc_update_raw(state), fn upd ->
-           bind(close_curly_raw(), fn close ->
-             constant(open ++ upd ++ [:comma] ++ close)
-           end)
-         end)
-       end)},
-      {1,
-       bind(open_curly_raw(), fn open ->
-         bind(assoc_update_raw(state), fn upd ->
+         end)},
+        {:always,
+         4,
+         bind(open_curly_raw(), fn open ->
            bind(map_close_raw(state), fn close ->
-             constant(open ++ upd ++ [:comma] ++ close)
+             constant(open ++ close)
            end)
-         end)
-       end)},
-      {1,
-       bind(open_curly_raw(), fn open ->
-         bind(assoc_update_kw_raw(state), fn upd ->
-           bind(close_curly_raw(), fn close ->
-             constant(open ++ upd ++ close)
+         end)},
+        {:always,
+         2,
+         bind(open_curly_raw(), fn open ->
+           bind(assoc_update_raw(state), fn upd ->
+             bind(close_curly_raw(), fn close ->
+               constant(open ++ upd ++ close)
+             end)
            end)
-         end)
-       end)}
-    ])
+         end)},
+        {:always,
+         1,
+         bind(open_curly_raw(), fn open ->
+           bind(assoc_update_raw(state), fn upd ->
+             bind(close_curly_raw(), fn close ->
+               constant(open ++ upd ++ [:comma] ++ close)
+             end)
+           end)
+         end)},
+        {:always,
+         1,
+         bind(open_curly_raw(), fn open ->
+           bind(assoc_update_raw(state), fn upd ->
+             bind(map_close_raw(state), fn close ->
+               constant(open ++ upd ++ [:comma] ++ close)
+             end)
+           end)
+         end)},
+        {:enable_kw,
+         1,
+         bind(open_curly_raw(), fn open ->
+           bind(assoc_update_kw_raw(state), fn upd ->
+             bind(close_curly_raw(), fn close ->
+               constant(open ++ upd ++ close)
+             end)
+           end)
+         end)}
+      ]
+
+    freq_enabled(
+      state,
+      entries,
+      bind(open_curly_raw(), fn open ->
+        bind(close_curly_raw(), fn close ->
+          constant(open ++ close)
+        end)
+      end)
+    )
   end
 
   # bracket_arg -> open_bracket kw_data close_bracket
@@ -1746,32 +1884,48 @@ defmodule ToxicParser.Generator do
   # bracket_arg -> open_bracket container_expr ',' close_bracket
   # (open_bracket container_expr ',' container_args close_bracket) intentionally NOT generated (would be error)
   defp bracket_arg_raw(state) do
-    frequency([
-      {3,
-       bind(open_bracket_raw(), fn open ->
-         bind(kw_data_raw(state), fn kw ->
-           bind(close_bracket_raw(), fn close ->
-             constant(open ++ kw ++ close)
+    entries =
+      [
+        {:enable_kw,
+         3,
+         bind(open_bracket_raw(), fn open ->
+           bind(kw_data_raw(state), fn kw ->
+             bind(close_bracket_raw(), fn close ->
+               constant(open ++ kw ++ close)
+             end)
            end)
-         end)
-       end)},
-      {4,
-       bind(open_bracket_raw(), fn open ->
-         bind(container_expr_raw(state), fn expr ->
-           bind(close_bracket_raw(), fn close ->
-             constant(open ++ expr ++ close)
+         end)},
+        {:always,
+         4,
+         bind(open_bracket_raw(), fn open ->
+           bind(container_expr_raw(state), fn expr ->
+             bind(close_bracket_raw(), fn close ->
+               constant(open ++ expr ++ close)
+             end)
            end)
-         end)
-       end)},
-      {2,
-       bind(open_bracket_raw(), fn open ->
-         bind(container_expr_raw(state), fn expr ->
-           bind(close_bracket_raw(), fn close ->
-             constant(open ++ expr ++ [:comma] ++ close)
+         end)},
+        {:always,
+         2,
+         bind(open_bracket_raw(), fn open ->
+           bind(container_expr_raw(state), fn expr ->
+             bind(close_bracket_raw(), fn close ->
+               constant(open ++ expr ++ [:comma] ++ close)
+             end)
            end)
-         end)
-       end)}
-    ])
+         end)}
+      ]
+
+    freq_enabled(
+      state,
+      entries,
+      bind(open_bracket_raw(), fn open ->
+        bind(container_expr_raw(state), fn expr ->
+          bind(close_bracket_raw(), fn close ->
+            constant(open ++ expr ++ close)
+          end)
+        end)
+      end)
+    )
   end
 
   # dot_bracket_identifier -> bracket_identifier
@@ -1895,46 +2049,54 @@ defmodule ToxicParser.Generator do
   # call_args_parens -> open_paren call_args_parens_base close_paren
   # call_args_parens -> open_paren call_args_parens_base ',' kw_call close_paren
   defp call_args_parens_raw(state) do
-    frequency([
-      {3,
-       bind(open_paren_raw(), fn open ->
-         constant(open ++ [:rparen])
-       end)},
-      {1,
-       bind(open_paren_raw(), fn open ->
-         bind(no_parens_expr_raw(decr_depth(state)), fn expr ->
-           bind(close_paren_raw(), fn close ->
-             constant(open ++ expr ++ close)
-           end)
-         end)
-       end)},
-      {2,
-       bind(open_paren_raw(), fn open ->
-         bind(kw_call_raw(state), fn kw ->
-           bind(close_paren_raw(), fn close ->
-             constant(open ++ kw ++ close)
-           end)
-         end)
-       end)},
-      {4,
-       bind(open_paren_raw(), fn open ->
-         bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
-           bind(close_paren_raw(), fn close ->
-             constant(open ++ base ++ close)
-           end)
-         end)
-       end)},
-      {2,
-       bind(open_paren_raw(), fn open ->
-         bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
-           bind(kw_call_raw(state), fn kw ->
+    entries =
+      [
+        {:always,
+         3,
+         bind(open_paren_raw(), fn open ->
+           constant(open ++ [:rparen])
+         end)},
+        {:always,
+         1,
+         bind(open_paren_raw(), fn open ->
+           bind(no_parens_expr_raw(decr_depth(state)), fn expr ->
              bind(close_paren_raw(), fn close ->
-               constant(open ++ base ++ [:comma] ++ kw ++ close)
+               constant(open ++ expr ++ close)
              end)
            end)
-         end)
-       end)}
-    ])
+         end)},
+        {:enable_kw,
+         2,
+         bind(open_paren_raw(), fn open ->
+           bind(kw_call_raw(state), fn kw ->
+             bind(close_paren_raw(), fn close ->
+               constant(open ++ kw ++ close)
+             end)
+           end)
+         end)},
+        {:always,
+         4,
+         bind(open_paren_raw(), fn open ->
+           bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
+             bind(close_paren_raw(), fn close ->
+               constant(open ++ base ++ close)
+             end)
+           end)
+         end)},
+        {:enable_kw,
+         2,
+         bind(open_paren_raw(), fn open ->
+           bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
+             bind(kw_call_raw(state), fn kw ->
+               bind(close_paren_raw(), fn close ->
+                 constant(open ++ base ++ [:comma] ++ kw ++ close)
+               end)
+             end)
+           end)
+         end)}
+      ]
+
+    freq_enabled(state, entries, bind(open_paren_raw(), fn open -> constant(open ++ [:rparen]) end))
   end
 
   defp open_paren_raw do
@@ -1966,95 +2128,117 @@ defmodule ToxicParser.Generator do
   # no_parens_expr -> no_parens_many_expr
   # no_parens_expr -> matched_expr no_parens_op_expr
   defp no_parens_expr_raw(%{depth: depth} = state) do
-    state = decr_depth(state)
-
-    base =
-      frequency([
-        {6, no_parens_one_ambig_expr_raw(state)},
-        {4, no_parens_many_expr_raw(state)}
-      ])
-
-    if depth <= 0 do
-      base
+    if not enabled?(state, :enable_no_parens_calls) do
+      matched_expr_raw(state)
     else
-      frequency([
-        {6, base},
-        {2, no_parens_expr_binary_raw(state)},
-        {1,
-         bind(unary_op_eol_raw(), fn op ->
-           rhs_gen =
-             case {List.first(op), List.last(op)} do
-               {{:ternary_op, _, _}, _} -> no_parens_expr_raw(state)
-               {_, {:eol, _}} -> no_parens_expr_raw(state)
-               _ -> no_parens_expr_no_ternary_prefix_raw(state)
-             end
+      state = decr_depth(state)
 
-           bind(rhs_gen, fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(at_op_eol_raw(), fn op ->
-           bind(no_parens_expr_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(capture_op_eol_raw(), fn op ->
-           bind(no_parens_expr_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(ellipsis_op_raw(), fn op ->
-           bind(no_parens_expr_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)}
-      ])
+      base =
+        frequency([
+          {6, no_parens_one_ambig_expr_raw(state)},
+          {4, no_parens_many_expr_raw(state)}
+        ])
+
+      if depth <= 0 do
+        base
+      else
+        entries =
+          [
+            {:always, 6, base},
+            {:enable_binary_op, 2, no_parens_expr_binary_raw(state)},
+            {:enable_unary_op,
+             1,
+             bind(unary_op_eol_raw(), fn op ->
+               rhs_gen =
+                 case {List.first(op), List.last(op)} do
+                   {{:ternary_op, _, _}, _} -> no_parens_expr_raw(state)
+                   {_, {:eol, _}} -> no_parens_expr_raw(state)
+                   _ -> no_parens_expr_no_ternary_prefix_raw(state)
+                 end
+
+               bind(rhs_gen, fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(at_op_eol_raw(), fn op ->
+               bind(no_parens_expr_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(capture_op_eol_raw(), fn op ->
+               bind(no_parens_expr_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(ellipsis_op_raw(), fn op ->
+               bind(no_parens_expr_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)}
+          ]
+
+        freq_enabled(state, entries, base)
+      end
     end
   end
 
   defp no_parens_expr_no_ternary_prefix_raw(%{depth: depth} = state) do
-    state = decr_depth(state)
-
-    base =
-      frequency([
-        {6, no_parens_one_ambig_expr_raw(state)},
-        {4, no_parens_many_expr_raw(state)}
-      ])
-
-    if depth <= 0 do
-      base
+    if not enabled?(state, :enable_no_parens_calls) do
+      matched_expr_no_ternary_prefix_raw(state)
     else
-      frequency([
-        {6, base},
-        {2, no_parens_expr_binary_raw(state)},
-        {1,
-         bind(unary_op_eol_no_ternary_raw(), fn op ->
-           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(at_op_eol_raw(), fn op ->
-           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(capture_op_eol_raw(), fn op ->
-           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)},
-        {1,
-         bind(ellipsis_op_raw(), fn op ->
-           bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
-             constant(op ++ expr)
-           end)
-         end)}
-      ])
+      state = decr_depth(state)
+
+      base =
+        frequency([
+          {6, no_parens_one_ambig_expr_raw(state)},
+          {4, no_parens_many_expr_raw(state)}
+        ])
+
+      if depth <= 0 do
+        base
+      else
+        entries =
+          [
+            {:always, 6, base},
+            {:enable_binary_op, 2, no_parens_expr_binary_raw(state)},
+            {:enable_unary_op,
+             1,
+             bind(unary_op_eol_no_ternary_raw(), fn op ->
+               bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(at_op_eol_raw(), fn op ->
+               bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(capture_op_eol_raw(), fn op ->
+               bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)},
+            {:enable_unary_op,
+             1,
+             bind(ellipsis_op_raw(), fn op ->
+               bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
+                 constant(op ++ expr)
+               end)
+             end)}
+          ]
+
+        freq_enabled(state, entries, base)
+      end
     end
   end
 
@@ -2083,27 +2267,30 @@ defmodule ToxicParser.Generator do
   defp no_parens_op_expr_raw(state) do
     pre = [{:gap_space, 1}]
 
-    frequency([
-      {4, no_parens_bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
-      {3, no_parens_bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
-      {3, no_parens_bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
-      {2, no_parens_bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
-      {2, no_parens_bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
-      {2, no_parens_bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
-      {2, no_parens_bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_pipe_raw(pre, state)},
-      {1, no_parens_bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
-      {1, no_parens_bin_op_rhs_raw(pre, arrow_op_eol_raw(), state)},
-      {1, no_parens_when_kw_rhs_raw(pre, state)}
-    ])
+    entries =
+      [
+        {:always, 4, no_parens_bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
+        {:always, 3, no_parens_bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
+        {:always, 3, no_parens_bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
+        {:always, 2, no_parens_bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
+        {:always, 2, no_parens_bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
+        {:always, 2, no_parens_bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
+        {:always, 2, no_parens_bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_pipe_raw(pre, state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
+        {:always, 1, no_parens_bin_op_rhs_raw(pre, arrow_op_eol_raw(), state)},
+        {:enable_kw, 1, no_parens_when_kw_rhs_raw(pre, state)}
+      ]
+
+    freq_enabled(state, entries, no_parens_bin_op_rhs_raw(pre, match_op_eol_raw(), state))
   end
 
   defp no_parens_bin_op_rhs_raw(pre, op_eol_gen, state) do
@@ -2186,6 +2373,36 @@ defmodule ToxicParser.Generator do
 
   # kw_call is close enough to kw_data for this property test.
   defp kw_call_raw(state), do: kw_data_raw(state)
+
+
+  defp flags_from_opts(opts) do
+    flags = default_flags() |> Map.merge(Keyword.get(opts, :flags, %{}))
+
+    Enum.reduce(@flag_keys, flags, fn key, acc ->
+      case Keyword.fetch(opts, key) do
+        {:ok, v} -> Map.put(acc, key, v)
+        :error -> acc
+      end
+    end)
+  end
+
+  defp enabled?(%{flags: flags}, key), do: Map.get(flags, key, true)
+
+  defp freq_enabled(state, entries, fallback) do
+    entries =
+      Enum.flat_map(entries, fn
+        {:always, weight, gen} ->
+          [{weight, gen}]
+
+        {flag, weight, gen} ->
+          if enabled?(state, flag), do: [{weight, gen}], else: []
+      end)
+
+    case entries do
+      [] -> fallback
+      _ -> frequency(entries)
+    end
+  end
 
   # call_args_parens_base -> call_args_parens_expr (',' call_args_parens_expr)*
   defp call_args_parens_base_raw(state) do
@@ -2361,11 +2578,15 @@ defmodule ToxicParser.Generator do
     else
       state = decr_depth(state)
 
-      frequency([
-        {10, unmatched_expr_no_binary_raw(state)},
-        {2, unmatched_expr_matched_unmatched_raw(state)},
-        {3, unmatched_expr_binary_raw(state)}
-      ])
+      freq_enabled(
+        state,
+        [
+          {:always, 10, unmatched_expr_no_binary_raw(state)},
+          {:enable_binary_op, 2, unmatched_expr_matched_unmatched_raw(state)},
+          {:enable_binary_op, 3, unmatched_expr_binary_raw(state)}
+        ],
+        unmatched_expr_no_binary_raw(state)
+      )
     end
   end
 
@@ -2375,11 +2596,15 @@ defmodule ToxicParser.Generator do
     else
       state = decr_depth(state)
 
-      frequency([
-        {10, unmatched_expr_no_binary_no_ternary_prefix_raw(state)},
-        {2, unmatched_expr_matched_unmatched_no_ternary_prefix_raw(state)},
-        {3, unmatched_expr_binary_no_ternary_prefix_raw(state)}
-      ])
+      freq_enabled(
+        state,
+        [
+          {:always, 10, unmatched_expr_no_binary_no_ternary_prefix_raw(state)},
+          {:enable_binary_op, 2, unmatched_expr_matched_unmatched_no_ternary_prefix_raw(state)},
+          {:enable_binary_op, 3, unmatched_expr_binary_no_ternary_prefix_raw(state)}
+        ],
+        unmatched_expr_no_binary_no_ternary_prefix_raw(state)
+      )
     end
   end
 
@@ -2400,40 +2625,47 @@ defmodule ToxicParser.Generator do
   end
 
   defp unmatched_expr_no_binary_raw(state) do
-    frequency([
-      {10, matched_expr_raw(state)},
-      {1, block_expr_raw(state)},
-      {2,
-       bind(unary_op_eol_raw(), fn op ->
-         rhs_gen =
-           case List.last(op) do
-             {:eol, _} -> expr_raw(state)
-             _ -> expr_no_ternary_prefix_raw(state)
-           end
+    entries =
+      [
+        {:always, 10, matched_expr_raw(state)},
+        {:enable_do_blocks, 1, block_expr_raw(state)},
+        {:enable_unary_op,
+         2,
+         bind(unary_op_eol_raw(), fn op ->
+           rhs_gen =
+             case List.last(op) do
+               {:eol, _} -> expr_raw(state)
+               _ -> expr_no_ternary_prefix_raw(state)
+             end
 
-         bind(rhs_gen, fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(at_op_eol_raw(), fn op ->
-         bind(expr_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {2,
-       bind(capture_op_eol_raw(), fn op ->
-         bind(expr_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)},
-      {1,
-       bind(ellipsis_op_raw(), fn op ->
-         bind(expr_raw(state), fn rhs ->
-           constant(op ++ rhs)
-         end)
-       end)}
-    ])
+           bind(rhs_gen, fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(at_op_eol_raw(), fn op ->
+           bind(expr_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         2,
+         bind(capture_op_eol_raw(), fn op ->
+           bind(expr_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)},
+        {:enable_unary_op,
+         1,
+         bind(ellipsis_op_raw(), fn op ->
+           bind(expr_raw(state), fn rhs ->
+             constant(op ++ rhs)
+           end)
+         end)}
+      ]
+
+    freq_enabled(state, entries, matched_expr_raw(state))
   end
 
   defp unmatched_expr_no_binary_no_ternary_prefix_raw(state) do
@@ -2470,11 +2702,15 @@ defmodule ToxicParser.Generator do
   defp unmatched_expr_binary_raw(state) do
     bind(unmatched_expr_no_binary_raw(state), fn lhs ->
       bind(
-        frequency([
-          {4, matched_op_expr_raw(state)},
-          {4, unmatched_op_expr_raw(state)},
-          {2, no_parens_op_expr_raw(state)}
-        ]),
+        freq_enabled(
+          state,
+          [
+            {:always, 4, matched_op_expr_raw(state)},
+            {:always, 4, unmatched_op_expr_raw(state)},
+            {:enable_no_parens_calls, 2, no_parens_op_expr_raw(state)}
+          ],
+          matched_op_expr_raw(state)
+        ),
         fn rhs ->
           constant(lhs ++ rhs)
         end
@@ -2485,11 +2721,15 @@ defmodule ToxicParser.Generator do
   defp unmatched_expr_binary_no_ternary_prefix_raw(state) do
     bind(unmatched_expr_no_binary_no_ternary_prefix_raw(state), fn lhs ->
       bind(
-        frequency([
-          {4, matched_op_expr_raw(state)},
-          {4, unmatched_op_expr_raw(state)},
-          {2, no_parens_op_expr_raw(state)}
-        ]),
+        freq_enabled(
+          state,
+          [
+            {:always, 4, matched_op_expr_raw(state)},
+            {:always, 4, unmatched_op_expr_raw(state)},
+            {:enable_no_parens_calls, 2, no_parens_op_expr_raw(state)}
+          ],
+          matched_op_expr_raw(state)
+        ),
         fn rhs ->
           constant(lhs ++ rhs)
         end
@@ -2577,14 +2817,21 @@ defmodule ToxicParser.Generator do
   # container_args -> container_args_base ',' kw_data
   defp container_args_raw(state) do
     bind(container_args_base_raw(state), fn base ->
-      frequency([
-        {5, constant(base)},
-        {2, constant(base ++ [:comma])},
-        {2,
-         bind(kw_data_raw(state), fn kw ->
-           constant(base ++ [:comma] ++ kw)
-         end)}
-      ])
+      if enabled?(state, :enable_kw) do
+        frequency([
+          {5, constant(base)},
+          {2, constant(base ++ [:comma])},
+          {2,
+           bind(kw_data_raw(state), fn kw ->
+             constant(base ++ [:comma] ++ kw)
+           end)}
+        ])
+      else
+        frequency([
+          {5, constant(base)},
+          {2, constant(base ++ [:comma])}
+        ])
+      end
     end)
   end
 
