@@ -3099,6 +3099,43 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 52" do
       assert_conforms("%n.().f{}")
     end
+
+    test "repro 53" do
+      assert_conforms("fn (a, b) when %f\n{}/a -> :ok end")
+    end
+
+    test "repro 54" do
+      assert_conforms("%fn a -> 1 end{}")
+      assert_conforms("%(a -> 1){}")
+    end
+
+    test "repro 55" do
+      assert_conforms("fn 1 -> :ok; (;) -> :error end")
+    end
+
+    test "repro 56" do
+      assert_conforms("%%{}{}")
+      assert_conforms("%%Asd{}{}")
+      assert_conforms("%%%{}{}{}")
+      assert_conforms("%%%Foo{}{}{}")
+    end
+
+    test "repro 57" do
+      assert_conforms("@@c[n]")
+      assert_conforms("@@@c[n]")
+      assert_conforms("foo do @@c[n] end")
+      assert_conforms("x + @@c[n] * y")
+      assert_conforms("'foo\#{@@c[n]}'")
+      assert_conforms("fn x when @@c[n] -> 1 end")
+    end
+
+    test "repro 58" do
+      assert_conforms("%{x | (a|r)}")
+    end
+
+    test "repro 59" do
+      assert_conforms("fn 1 -> :ok; (_\n) -> :error end")
+    end
   end
 
   # =============================================================================

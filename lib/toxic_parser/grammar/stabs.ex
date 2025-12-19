@@ -1011,44 +1011,52 @@ defmodule ToxicParser.Grammar.Stabs do
     {:ok, _open, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
-    # Skip EOE inside parens
-    state = EOE.skip(state)
+    # Skip only newlines inside parens (NOT semicolons).
+    # This ensures `(; )` is parsed as a parenthesized empty block pattern, not as `fn () ->`.
+    {state, _newlines} = EOE.skip_newlines_only(state, 0)
 
     case TokenAdapter.peek(state) do
-      # Empty parens: fn () -> body end
-      {:ok, %{kind: :")"} = close_tok, _} ->
-        {:ok, _close, state} = TokenAdapter.next(state)
-        close_meta = token_meta(close_tok.metadata)
-        # Return empty patterns with parens metadata attached to the clause later
-        # Store parens meta for use in try_parse_stab_clause
-        {:ok, [], state, log, {open_meta, close_meta}}
+      {:ok, %{kind: :eoe, value: %{source: :semicolon}}, _} ->
+        # Force fallback to regular parenthesized-expression parsing.
+        {:error, :paren_semicolon, state, log}
 
-      # Content inside parens - parse as call_args_parens
-      {:ok, _, _} ->
-        with {:ok, args, state, log} <- parse_call_args_parens(state, ctx, log) do
-          state = EOE.skip(state)
+      _ ->
+        case TokenAdapter.peek(state) do
+          # Empty parens: fn () -> body end
+          {:ok, %{kind: :")"} = close_tok, _} ->
+            {:ok, _close, state} = TokenAdapter.next(state)
+            close_meta = token_meta(close_tok.metadata)
+            # Return empty patterns with parens metadata attached to the clause later
+            # Store parens meta for use in try_parse_stab_clause
+            {:ok, [], state, log, {open_meta, close_meta}}
 
-          case TokenAdapter.next(state) do
-            {:ok, %{kind: :")"} = close_tok, state} ->
-              close_meta = token_meta(close_tok.metadata)
-              {:ok, args, state, log, {open_meta, close_meta}}
+          # Content inside parens - parse as call_args_parens
+          {:ok, _, _} ->
+            with {:ok, args, state, log} <- parse_call_args_parens(state, ctx, log) do
+              state = EOE.skip(state)
 
-            {:ok, token, state} ->
-              {:error, {:expected, :")", got: token.kind}, state, log}
+              case TokenAdapter.next(state) do
+                {:ok, %{kind: :")"} = close_tok, state} ->
+                  close_meta = token_meta(close_tok.metadata)
+                  {:ok, args, state, log, {open_meta, close_meta}}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
+                {:ok, token, state} ->
+                  {:error, {:expected, :")", got: token.kind}, state, log}
 
-            {:error, diag, state} ->
-              {:error, diag, state, log}
-          end
+                {:eof, state} ->
+                  {:error, :unexpected_eof, state, log}
+
+                {:error, diag, state} ->
+                  {:error, diag, state, log}
+              end
+            end
+
+          {:eof, state} ->
+            {:error, :unexpected_eof, state, log}
+
+          {:error, diag, state} ->
+            {:error, diag, state, log}
         end
-
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
-
-      {:error, diag, state} ->
-        {:error, diag, state, log}
     end
   end
 
@@ -1074,7 +1082,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp parse_call_args_parens_exprs(acc, state, ctx, log) do
     # Parse matched expression
     with {:ok, expr, state, log} <- Expressions.expr(state, Context.matched_expr(), log) do
-      state = EOE.skip(state)
+      {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
@@ -1499,7 +1507,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp block_label?(_), do: false
 
   defp classify_stab_item(%State{} = state, terminator, stop_kinds) do
-    ctx = %{delim: 0, block: 0, open?: true}
+    ctx = %{delim: 0, block: 0, open?: true, percent_pending?: false}
     scan_classify(state, [], ctx, terminator, stop_kinds, 200, false)
   end
 
@@ -1553,8 +1561,13 @@ defmodule ToxicParser.Grammar.Stabs do
   defp scan_update_ctx(ctx, tok) do
     ctx
     |> scan_update_delims(tok)
-    |> Map.put(:open?, scan_open?(tok))
+    |> scan_update_percent(tok)
+    |> Map.put(:open?, scan_open?(tok, ctx))
   end
+
+  defp scan_update_percent(%{percent_pending?: true} = ctx, %{kind: :"{"}), do: %{ctx | percent_pending?: false}
+  defp scan_update_percent(ctx, %{kind: :%}), do: %{ctx | percent_pending?: true}
+  defp scan_update_percent(ctx, _), do: ctx
 
   defp scan_update_delims(%{delim: d, block: b} = ctx, %{kind: kind}) do
     ctx =
@@ -1581,8 +1594,10 @@ defmodule ToxicParser.Grammar.Stabs do
     ctx
   end
 
-  defp scan_open?(%{kind: kind}) do
-    kind in [:",", :kw_identifier, :"(", :"[", :"{", :"<<"] or
+  defp scan_open?(%{kind: kind}, %{percent_pending?: true}) when kind in [:identifier, :alias], do: true
+
+  defp scan_open?(%{kind: kind}, _ctx) do
+    kind in [:",", :kw_identifier, :"(", :"[", :"{", :"<<", :%] or
       Precedence.binary(kind) != nil or
       Precedence.unary(kind) != nil
   end

@@ -543,7 +543,20 @@ defmodule ToxicParser.Pratt do
             meta = build_meta(op_token.metadata)
             operand = Builder.Helpers.from_token(operand_token)
             ast = Builder.Helpers.unary(op, operand, meta)
-            {:ok, ast, state, log}
+
+            at_bp =
+              case Precedence.unary(:at_op) do
+                {bp, _assoc} -> bp
+                _ -> 320
+              end
+
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: :"["}, _} ->
+                led_bracket(ast, state, log, at_bp, context, [])
+
+              _ ->
+                {:ok, ast, state, log}
+            end
           else
             # In Elixir's grammar, unary operators take different operand types:
             # - ellipsis_op always takes matched_expr (min_bp=100)

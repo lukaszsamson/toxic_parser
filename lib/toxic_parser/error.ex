@@ -70,6 +70,15 @@ defmodule ToxicParser.Error do
     line_index = Keyword.get(opts, :line_index, [])
     range = meta_to_range(meta, %{position: Keyword.get(opts, :position)}, line_index)
 
+    reason =
+      case reason do
+        {loc, msg, token} when is_list(msg) and is_list(token) ->
+          {loc, List.to_string(msg), List.to_string(token)}
+
+        other ->
+          other
+      end
+
     %__MODULE__{
       phase: :lexer,
       reason: reason,

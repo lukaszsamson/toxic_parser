@@ -128,6 +128,18 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, ast, state, log}
         end
 
+      # fn ... end is a valid sub_matched_expr for struct base (e.g. %fn a -> 1 end{})
+      {:ok, %{kind: :fn}, _} ->
+        alias ToxicParser.Grammar.Blocks
+
+        case Blocks.parse(state, Context.matched_expr(), log) do
+          {:ok, ast, state, log} ->
+            {:ok, ast, state, log}
+
+          {:no_block, state} ->
+            {:error, :expected_fn, state, log}
+        end
+
       # Parenthesized expression or list/tuple/bitstring as struct base
       # Grammar allows these as sub_matched_expr -> access_expr -> list | tuple | bitstring | empty_paren
       # Example: %!(){} where () is the operand of !
@@ -135,6 +147,11 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
         alias ToxicParser.Grammar.Containers
         Containers.parse(state, Context.matched_expr(), log)
+
+      {:ok, %{kind: kind}, _} when kind in [:%, :%{}] ->
+        # Nested maps/structs are valid map_base_expr (sub_matched_expr).
+        # Needed for things like `%%{}{}.`
+        parse_map_base(state, Context.matched_expr(), log)
 
       _ ->
         # sub_matched_expr with dot operator and paren call support
@@ -487,14 +504,18 @@ defmodule ToxicParser.Grammar.Maps do
   # The RHS of first | is: {:|, _, [b, {:"=>", _, [c, d]}]}
   # This should become: [{(b | c), d}] - key is b | c, value is d
   # Use extract_assoc to properly handle any level of nesting
-  defp classify_pipe_rhs_for_map_update({:|, _, _} = expr) do
-    case extract_assoc(expr) do
-      {:assoc, key, value, assoc_meta} ->
-        annotated_key = annotate_assoc(key, assoc_meta)
-        {:valid, [{annotated_key, value}]}
+  defp classify_pipe_rhs_for_map_update({:|, rhs_meta, _} = expr) do
+    if Keyword.has_key?(rhs_meta, :parens) do
+      {:valid, [expr]}
+    else
+      case extract_assoc(expr) do
+        {:assoc, key, value, assoc_meta} ->
+          annotated_key = annotate_assoc(key, assoc_meta)
+          {:valid, [{annotated_key, value}]}
 
-      :not_assoc ->
-        :invalid
+        :not_assoc ->
+          :invalid
+      end
     end
   end
 
