@@ -34,7 +34,9 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:range_op, meta, op}), do: {:range_op, op, elem(meta, 2) || 0}
   defp normalize_token({:ellipsis_op, meta, op}), do: {:ellipsis_op, op, elem(meta, 2) || 0}
   defp normalize_token({:"[", _meta}), do: :lbracket
-  defp normalize_token({:"]", _meta}), do: :rbracket
+  defp normalize_token({:"]", meta}), do: {:rbracket, elem(meta, 2) || 0}
+  defp normalize_token({:"<<", _meta}), do: :open_bit
+  defp normalize_token({:">>", meta}), do: {:close_bit, elem(meta, 2) || 0}
   defp normalize_token({:"{", _meta}), do: :lcurly
   defp normalize_token({:"}", meta}), do: {:rcurly, elem(meta, 2) || 0}
   defp normalize_token({:",", _meta}), do: :comma

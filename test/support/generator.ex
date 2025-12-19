@@ -229,10 +229,14 @@ defmodule ToxicParser.Generator do
   defp ellipsis_op_raw, do: constant([{:ellipsis_op, :...}])
 
   # Minimal subset of access_expr (yrl has many more).
-  # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom, dot_alias.
+  # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom, dot_alias,
+  # list/tuple/bitstring.
   defp access_expr_raw(state) do
     frequency([
       {5, empty_paren_raw()},
+      {3, list_raw(state)},
+      {2, tuple_raw(state)},
+      {2, bitstring_raw(state)},
       {3, dot_alias_raw(state)},
       {4, bracket_expr_raw(state)},
       {2, bracket_at_expr_raw(state)},
@@ -249,6 +253,130 @@ defmodule ToxicParser.Generator do
   end
 
   defp empty_paren_raw, do: constant([:lparen, :rparen])
+
+  defp open_bracket_raw do
+    frequency([
+      {3, constant([:lbracket])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([:lbracket] ++ eol)
+       end)}
+    ])
+  end
+
+  defp close_bracket_raw do
+    frequency([
+      {3, constant([{:rbracket, nil}])},
+      {1,
+       bind(eol_raw(), fn [{:eol, _n}] = eol ->
+         constant(eol ++ [{:rbracket, nil}])
+       end)}
+    ])
+  end
+
+  defp open_bit_raw do
+    frequency([
+      {3, constant([:open_bit, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([:open_bit] ++ eol)
+       end)}
+    ])
+  end
+
+  defp close_bit_raw do
+    frequency([
+      {3, constant([{:close_bit, nil}])},
+      {1,
+       bind(eol_raw(), fn [{:eol, _n}] = eol ->
+         constant(eol ++ [{:close_bit, nil}])
+       end)}
+    ])
+  end
+
+  # list_args -> kw_data
+  # list_args -> container_args_base
+  # list_args -> container_args_base ','
+  # list_args -> container_args_base ',' kw_data
+  defp list_args_raw(state) do
+    frequency([
+      {2, kw_data_raw(state)},
+      {5,
+       bind(container_args_base_raw(state), fn base ->
+         frequency([
+           {5, constant(base)},
+           {2, constant(base ++ [:comma])},
+           {2,
+            bind(kw_data_raw(state), fn kw ->
+              constant(base ++ [:comma] ++ kw)
+            end)}
+         ])
+       end)}
+    ])
+  end
+
+  # list -> open_bracket ']'
+  # list -> open_bracket list_args close_bracket
+  defp list_raw(state) do
+    frequency([
+      {2,
+       bind(open_bracket_raw(), fn open ->
+         bind(close_bracket_raw(), fn close ->
+           constant(open ++ close)
+         end)
+       end)},
+      {5,
+       bind(open_bracket_raw(), fn open ->
+         bind(list_args_raw(state), fn args ->
+           bind(close_bracket_raw(), fn close ->
+             constant(open ++ args ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # tuple -> open_curly '}'
+  # tuple -> open_curly container_args close_curly
+  defp tuple_raw(state) do
+    frequency([
+      {2,
+       bind(open_curly_raw(), fn open ->
+         bind(close_curly_raw(), fn close ->
+           constant(open ++ close)
+         end)
+       end)},
+      {5,
+       bind(open_curly_raw(), fn open ->
+         bind(container_args_raw(state), fn args ->
+           bind(close_curly_raw(), fn close ->
+             constant(open ++ args ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # bitstring -> open_bit '>>'
+  # bitstring -> open_bit container_args close_bit
+  defp bitstring_raw(state) do
+    frequency([
+      {2,
+       bind(open_bit_raw(), fn open ->
+         bind(close_bit_raw(), fn close ->
+           constant(open ++ close)
+         end)
+       end)},
+      {5,
+       bind(open_bit_raw(), fn open ->
+         bind(container_args_raw(state), fn args ->
+           bind(close_bit_raw(), fn close ->
+             constant(open ++ args ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
 
   defp bracket_expr_raw(_state) do
     bind(bracket_identifier_raw(), fn lhs ->
@@ -517,6 +645,10 @@ defmodule ToxicParser.Generator do
           case {raw, prev_raw} do
             {{:rcurly, nil}, {:eol, n}} when is_integer(n) -> {:rcurly, n}
             {{:rcurly, nil}, {:comma, n}} when is_integer(n) -> {:rcurly, n}
+            {{:rbracket, nil}, {:eol, n}} when is_integer(n) -> {:rbracket, n}
+            {{:rbracket, nil}, {:comma, n}} when is_integer(n) -> {:rbracket, n}
+            {{:close_bit, nil}, {:eol, n}} when is_integer(n) -> {:close_bit, n}
+            {{:close_bit, nil}, {:comma, n}} when is_integer(n) -> {:close_bit, n}
             _ -> raw
           end
 
@@ -531,6 +663,12 @@ defmodule ToxicParser.Generator do
   defp coalesce_eols(raw_tokens), do: do_coalesce_eols(raw_tokens, [])
 
   defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:eol, a + b} | rest], acc)
+
+  # Toxic folds leading EOLs into :range_op meta.extra (no standalone :eol token).
+  defp do_coalesce_eols([{:eol, n}, {:range_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:range_op, op, extra + n} | rest], acc)
+  end
 
   # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
   defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
@@ -598,10 +736,25 @@ defmodule ToxicParser.Generator do
     {{:"[", {start, stop, nil}}, stop}
   end
 
-  defp materialize_token(:rbracket, {line, col}) do
+  defp materialize_token(:rbracket, pos), do: materialize_token({:rbracket, nil}, pos)
+
+  defp materialize_token({:rbracket, extra}, {line, col}) do
     start = {line, col}
     stop = {line, col + 1}
-    {{:"]", {start, stop, nil}}, stop}
+    {{:"]", {start, stop, extra}}, stop}
+  end
+
+  defp materialize_token(:open_bit, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 2}
+    {{:"<<", {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token({:close_bit, extra}, {line, col}) do
+    # Ensure nested bitstrings can be rendered unambiguously: `<< <<a>> >>`.
+    start = {line, col + 1}
+    stop = {line, col + 3}
+    {{:">>", {start, stop, extra}}, stop}
   end
 
   defp materialize_token(:lcurly, {line, col}) do
