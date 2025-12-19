@@ -809,10 +809,17 @@ defmodule ToxicParser.Generator do
   defp call_args_no_parens_comma_expr_raw(state) do
     max = min(state.max_forms, 3)
 
-    bind(integer(2..max), fn count ->
-      call_args_no_parens_comma_expr_n_raw(state, count)
-    end)
+    if max < 2 do
+      call_args_no_parens_comma_expr_n_raw(state, 2)
+    else
+      bind(integer(2..max), fn count ->
+        call_args_no_parens_comma_expr_n_raw(state, count)
+      end)
+    end
   end
+
+  defp call_args_no_parens_comma_expr_n_raw(state, 1),
+    do: call_args_no_parens_comma_expr_n_raw(state, 2)
 
   defp call_args_no_parens_comma_expr_n_raw(state, 2) do
     bind(matched_expr_raw(decr_depth(state)), fn first ->
