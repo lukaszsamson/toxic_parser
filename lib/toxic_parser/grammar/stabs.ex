@@ -1082,7 +1082,23 @@ defmodule ToxicParser.Grammar.Stabs do
   defp parse_call_args_parens_exprs(acc, state, ctx, log) do
     # Parse matched expression
     with {:ok, expr, state, log} <- Expressions.expr(state, Context.matched_expr(), log) do
-      {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
+      {expr, state} =
+        case TokenAdapter.peek(state) do
+          # Only annotate trailing newline EOE when this is a single-arg paren group.
+          # For multi-arg groups like `(a, b\n)`, Elixir does NOT annotate the last arg.
+          {:ok, %{kind: :eoe, value: %{source: source}} = eoe_tok, _} when source != :semicolon ->
+            eoe_meta = EOE.build_eoe_meta(eoe_tok)
+            {state, _newlines} = EOE.skip_newlines_only(state, 0)
+
+            if acc == [] and match?({:ok, %{kind: :")"}, _}, TokenAdapter.peek(state)) do
+              {EOE.annotate_eoe(expr, eoe_meta), state}
+            else
+              {expr, state}
+            end
+
+          _ ->
+            {expr, state}
+        end
 
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->

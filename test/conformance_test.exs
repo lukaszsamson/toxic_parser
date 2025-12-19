@@ -3136,6 +3136,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 59" do
       assert_conforms("fn 1 -> :ok; (_\n) -> :error end")
     end
+
+    test "repro 60" do
+      assert_conforms("fn (a, d\n) -> :ok end")
+    end
   end
 
   # =============================================================================
