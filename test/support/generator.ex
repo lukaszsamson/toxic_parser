@@ -910,6 +910,77 @@ defmodule ToxicParser.Generator do
     ])
   end
 
+  # do_eoe -> 'do' | 'do' eoe
+  defp do_eoe_raw do
+    frequency([
+      {4, constant([:do, {:gap_space, 1}])},
+      {1,
+       bind(eoe_raw(), fn eoe ->
+         constant([:do] ++ eoe)
+       end)}
+    ])
+  end
+
+  # do_block -> do_eoe 'end'
+  # (only minimal empty do-block form for now)
+  defp do_block_raw do
+    bind(do_eoe_raw(), fn do_kw ->
+      constant(do_kw ++ [:end])
+    end)
+  end
+
+  # block_expr -> dot_call_identifier call_args_parens do_block
+  # block_expr -> dot_call_identifier call_args_parens call_args_parens do_block
+  # block_expr -> dot_do_identifier do_block
+  # block_expr -> dot_op_identifier call_args_no_parens_all do_block
+  # block_expr -> dot_identifier call_args_no_parens_all do_block
+  defp block_expr_raw(state) do
+    state = decr_depth(state)
+
+    frequency([
+      {3,
+       bind(dot_call_identifier_raw(state), fn fun ->
+         bind(call_args_parens_raw(state), fn args ->
+           bind(do_block_raw(), fn block ->
+             constant(fun ++ args ++ [{:gap_space, 1}] ++ block)
+           end)
+         end)
+       end)},
+      {1,
+       bind(dot_call_identifier_raw(state), fn fun ->
+         bind(call_args_parens_raw(state), fn args1 ->
+           bind(call_args_parens_raw(state), fn args2 ->
+             bind(do_block_raw(), fn block ->
+               constant(fun ++ args1 ++ args2 ++ [{:gap_space, 1}] ++ block)
+             end)
+           end)
+         end)
+       end)},
+      {2,
+       bind(dot_do_identifier_raw(state), fn fun ->
+         bind(do_block_raw(), fn block ->
+           constant(fun ++ [{:gap_space, 1}] ++ block)
+         end)
+       end)},
+      {2,
+       bind(dot_op_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_all_raw(state), fn args ->
+           bind(do_block_raw(), fn block ->
+             constant(fun ++ [{:gap_space, 1}] ++ args ++ [{:gap_space, 1}] ++ block)
+           end)
+         end)
+       end)},
+      {3,
+       bind(dot_identifier_raw(state), fn fun ->
+         bind(call_args_no_parens_all_raw(state), fn args ->
+           bind(do_block_raw(), fn block ->
+             constant(fun ++ [{:gap_space, 1}] ++ args ++ [{:gap_space, 1}] ++ block)
+           end)
+         end)
+       end)}
+    ])
+  end
+
   # stab_expr has multiple forms in yrl; implement a small subset.
   defp stab_expr_raw(state) do
     state = decr_depth(state)
@@ -2127,7 +2198,132 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  defp unmatched_expr_raw(state), do: matched_expr_raw(state)
+  # unmatched_expr
+  # unmatched_expr -> matched_expr unmatched_op_expr
+  # unmatched_expr -> unmatched_expr matched_op_expr
+  # unmatched_expr -> unmatched_expr unmatched_op_expr
+  # unmatched_expr -> unmatched_expr no_parens_op_expr
+  # unmatched_expr -> unary_op_eol expr
+  # unmatched_expr -> at_op_eol expr
+  # unmatched_expr -> capture_op_eol expr
+  # unmatched_expr -> ellipsis_op expr
+  defp unmatched_expr_raw(%{depth: depth} = state) do
+    if depth <= 0 do
+      matched_expr_raw(state)
+    else
+      state = decr_depth(state)
+
+      frequency([
+        {10, unmatched_expr_no_binary_raw(state)},
+        {2, unmatched_expr_matched_unmatched_raw(state)},
+        {3, unmatched_expr_binary_raw(state)}
+      ])
+    end
+  end
+
+  defp unmatched_expr_matched_unmatched_raw(state) do
+    bind(matched_expr_raw(state), fn lhs ->
+      bind(unmatched_op_expr_raw(state), fn rhs ->
+        constant(lhs ++ rhs)
+      end)
+    end)
+  end
+
+  defp unmatched_expr_no_binary_raw(state) do
+    frequency([
+      {10, matched_expr_raw(state)},
+      {1, block_expr_raw(state)},
+      {2,
+       bind(unary_op_eol_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(at_op_eol_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {2,
+       bind(capture_op_eol_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(expr_raw(state), fn rhs ->
+           constant(op ++ rhs)
+         end)
+       end)}
+    ])
+  end
+
+  defp unmatched_expr_binary_raw(state) do
+    bind(unmatched_expr_no_binary_raw(state), fn lhs ->
+      bind(
+        frequency([
+          {4, matched_op_expr_raw(state)},
+          {4, unmatched_op_expr_raw(state)},
+          {2, no_parens_op_expr_raw(state)}
+        ]),
+        fn rhs ->
+          constant(lhs ++ rhs)
+        end
+      )
+    end)
+  end
+
+  # unmatched_op_expr -> *_op_eol unmatched_expr
+  defp unmatched_op_expr_raw(state) do
+    pre = [{:gap_space, 1}]
+
+    frequency([
+      {4, unmatched_bin_op_rhs_raw(pre, match_op_eol_raw(), state)},
+      {3, unmatched_bin_op_rhs_raw(pre, dual_op_eol_raw(), state)},
+      {3, unmatched_bin_op_rhs_raw(pre, mult_op_eol_raw(), state)},
+      {2, unmatched_bin_op_rhs_raw(pre, power_op_eol_raw(), state)},
+      {2, unmatched_bin_op_rhs_raw(pre, concat_op_eol_raw(), state)},
+      {2, unmatched_bin_op_rhs_raw(pre, range_op_eol_raw(), state)},
+      {2, unmatched_bin_op_rhs_raw(pre, ternary_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, xor_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, and_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, or_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, in_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, in_match_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, type_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, when_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_pipe_raw(pre, state)},
+      {1, unmatched_bin_op_rhs_raw(pre, comp_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, rel_op_eol_raw(), state)},
+      {1, unmatched_bin_op_rhs_raw(pre, arrow_op_eol_raw(), state)}
+    ])
+  end
+
+  defp unmatched_bin_op_rhs_raw(pre, op_eol_gen, state) do
+    bind(op_eol_gen, fn op ->
+      bind(unmatched_expr_raw(state), fn rhs ->
+        constant(pre ++ op ++ rhs)
+      end)
+    end)
+  end
+
+  defp unmatched_bin_op_rhs_pipe_raw(pre, state) do
+    bind(pipe_op_eol_raw(), fn op ->
+      case List.last(op) do
+        {:eol, _} ->
+          bind(unmatched_expr_raw(state), fn rhs ->
+            constant(pre ++ op ++ rhs)
+          end)
+
+        _ ->
+          bind(unmatched_expr_raw(state), fn rhs ->
+            constant(pre ++ op ++ [{:gap_space, 1}] ++ rhs)
+          end)
+      end
+    end)
+  end
 
   # container_args_base -> container_expr | container_args_base ',' container_expr
   defp container_args_base_raw(state) do
@@ -2677,6 +2873,12 @@ defmodule ToxicParser.Generator do
     start = {line, col}
     stop = {line, col + 2}
     {{:fn, {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token(:do, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 2}
+    {{:do, {start, stop, nil}}, stop}
   end
 
   defp materialize_token(:end, {line, col}) do
