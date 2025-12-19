@@ -1320,14 +1320,24 @@ defmodule ToxicParser.Pratt do
 
     # Skip newlines after operator (allows "1 +\n2")
     # Note: We only skip newlines, not semicolons. "1 +;\n2" should be a syntax error.
-    # Newlines can come from:
-    # 1. EOE after the operator (continuation: "1 +\n2")
-    # 2. The operator token itself (continuation operator: "a\n|> b")
-    # 3. EOE before the operator (for pipe_op in map update: "%{base\n| key: val}")
-    # We take the max of all sources
+    #
+    # IMPORTANT: Elixir's parser attaches `newlines` metadata to many operators based on
+    # the EOL *after* the operator (see `*_op_eol` + `next_is_eol/2` in elixir_parser.yrl).
+    # We only incorporate EOE *before* the operator for pipe_op in map update syntax.
     {state, newlines_after_op} = EOE.skip_newlines_only(state, 0)
     token_newlines = Map.get(op_token.metadata, :newlines, 0)
-    effective_newlines = Enum.max([newlines_after_op, token_newlines, newlines_before_op])
+
+    effective_newlines =
+      cond do
+        op_token.kind in [:range_op, :ellipsis_op] ->
+          newlines_after_op
+
+        op_token.kind == :pipe_op ->
+          Enum.max([newlines_after_op, token_newlines, newlines_before_op])
+
+        true ->
+          Enum.max([newlines_after_op, token_newlines])
+      end
 
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list

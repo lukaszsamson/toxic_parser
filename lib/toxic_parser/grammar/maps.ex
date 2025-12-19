@@ -443,8 +443,8 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
                 # Found | - this is potentially a map update
                 {:ok, _pipe, state} = TokenAdapter.next(state)
-                state = EOE.skip(state)
-                pipe_meta_kw = token_meta_with_newlines(pipe_meta, newlines)
+                {state, newlines_after_pipe} = EOE.skip_newlines_only(state, 0)
+                pipe_meta_kw = token_meta_with_newlines(pipe_meta, max(newlines, newlines_after_pipe))
                 parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
 
               _ ->
@@ -602,8 +602,8 @@ defmodule ToxicParser.Grammar.Maps do
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
             {:ok, _pipe, state} = TokenAdapter.next(state)
-            state = EOE.skip(state)
-            pipe_meta_kw = token_meta_with_newlines(pipe_meta, newlines)
+            {state, newlines_after_pipe} = EOE.skip_newlines_only(state, 0)
+            pipe_meta_kw = token_meta_with_newlines(pipe_meta, max(newlines, newlines_after_pipe))
             parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
 
           _ ->

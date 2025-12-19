@@ -228,9 +228,7 @@ defmodule ToxicParser.Grammar.Stabs do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
 
-    # Newlines can come from token metadata (before stab) or EOE (after stab)
-    token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+    token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
     newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
 
@@ -275,9 +273,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.next(state) do
               {:ok, %{kind: :stab_op} = stab_tok, state} ->
                 stab_base_meta = token_meta(stab_tok.metadata)
-                # Newlines can come from token metadata (before stab) or EOE (after stab)
-                token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-                # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+                token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
                 newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
 
@@ -398,9 +394,7 @@ defmodule ToxicParser.Grammar.Stabs do
        ) do
     {:ok, stab_tok, state} = TokenAdapter.next(state)
     stab_base_meta = token_meta(stab_tok.metadata)
-    # Newlines can come from token metadata (before stab) or EOE (after stab)
-    token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+    token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
     newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
 
@@ -446,9 +440,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.next(state) do
               {:ok, %{kind: :stab_op} = stab_tok, state} ->
                 stab_base_meta = token_meta(stab_tok.metadata)
-                # Newlines can come from token metadata (before stab) or EOE (after stab)
-                token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-                # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+                token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
                 newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
 
@@ -504,9 +496,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.next(state) do
               {:ok, %{kind: :stab_op} = stab_tok, state} ->
                 stab_base_meta = token_meta(stab_tok.metadata)
-                # Newlines can come from token metadata (before stab) or EOE (after stab)
-                token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-                # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+                token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
                 {state, newlines_after} = EOE.skip_newlines_only(state, 0)
                 newlines_meta = Meta.newlines_meta(max(token_newlines, newlines_after))
 
@@ -692,12 +682,9 @@ defmodule ToxicParser.Grammar.Stabs do
         # This is definitely a stab clause
         {:ok, _stab, state} = TokenAdapter.next(state)
         stab_base_meta = token_meta(stab_tok.metadata)
-        # Newlines can come from:
-        # 1. Token metadata (newlines BEFORE the stab, tracked by lexer)
-        # 2. EOE after stab (newlines AFTER the stab)
-        # We take the max to get the correct newlines count
-        token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-        # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+        # Newlines metadata for `->` comes from the EOE after the operator (stab_op_eol)
+        # and from the token itself when `->` starts on a new line.
+        token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
         {state, newlines_after} = EOE.skip_newlines_only(state, 0)
         newlines = max(token_newlines, newlines_after)
 
@@ -804,10 +791,9 @@ defmodule ToxicParser.Grammar.Stabs do
                 case TokenAdapter.next(state) do
                   {:ok, %{kind: :stab_op} = stab_tok, state} ->
                     stab_base_meta = token_meta(stab_tok.metadata)
-                    # Newlines can come from token metadata (before stab) or EOE (after stab)
-                    token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
-
-                    # Skip only newlines after stab (not semicolons) - matches Elixir's stab_op_eol
+                    # Newlines metadata for `->` comes from the EOE after the operator (stab_op_eol)
+                    # and from the token itself when `->` starts on a new line.
+                    token_newlines = min(Map.get(stab_tok.metadata, :newlines, 0), 1)
                     {state, newlines_after} = EOE.skip_newlines_only(state, 0)
                     newlines = max(token_newlines, newlines_after)
 
