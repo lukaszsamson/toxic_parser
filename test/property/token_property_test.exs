@@ -33,6 +33,13 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:eol, meta}), do: {:eol, elem(meta, 2)}
   defp normalize_token({:range_op, meta, op}), do: {:range_op, op, elem(meta, 2) || 0}
   defp normalize_token({:ellipsis_op, meta, op}), do: {:ellipsis_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:%{}, _meta}), do: :map_op
+  defp normalize_token({:%, _meta}), do: :percent
+  defp normalize_token({:assoc_op, meta, op}), do: {:assoc_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:pipe_op, meta, op}), do: {:pipe_op, op, elem(meta, 2) || 0}
+  defp normalize_token({:unary_op, _meta, op}), do: {:unary_op, op}
+  defp normalize_token({:dual_op, _meta, op}), do: {:dual_op, op}
+  defp normalize_token({:ternary_op, meta, op}), do: {:ternary_op, op, elem(meta, 2) || 0}
   defp normalize_token({:"[", _meta}), do: :lbracket
   defp normalize_token({:"]", meta}), do: {:rbracket, elem(meta, 2) || 0}
   defp normalize_token({:"<<", _meta}), do: :open_bit

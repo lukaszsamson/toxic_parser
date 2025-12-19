@@ -226,7 +226,7 @@ defmodule ToxicParser.Generator do
   # :eol token. We represent it as {:range_op, :.., leading_eol_count}.
   defp range_op_raw, do: constant([{:range_op, :.., 0}])
 
-  defp ellipsis_op_raw, do: constant([{:ellipsis_op, :...}])
+  defp ellipsis_op_raw, do: constant([{:ellipsis_op, :...}, {:gap_space, 1}])
 
   # Minimal subset of access_expr (yrl has many more).
   # Focus: bracket_at_expr, bracket_expr, capture_int int, flt, char, atom, dot_alias,
@@ -237,6 +237,7 @@ defmodule ToxicParser.Generator do
       {3, list_raw(state)},
       {2, tuple_raw(state)},
       {2, bitstring_raw(state)},
+      {2, map_raw(state)},
       {3, dot_alias_raw(state)},
       {4, bracket_expr_raw(state)},
       {2, bracket_at_expr_raw(state)},
@@ -372,6 +373,410 @@ defmodule ToxicParser.Generator do
          bind(container_args_raw(state), fn args ->
            bind(close_bit_raw(), fn close ->
              constant(open ++ args ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # map -> map_op map_args
+  # map -> '%' map_base_expr map_args
+  # map -> '%' map_base_expr eol map_args
+  defp map_raw(state) do
+    frequency([
+      {6,
+       bind(map_op_raw(), fn op ->
+         bind(map_args_raw(state), fn args ->
+           constant(op ++ args)
+         end)
+       end)},
+      {2,
+       bind(map_struct_base_expr_raw(state), fn base ->
+         bind(map_args_raw(state), fn args ->
+           constant([:percent] ++ base ++ args)
+         end)
+       end)},
+      {1,
+       bind(map_struct_base_expr_raw(state), fn base ->
+         bind(eol_raw(), fn eol ->
+           bind(map_args_raw(state), fn args ->
+             constant([:percent] ++ base ++ eol ++ args)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  defp map_op_raw do
+    # Toxic emits %{} token plus a separate '{' token.
+    constant([:map_op])
+  end
+
+  # In strict lexing, `%` only works when followed by an identifier/alias base.
+  # Also, `@` only lexes as :at_op when it's applied to a non-operator target.
+  defp map_struct_base_expr_raw(_state) do
+    frequency([
+      {6, map_struct_base_atom_raw()},
+      {2,
+       bind(at_op_eol_raw(), fn at ->
+         bind(map_struct_base_atom_raw(), fn expr ->
+           constant(at ++ expr)
+         end)
+       end)},
+      {2,
+       bind(unary_op_eol_raw(), fn op ->
+         bind(map_struct_base_atom_raw(), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(map_struct_base_atom_raw(), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)}
+    ])
+  end
+
+  defp map_struct_base_atom_raw do
+    frequency([
+      {2, alias_raw()},
+      {4, identifier_raw()}
+    ])
+  end
+
+  # map_base_expr -> sub_matched_expr
+  # map_base_expr -> at_op_eol map_base_expr
+  # map_base_expr -> unary_op_eol map_base_expr
+  # map_base_expr -> ellipsis_op map_base_expr
+  defp map_base_expr_raw(state) do
+    frequency([
+      {6, sub_matched_expr_raw(state)},
+      {2,
+       bind(at_op_eol_raw(), fn at ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(at ++ expr)
+         end)
+       end)},
+      {2,
+       bind(unary_op_eol_raw(), fn op ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)}
+    ])
+  end
+
+  defp map_at_target_raw(state) do
+    frequency([
+      {6, identifier_raw()},
+      {2, alias_raw()},
+      {2, dot_alias_raw(state)}
+    ])
+  end
+
+  defp at_op_eol_raw do
+    frequency([
+      {4, constant([:at, {:gap_space, 1}])},
+      {1,
+       bind(eol_raw(), fn eol ->
+         constant([:at] ++ eol)
+       end)}
+    ])
+  end
+
+  defp unary_op_eol_raw do
+    op_raw =
+      frequency([
+        {4, constant([{:unary_op, :!}])},
+        {1, constant([{:unary_op, :^}])},
+        {2, constant([{:dual_op, :+}])},
+        {2, constant([{:dual_op, :-}])},
+        {1, constant([{:ternary_op, :"//", 0}])}
+      ])
+
+    bind(op_raw, fn op ->
+      frequency([
+        # Ensure we don't accidentally glue operators into different tokens (e.g. "!//").
+        {4, constant(op ++ [{:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant(op ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  # assoc_op_eol -> assoc_op | assoc_op eol
+  defp assoc_op_eol_raw do
+    bind(assoc_op_raw(), fn op ->
+      frequency([
+        {4, constant(op ++ [{:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant(op ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp assoc_op_raw, do: constant([{:assoc_op, :"=>", 0}])
+
+  # assoc_expr -> matched_expr assoc_op_eol matched_expr
+  # assoc_expr -> unmatched_expr assoc_op_eol unmatched_expr
+  # assoc_expr -> matched_expr assoc_op_eol unmatched_expr
+  # assoc_expr -> unmatched_expr assoc_op_eol matched_expr
+  # assoc_expr -> map_base_expr
+  defp assoc_expr_raw(state) do
+    frequency([
+      {4, map_base_expr_raw(state)},
+      # matched_expr assoc_op_eol matched_expr
+      {2,
+       bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(assoc_op_eol_raw(), fn op ->
+           bind(matched_expr_raw(decr_depth(state)), fn rhs ->
+             constant(lhs ++ op ++ rhs)
+           end)
+         end)
+       end)},
+      # unmatched_expr assoc_op_eol unmatched_expr
+      {1,
+       bind(unmatched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(assoc_op_eol_raw(), fn op ->
+           bind(unmatched_expr_raw(decr_depth(state)), fn rhs ->
+             constant(lhs ++ op ++ rhs)
+           end)
+         end)
+       end)},
+      # matched_expr assoc_op_eol unmatched_expr
+      {1,
+       bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(assoc_op_eol_raw(), fn op ->
+           bind(unmatched_expr_raw(decr_depth(state)), fn rhs ->
+             constant(lhs ++ op ++ rhs)
+           end)
+         end)
+       end)},
+      # unmatched_expr assoc_op_eol matched_expr
+      {1,
+       bind(unmatched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(assoc_op_eol_raw(), fn op ->
+           bind(matched_expr_raw(decr_depth(state)), fn rhs ->
+             constant(lhs ++ op ++ rhs)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # pipe_op_eol -> pipe_op | pipe_op eol
+  defp pipe_op_eol_raw do
+    bind(pipe_op_raw(), fn op ->
+      frequency([
+        {4, constant(op)},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant(op ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  defp pipe_op_raw, do: constant([{:pipe_op, :|, 0}])
+
+  # assoc_update -> expr pipe_op_eol assoc_expr
+  defp assoc_update_raw(state) do
+    lhs_gen = frequency([{1, matched_expr_raw(decr_depth(state))}, {1, unmatched_expr_raw(decr_depth(state))}])
+
+    bind(lhs_gen, fn lhs ->
+      frequency([
+        # Same-line update: keep rhs from starting with `//` because then `|` lexes as identifier.
+        {4,
+         bind(pipe_op_raw(), fn pipe ->
+           bind(map_base_expr_no_ternary_raw(decr_depth(state)), fn expr ->
+             constant(lhs ++ pipe ++ expr)
+           end)
+         end)},
+        # New-line update: allow full assoc_expr (eol before operators folds into operator meta.extra).
+        {1,
+         bind(pipe_op_raw(), fn pipe ->
+           bind(eol_raw(), fn eol ->
+             bind(assoc_expr_raw(decr_depth(state)), fn expr ->
+               constant(lhs ++ pipe ++ eol ++ expr)
+             end)
+           end)
+         end)}
+      ])
+    end)
+  end
+
+  # assoc_update_kw -> expr pipe_op_eol kw_data
+  defp assoc_update_kw_raw(state) do
+    bind(frequency([{1, matched_expr_raw(decr_depth(state))}, {1, unmatched_expr_raw(decr_depth(state))}]), fn lhs ->
+      bind(pipe_op_eol_raw(), fn pipe ->
+        bind(kw_data_raw(decr_depth(state)), fn kw ->
+          constant(lhs ++ pipe ++ kw)
+        end)
+      end)
+    end)
+  end
+
+  defp map_base_expr_no_ternary_raw(state) do
+    frequency([
+      {6, sub_matched_expr_raw(state)},
+      {2,
+       bind(at_op_eol_raw(), fn at ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(at ++ expr)
+         end)
+       end)},
+      {2,
+       bind(unary_op_eol_no_ternary_raw(), fn op ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)},
+      {1,
+       bind(ellipsis_op_raw(), fn op ->
+         bind(map_at_target_raw(state), fn expr ->
+           constant(op ++ expr)
+         end)
+       end)}
+    ])
+  end
+
+  defp unary_op_eol_no_ternary_raw do
+    op_raw =
+      frequency([
+        {4, constant([{:unary_op, :!}])},
+        {1, constant([{:unary_op, :^}])},
+        {2, constant([{:dual_op, :+}])},
+        {2, constant([{:dual_op, :-}])}
+      ])
+
+    bind(op_raw, fn op ->
+      frequency([
+        {4, constant(op ++ [{:gap_space, 1}])},
+        {1,
+         bind(eol_raw(), fn eol ->
+           constant(op ++ eol)
+         end)}
+      ])
+    end)
+  end
+
+  # assoc_base -> assoc_expr | assoc_base ',' assoc_expr
+  defp assoc_base_raw(state) do
+    max = min(state.max_forms, 3)
+
+    bind(integer(1..max), fn count ->
+      assoc_base_n_raw(state, count)
+    end)
+  end
+
+  defp assoc_base_n_raw(state, 1), do: assoc_expr_raw(state)
+
+  defp assoc_base_n_raw(state, count) when count > 1 do
+    bind(assoc_base_n_raw(state, count - 1), fn prev ->
+      bind(assoc_expr_raw(state), fn last ->
+        constant(prev ++ [:comma] ++ last)
+      end)
+    end)
+  end
+
+  # assoc -> assoc_base | assoc_base ','
+  defp assoc_raw(state) do
+    bind(assoc_base_raw(state), fn base ->
+      frequency([
+        {5, constant(base)},
+        {2, constant(base ++ [:comma])}
+      ])
+    end)
+  end
+
+  # map_close -> kw_data close_curly
+  # map_close -> assoc close_curly
+  # map_close -> assoc_base ',' kw_data close_curly
+  defp map_close_raw(state) do
+    frequency([
+      {3,
+       bind(kw_data_raw(state), fn kw ->
+         bind(close_curly_raw(), fn close ->
+           constant(kw ++ close)
+         end)
+       end)},
+      {5,
+       bind(assoc_raw(state), fn assoc ->
+         bind(close_curly_raw(), fn close ->
+           constant(assoc ++ close)
+         end)
+       end)},
+      {1,
+       bind(assoc_base_raw(state), fn base ->
+         bind(kw_data_raw(state), fn kw ->
+           bind(close_curly_raw(), fn close ->
+             constant(base ++ [:comma] ++ kw ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # map_args -> open_curly '}'
+  # map_args -> open_curly map_close
+  # map_args -> open_curly assoc_update close_curly
+  # map_args -> open_curly assoc_update ',' close_curly
+  # map_args -> open_curly assoc_update ',' map_close
+  # map_args -> open_curly assoc_update_kw close_curly
+  defp map_args_raw(state) do
+    frequency([
+      {3,
+       bind(open_curly_raw(), fn open ->
+         bind(close_curly_raw(), fn close ->
+           constant(open ++ close)
+         end)
+       end)},
+      {4,
+       bind(open_curly_raw(), fn open ->
+         bind(map_close_raw(state), fn close ->
+           constant(open ++ close)
+         end)
+       end)},
+      {2,
+       bind(open_curly_raw(), fn open ->
+         bind(assoc_update_raw(state), fn upd ->
+           bind(close_curly_raw(), fn close ->
+             constant(open ++ upd ++ close)
+           end)
+         end)
+       end)},
+      {1,
+       bind(open_curly_raw(), fn open ->
+         bind(assoc_update_raw(state), fn upd ->
+           bind(close_curly_raw(), fn close ->
+             constant(open ++ upd ++ [:comma] ++ close)
+           end)
+         end)
+       end)},
+      {1,
+       bind(open_curly_raw(), fn open ->
+         bind(assoc_update_raw(state), fn upd ->
+           bind(map_close_raw(state), fn close ->
+             constant(open ++ upd ++ [:comma] ++ close)
+           end)
+         end)
+       end)},
+      {1,
+       bind(open_curly_raw(), fn open ->
+         bind(assoc_update_kw_raw(state), fn upd ->
+           bind(close_curly_raw(), fn close ->
+             constant(open ++ upd ++ close)
            end)
          end)
        end)}
@@ -664,10 +1069,25 @@ defmodule ToxicParser.Generator do
 
   defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:eol, a + b} | rest], acc)
 
-  # Toxic folds leading EOLs into :range_op meta.extra (no standalone :eol token).
+  # Toxic folds leading EOLs into some operator meta.extra (no standalone :eol token).
   defp do_coalesce_eols([{:eol, n}, {:range_op, op, extra} | rest], acc) do
     extra = if is_integer(extra), do: extra, else: 0
     do_coalesce_eols([{:range_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:pipe_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:pipe_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:assoc_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:assoc_op, op, extra + n} | rest], acc)
+  end
+
+  defp do_coalesce_eols([{:eol, n}, {:ternary_op, op, extra} | rest], acc) do
+    extra = if is_integer(extra), do: extra, else: 0
+    do_coalesce_eols([{:ternary_op, op, extra + n} | rest], acc)
   end
 
   # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
@@ -696,6 +1116,57 @@ defmodule ToxicParser.Generator do
     stop = {line, col + 1}
     {{:";", {start, stop, 0}}, stop}
   end
+
+  defp materialize_token(:map_op, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:%{}, {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token(:percent, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:%, {start, stop, nil}}, stop}
+  end
+
+  defp materialize_token({:assoc_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + 2}
+    {{:assoc_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:assoc_op, op}, pos), do: materialize_token({:assoc_op, op, 0}, pos)
+
+  defp materialize_token({:pipe_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:pipe_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:pipe_op, op}, pos), do: materialize_token({:pipe_op, op, 0}, pos)
+
+  defp materialize_token({:unary_op, op}, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:unary_op, {start, stop, nil}, op}, stop}
+  end
+
+  defp materialize_token({:dual_op, op}, {line, col}) do
+    start = {line, col}
+    stop = {line, col + 1}
+    {{:dual_op, {start, stop, nil}, op}, stop}
+  end
+
+  defp materialize_token({:ternary_op, op, extra}, {line, col}) do
+    {line, col} = if extra > 0, do: {line + extra, 1}, else: {line, col}
+    start = {line, col}
+    stop = {line, col + 2}
+    {{:ternary_op, {start, stop, extra}, op}, stop}
+  end
+
+  defp materialize_token({:ternary_op, op}, pos), do: materialize_token({:ternary_op, op, 0}, pos)
 
   defp materialize_token(:comma, pos), do: materialize_token({:comma, 0}, pos)
 
