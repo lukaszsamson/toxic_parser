@@ -1315,12 +1315,95 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  defp bracket_expr_raw(_state) do
-    bind(bracket_identifier_raw(), fn lhs ->
-      bind(identifier_raw(), fn idx ->
-        constant(lhs ++ [:lbracket] ++ idx ++ [:rbracket])
-      end)
-    end)
+  # bracket_arg -> open_bracket kw_data close_bracket
+  # bracket_arg -> open_bracket container_expr close_bracket
+  # bracket_arg -> open_bracket container_expr ',' close_bracket
+  # (open_bracket container_expr ',' container_args close_bracket) intentionally NOT generated (would be error)
+  defp bracket_arg_raw(state) do
+    frequency([
+      {3,
+       bind(open_bracket_raw(), fn open ->
+         bind(kw_data_raw(state), fn kw ->
+           bind(close_bracket_raw(), fn close ->
+             constant(open ++ kw ++ close)
+           end)
+         end)
+       end)},
+      {4,
+       bind(open_bracket_raw(), fn open ->
+         bind(container_expr_raw(state), fn expr ->
+           bind(close_bracket_raw(), fn close ->
+             constant(open ++ expr ++ close)
+           end)
+         end)
+       end)},
+      {2,
+       bind(open_bracket_raw(), fn open ->
+         bind(container_expr_raw(state), fn expr ->
+           bind(close_bracket_raw(), fn close ->
+             constant(open ++ expr ++ [:comma] ++ close)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # dot_bracket_identifier -> bracket_identifier
+  # dot_bracket_identifier -> matched_expr dot_op bracket_identifier
+  defp dot_bracket_identifier_raw(state) do
+    frequency([
+      {5, bracket_identifier_raw()},
+      {2,
+       bind(matched_expr_raw(decr_depth(state)), fn lhs ->
+         bind(dot_op_raw(), fn dot ->
+           bind(bracket_identifier_raw(), fn rhs ->
+             constant(lhs ++ dot ++ rhs)
+           end)
+         end)
+       end)}
+    ])
+  end
+
+  # bracket_expr -> dot_bracket_identifier bracket_arg
+  # bracket_expr -> access_expr bracket_arg
+  defp bracket_expr_raw(state) do
+    state = decr_depth(state)
+
+    frequency([
+      {5,
+       bind(dot_bracket_identifier_raw(state), fn lhs ->
+         bind(bracket_arg_raw(state), fn arg ->
+           constant(lhs ++ arg)
+         end)
+       end)},
+      {2,
+       bind(access_expr_no_brackets_raw(state), fn lhs ->
+         bind(bracket_arg_raw(state), fn arg ->
+           constant(lhs ++ arg)
+         end)
+       end)}
+    ])
+  end
+
+  defp access_expr_no_brackets_raw(state) do
+    frequency([
+      {5, empty_paren_raw()},
+      {3, list_raw(state)},
+      {2, tuple_raw(state)},
+      {2, bitstring_raw(state)},
+      {2, map_raw(state)},
+      {3, parens_call_raw(state)},
+      {3, dot_alias_raw(state)},
+      {2, capture_int_int_raw()},
+      {3, int_raw()},
+      {2, flt_raw()},
+      {2, char_raw()},
+      {2, atom_raw()},
+      {1, true_raw()},
+      {1, false_raw()},
+      {1, nil_raw()},
+      {2, parens_raw(state)}
+    ])
   end
 
   # access_expr -> parens_call
@@ -1481,12 +1564,26 @@ defmodule ToxicParser.Generator do
     ])
   end
 
-  defp bracket_at_expr_raw(_state) do
-    bind(bracket_identifier_raw(), fn lhs ->
-      bind(identifier_raw(), fn idx ->
-        # If we ever decide to allow eol between @ and identifier, we'd need more rules.
-        constant([:at] ++ lhs ++ [:lbracket] ++ idx ++ [:rbracket])
-      end)
+  # bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
+  # bracket_at_expr -> at_op_eol access_expr bracket_arg
+  defp bracket_at_expr_raw(state) do
+    state = decr_depth(state)
+
+    bind(at_op_eol_raw(), fn at ->
+      frequency([
+        {3,
+         bind(dot_bracket_identifier_raw(state), fn lhs ->
+           bind(bracket_arg_raw(state), fn arg ->
+             constant(at ++ lhs ++ arg)
+           end)
+         end)},
+        {1,
+         bind(access_expr_no_brackets_raw(state), fn lhs ->
+           bind(bracket_arg_raw(state), fn arg ->
+             constant(at ++ lhs ++ arg)
+           end)
+         end)}
+      ])
     end)
   end
 
