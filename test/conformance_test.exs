@@ -3431,6 +3431,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 125" do
       assert_conforms(";@\n\nunless do (baz.eggs, qux: \ndelta.\nwith) -> eggs after () -> eggs\n\n(\n\nbaz: \n\ncond) when beta -> delta end |\n\nfoo.Config\n;& baz\n")
     end
+
+    test "repro 126" do
+      assert_conforms("unquote_splicing  a")
+    end
   end
 
   # =============================================================================
