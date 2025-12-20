@@ -38,15 +38,16 @@ defmodule ToxicParser.TokenSequencePropertyTest do
     + - * / ++ -- ** .. ... <> |> <<< >>> <<~ ~>> <~ ~> <~>
     < > <= >= == != === !== =~
     && || !
-    & | ^ ~
+    ^^^
+    & | ^ ~~~
     = <- -> => ::
-    \\
+    \\ //
     @
     .
   )
 
   # Container openers/closers
-  @containers ~w( ( \) [ ] { } << >> %{ %  )
+  @containers ~w( ( \) [ ] { } << >> %{ % \#{  )
 
   # Special tokens
   @special ~w( : ; , \n | _ ? ! )
@@ -71,7 +72,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
                 @strings
 
   # Separators for gluing tokens
-  @separators ["", " ", "\n", "  ", " \n", "\n ", " \n "]
+  @separators ["", " ", "\n", "  ", " \n", "\n ", " \n ", ";", ",", ", ", ",\n", "/n;"]
 
   # ===========================================================================
   # Generators
@@ -113,6 +114,456 @@ defmodule ToxicParser.TokenSequencePropertyTest do
     token <> sep <> interleave(rest_tokens, rest_seps)
   end
   defp interleave([], []), do: ""
+
+  # ===========================================================================
+  # Context Generators - each returns {context_name, full_code}
+  # ===========================================================================
+
+  # Standalone expression
+  defp context_standalone do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      StreamData.constant({"standalone", code})
+    end)
+  end
+
+  # Inside bitstring: <<CODE>>
+  defp context_bitstring do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "<<" <> code <> ">>"
+      StreamData.constant({"bitstring", full_code})
+    end)
+  end
+
+  # Before do block: CODE do :ok end
+  defp context_before_do do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = code <> " do :ok end"
+      StreamData.constant({"before_do", full_code})
+    end)
+  end
+
+  # After do block: foo do :ok end CODE
+  defp context_after_do do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo do :ok end " <> code
+      StreamData.constant({"after_do", full_code})
+    end)
+  end
+
+  # Inside fn arg: fn CODE -> :ok end
+  defp context_fn_arg do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "fn " <> code <> " -> :ok end"
+      StreamData.constant({"fn_arg", full_code})
+    end)
+  end
+
+  # Inside fn body: fn x -> CODE end
+  defp context_fn_body do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "fn x -> " <> code <> " end"
+      StreamData.constant({"fn_body", full_code})
+    end)
+  end
+
+  # Inside do block: foo do CODE end
+  defp context_inside_do do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo do " <> code <> " end"
+      StreamData.constant({"inside_do", full_code})
+    end)
+  end
+
+  # Inside parens call: foo(CODE)
+  defp context_parens_call do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo(" <> code <> ")"
+      StreamData.constant({"parens_call", full_code})
+    end)
+  end
+
+  # Inside no parens call: foo CODE
+  defp context_no_parens_call do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo " <> code
+      StreamData.constant({"no_parens_call", full_code})
+    end)
+  end
+
+  # Inside bracket access: foo[CODE]
+  defp context_bracket_access do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo[" <> code <> "]"
+      StreamData.constant({"bracket_access", full_code})
+    end)
+  end
+
+  # Inside map: %{CODE}
+  defp context_map do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%{" <> code <> "}"
+      StreamData.constant({"map", full_code})
+    end)
+  end
+
+  # Inside struct: %Foo{CODE}
+  defp context_struct do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%Foo{" <> code <> "}"
+      StreamData.constant({"struct", full_code})
+    end)
+  end
+
+  # Inside tuple: {CODE}
+  defp context_tuple do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "{" <> code <> "}"
+      StreamData.constant({"tuple", full_code})
+    end)
+  end
+
+  # Inside list: [CODE]
+  defp context_list do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "[" <> code <> "]"
+      StreamData.constant({"list", full_code})
+    end)
+  end
+
+  # Inside parens: (CODE)
+  defp context_parens do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "(" <> code <> ")"
+      StreamData.constant({"parens", full_code})
+    end)
+  end
+
+  # Inside string interpolation: "#{CODE}"
+  defp context_interpolation do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "\"" <> "\#{" <> code <> "}" <> "\""
+      StreamData.constant({"interpolation", full_code})
+    end)
+  end
+
+  # After pipe: :ok |> CODE
+  defp context_after_pipe do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = ":ok |> " <> code
+      StreamData.constant({"after_pipe", full_code})
+    end)
+  end
+
+  # After assignment: x = CODE
+  defp context_after_assignment do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "x = " <> code
+      StreamData.constant({"after_assignment", full_code})
+    end)
+  end
+
+  # Inside struct arg: %CODE{}
+  defp context_struct_arg do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%" <> code <> "{}"
+      StreamData.constant({"struct_arg", full_code})
+    end)
+  end
+
+  # Between do blocks: foo do :ok end CODE do :error end
+  defp context_between_do_blocks do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo do :ok end " <> code <> " do :error end"
+      StreamData.constant({"between_do_blocks", full_code})
+    end)
+  end
+
+  # Inside ternary range - first position: CODE..x//y
+  defp context_ternary_first do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = code <> "..x//y"
+      StreamData.constant({"ternary_first", full_code})
+    end)
+  end
+
+  # Inside ternary range - second position: x..CODE//y
+  defp context_ternary_second do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "x.." <> code <> "//y"
+      StreamData.constant({"ternary_second", full_code})
+    end)
+  end
+
+  # Inside ternary range - third position: x..y//CODE
+  defp context_ternary_third do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "x..y//" <> code
+      StreamData.constant({"ternary_third", full_code})
+    end)
+  end
+
+  # Inside map update: %{x | CODE}
+  defp context_map_update do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%{x | " <> code <> "}"
+      StreamData.constant({"map_update", full_code})
+    end)
+  end
+
+  # After parens call: foo()CODE
+  defp context_after_parens_call do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo()" <> code
+      StreamData.constant({"after_parens_call", full_code})
+    end)
+  end
+
+  # After dot: foo.CODE
+  defp context_after_dot do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "foo." <> code
+      StreamData.constant({"after_dot", full_code})
+    end)
+  end
+
+  # Parenthesized stab: (x -> CODE)
+  defp context_paren_stab do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "(x -> " <> code <> ")"
+      StreamData.constant({"paren_stab", full_code})
+    end)
+  end
+
+  # Between operators: x + CODE * y
+  defp context_between_operators do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "x + " <> code <> " * y"
+      StreamData.constant({"between_operators", full_code})
+    end)
+  end
+
+  # After unary &: &CODE
+  defp context_after_capture do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "&" <> code
+      StreamData.constant({"after_capture", full_code})
+    end)
+  end
+
+  # After unary ^: ^CODE
+  defp context_after_pin do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "^" <> code
+      StreamData.constant({"after_pin", full_code})
+    end)
+  end
+
+  # After unary @: @CODE
+  defp context_after_at do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "@" <> code
+      StreamData.constant({"after_at", full_code})
+    end)
+  end
+
+  # After unary !: !CODE
+  defp context_after_bang do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "!" <> code
+      StreamData.constant({"after_bang", full_code})
+    end)
+  end
+
+  # After unary not: not CODE
+  defp context_after_not do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "not " <> code
+      StreamData.constant({"after_not", full_code})
+    end)
+  end
+
+  # Inside fn when guard: fn x when CODE -> 1 end
+  defp context_fn_when do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "fn x when " <> code <> " -> 1 end"
+      StreamData.constant({"fn_when", full_code})
+    end)
+  end
+
+  # Inside def with parens args: def foo(CODE) do :ok end
+  defp context_def_parens_arg do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "def foo(" <> code <> ") do :ok end"
+      StreamData.constant({"def_parens_arg", full_code})
+    end)
+  end
+
+  # Inside keyword list value: [a: CODE]
+  defp context_keyword_list_value do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "[a: " <> code <> "]"
+      StreamData.constant({"keyword_list_value", full_code})
+    end)
+  end
+
+  # Inside map kv value: %{a: CODE}
+  defp context_map_kv_value do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%{a: " <> code <> "}"
+      StreamData.constant({"map_kv_value", full_code})
+    end)
+  end
+
+  # Inside map rocket key: %{CODE => 1}
+  defp context_map_rocket_key do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "%{" <> code <> " => 1}"
+      StreamData.constant({"map_rocket_key", full_code})
+    end)
+  end
+
+  # Case clause pattern: case x do CODE -> :ok end
+  defp context_case_clause_lhs do
+    StreamData.bind(token_sequence_gen(min_length: 1), fn code ->
+      full_code = "case x do " <> code <> " -> :ok end"
+      StreamData.constant({"case_clause_lhs", full_code})
+    end)
+  end
+
+  # Case clause body: case x do 1 -> CODE end
+  defp context_case_clause_rhs do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "case x do 1 -> " <> code <> " end"
+      StreamData.constant({"case_clause_rhs", full_code})
+    end)
+  end
+
+  # If condition: if CODE do :ok end
+  defp context_if_condition do
+    StreamData.bind(token_sequence_gen(min_length: 1), fn code ->
+      full_code = "if " <> code <> " do :ok end"
+      StreamData.constant({"if_condition", full_code})
+    end)
+  end
+
+  # If else body: if true do :ok else CODE end
+  defp context_if_else_body do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "if true do :ok else " <> code <> " end"
+      StreamData.constant({"if_else_body", full_code})
+    end)
+  end
+
+  # With generator RHS: with x <- CODE do x end
+  defp context_with_generator_rhs do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "with x <- " <> code <> " do x end"
+      StreamData.constant({"with_generator_rhs", full_code})
+    end)
+  end
+
+  # For generator RHS: for x <- CODE, do: x
+  defp context_for_generator_rhs do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "for x <- " <> code <> ", do: x"
+      StreamData.constant({"for_generator_rhs", full_code})
+    end)
+  end
+
+  # Try body: try do CODE after :ok end
+  defp context_try_body do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "try do " <> code <> " after :ok end"
+      StreamData.constant({"try_body", full_code})
+    end)
+  end
+
+  # Receive clause pattern: receive do CODE -> :ok after 0 -> :timeout end
+  defp context_receive_clause_lhs do
+    StreamData.bind(token_sequence_gen(min_length: 1), fn code ->
+      full_code = "receive do " <> code <> " -> :ok after 0 -> :timeout end"
+      StreamData.constant({"receive_clause_lhs", full_code})
+    end)
+  end
+
+  # Bitstring segment spec: <<a::CODE>>
+  defp context_bitstring_segment_spec do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "<<a::" <> code <> ">>"
+      StreamData.constant({"bitstring_segment_spec", full_code})
+    end)
+  end
+
+  # Charlist interpolation: 'foo#{CODE}'
+  defp context_charlist_interpolation do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "'foo\#{" <> code <> "}'"
+      StreamData.constant({"charlist_interpolation", full_code})
+    end)
+  end
+
+  # Sigil interpolation: ~s/foo#{CODE}/
+  defp context_sigil_interpolation do
+    StreamData.bind(token_sequence_gen(), fn code ->
+      full_code = "~s/foo\#{" <> code <> "}/"
+      StreamData.constant({"sigil_interpolation", full_code})
+    end)
+  end
+
+  # Combined generator that picks one context randomly
+  defp all_contexts_gen do
+    StreamData.one_of([
+      context_standalone(),
+      context_bitstring(),
+      context_before_do(),
+      context_after_do(),
+      context_fn_arg(),
+      context_fn_body(),
+      context_inside_do(),
+      context_parens_call(),
+      context_no_parens_call(),
+      context_bracket_access(),
+      context_map(),
+      context_struct(),
+      context_tuple(),
+      context_list(),
+      context_parens(),
+      context_interpolation(),
+      context_after_pipe(),
+      context_after_assignment(),
+      context_struct_arg(),
+      context_between_do_blocks(),
+      context_ternary_first(),
+      context_ternary_second(),
+      context_ternary_third(),
+      context_map_update(),
+      context_after_parens_call(),
+      context_after_dot(),
+      context_paren_stab(),
+      context_between_operators(),
+      context_after_capture(),
+      context_after_pin(),
+      context_after_at(),
+      context_after_bang(),
+      context_after_not(),
+      context_fn_when(),
+      context_def_parens_arg(),
+      context_keyword_list_value(),
+      context_map_kv_value(),
+      context_map_rocket_key(),
+      context_case_clause_lhs(),
+      context_case_clause_rhs(),
+      context_if_condition(),
+      context_if_else_body(),
+      context_with_generator_rhs(),
+      context_for_generator_rhs(),
+      context_try_body(),
+      context_receive_clause_lhs(),
+      context_bitstring_segment_spec(),
+      context_charlist_interpolation(),
+      context_sigil_interpolation()
+    ])
+  end
 
   # ===========================================================================
   # Property Tests
@@ -325,10 +776,266 @@ defmodule ToxicParser.TokenSequencePropertyTest do
   end
 
   # ===========================================================================
+  # Context-based Property Tests
+  # ===========================================================================
+
+  describe "token sequence in all contexts" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in random contexts produce conformant ASTs" do
+      check all(
+              {context, code} <- all_contexts_gen(),
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in containers" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in container contexts produce conformant ASTs" do
+      container_contexts =
+        StreamData.one_of([
+          context_list(),
+          context_tuple(),
+          context_map(),
+          context_struct(),
+          context_parens(),
+          context_bitstring()
+        ])
+
+      check all(
+              {context, code} <- container_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in calls" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in call contexts produce conformant ASTs" do
+      call_contexts =
+        StreamData.one_of([
+          context_parens_call(),
+          context_no_parens_call(),
+          context_bracket_access(),
+          context_after_dot()
+        ])
+
+      check all(
+              {context, code} <- call_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in fn expressions" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in fn contexts produce conformant ASTs" do
+      fn_contexts =
+        StreamData.one_of([
+          context_fn_arg(),
+          context_fn_body(),
+          context_fn_when(),
+          context_paren_stab()
+        ])
+
+      check all(
+              {context, code} <- fn_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in do blocks" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in do block contexts produce conformant ASTs" do
+      do_contexts =
+        StreamData.one_of([
+          context_before_do(),
+          context_after_do(),
+          context_inside_do(),
+          context_between_do_blocks()
+        ])
+
+      check all(
+              {context, code} <- do_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence after unary operators" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences after unary operators produce conformant ASTs" do
+      unary_contexts =
+        StreamData.one_of([
+          context_after_capture(),
+          context_after_pin(),
+          context_after_at(),
+          context_after_bang(),
+          context_after_not()
+        ])
+
+      check all(
+              {context, code} <- unary_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in interpolation" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in interpolation contexts produce conformant ASTs" do
+      interp_contexts =
+        StreamData.one_of([
+          context_interpolation(),
+          context_charlist_interpolation(),
+          context_sigil_interpolation()
+        ])
+
+      check all(
+              {context, code} <- interp_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in control flow" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in control flow contexts produce conformant ASTs" do
+      control_contexts =
+        StreamData.one_of([
+          context_case_clause_lhs(),
+          context_case_clause_rhs(),
+          context_if_condition(),
+          context_if_else_body(),
+          context_with_generator_rhs(),
+          context_for_generator_rhs(),
+          context_try_body(),
+          context_receive_clause_lhs()
+        ])
+
+      check all(
+              {context, code} <- control_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in operators" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in operator contexts produce conformant ASTs" do
+      op_contexts =
+        StreamData.one_of([
+          context_after_pipe(),
+          context_after_assignment(),
+          context_between_operators(),
+          context_ternary_first(),
+          context_ternary_second(),
+          context_ternary_third()
+        ])
+
+      check all(
+              {context, code} <- op_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in keyword/map contexts" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in keyword/map contexts produce conformant ASTs" do
+      kv_contexts =
+        StreamData.one_of([
+          context_keyword_list_value(),
+          context_map_kv_value(),
+          context_map_rocket_key(),
+          context_map_update()
+        ])
+
+      check all(
+              {context, code} <- kv_contexts,
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in def" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in def contexts produce conformant ASTs" do
+      check all(
+              {context, code} <- context_def_parens_arg(),
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  describe "token sequence in bitstring spec" do
+    @tag :property
+    @tag timeout: 120_000
+    property "token sequences in bitstring spec contexts produce conformant ASTs" do
+      check all(
+              {context, code} <- context_bitstring_segment_spec(),
+              max_runs: 100_000,
+              max_shrinking_steps: 50
+            ) do
+        run_comparison_with_context(context, code)
+      end
+    end
+  end
+
+  # ===========================================================================
   # Comparison Helper
   # ===========================================================================
 
   defp run_comparison(code) do
+    run_comparison_with_context("standalone", code)
+  end
+
+  defp run_comparison_with_context(context, code) do
     result =
       try do
         Code.string_to_quoted(code, @oracle_opts)
@@ -351,7 +1058,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
             assert oracle_normalized == toxic_normalized,
                    """
-                   AST mismatch for code: #{inspect(code)}
+                   AST mismatch in context #{context} for code: #{inspect(code)}
 
                    Oracle:
                    #{inspect(oracle_normalized, pretty: true)}
@@ -362,7 +1069,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
           {:error, reason} ->
             flunk("""
-            Parser error for: #{inspect(code)}
+            Parser error in context #{context} for: #{inspect(code)}
 
             Toxic:
             #{inspect(reason, pretty: true)}
