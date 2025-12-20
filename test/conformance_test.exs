@@ -3415,6 +3415,14 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 122 (2)" do
       assert_conforms("qux -58, alpha: :bar[foo,\n]\n\n;if .. foo eggs bar +100;58\n& gamma .. bar.gamma ||| ... case when gamma: \ntry, gamma: delta -0")
     end
+
+    test "repro 123" do
+      assert_conforms("... with / eggs.\n\nbeta -bar *\n\nqux -17 *\n@ - baz.delta when\nspam: \n\nspam =\n\nfoo;! case when [\n\n& baz,() when beta.case,bar: \n\neggs.\nreceive]\nqux.\n\nif\n@\nspam .. ~~~ ! ... eggs ** - (\n\n;not\n\nspam).beta foo")
+    end
+
+    test "repro 123a" do
+      assert_conforms("() != delta <= spam +35 when bar: eggs, alpha: foo\n;qux.qux & bar.beta +gamma;@ MyApp\n")
+    end
   end
 
   # =============================================================================

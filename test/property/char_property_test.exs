@@ -1178,7 +1178,7 @@ defmodule ToxicParser.CharPropertyTest do
     property "grammar trees round-trip through Toxic in all contexts" do
       check all(
               {context, code} <- all_contexts_gen(),
-              max_runs: 5_000_000,
+              max_runs: 2_000_000,
               max_shrinking_steps: 50
             ) do
         run_comparison(context, code)

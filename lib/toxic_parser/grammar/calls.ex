@@ -525,7 +525,8 @@ defmodule ToxicParser.Grammar.Calls do
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
     with {:ok, first_arg, state, log} <-
-           Pratt.parse_with_min_bp(state, Context.matched_expr(), log, 0, stop_at_assoc: true) do
+           # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
+           Pratt.parse_with_min_bp(state, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
