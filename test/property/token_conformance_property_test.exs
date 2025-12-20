@@ -240,6 +240,36 @@ defmodule ToxicParser.TokenConformancePropertyTest do
         run_comparison(code)
       end
     end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "generated tokens with fn and stabs and calls enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: false,
+          enable_tuples: true,
+          enable_bitstrings: false,
+          enable_fn: true,
+          enable_parens_stab: true,
+          enable_binary_op: false,
+          enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: true,
+          enable_no_parens_calls: true
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
+              max_runs: 1_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
   end
 
   describe "token conformance - do blocks" do
@@ -258,6 +288,36 @@ defmodule ToxicParser.TokenConformancePropertyTest do
           enable_parens_stab: false,
           enable_binary_op: false,
           enable_unary_op: false,
+          enable_kw: true,
+          enable_parens_calls: true,
+          enable_no_parens_calls: true
+        })
+
+      check all(
+              tokens <- Generator.tokens_gen(flags: flags, max_forms: 1, depth: 5),
+              max_runs: 1_000,
+              max_shrinking_steps: 50
+            ) do
+        code = Toxic.to_string(tokens)
+        run_comparison(code)
+      end
+    end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "generated tokens with do blocks and ops enabled produce conformant ASTs" do
+      flags =
+        Generator.default_flags()
+        |> Map.merge(%{
+          enable_lists: false,
+          enable_maps: false,
+          enable_do_blocks: true,
+          enable_tuples: false,
+          enable_bitstrings: false,
+          enable_fn: false,
+          enable_parens_stab: false,
+          enable_binary_op: true,
+          enable_unary_op: true,
           enable_kw: true,
           enable_parens_calls: true,
           enable_no_parens_calls: true
