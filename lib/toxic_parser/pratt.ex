@@ -396,7 +396,8 @@ defmodule ToxicParser.Pratt do
         if token.kind not in excluded_kinds and
              allow_no_parens and
              allow_containers do
-          parse_no_parens_call_nud_with_min_bp(token, state, context, log, min_bp, opts)
+          call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
+          parse_no_parens_call_nud_with_min_bp(token, state, context, log, call_min_bp, opts)
         else
           ast = literal_to_ast(token)
           maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks, opts)
@@ -619,9 +620,6 @@ defmodule ToxicParser.Pratt do
                     {:ok, next_tok, _} ->
                       if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
                         case {next_tok.kind, bp(next_tok.kind)} do
-                          {:pipe_op, _} ->
-                            {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
-
                           {_, nil} ->
                             {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
 
@@ -1037,7 +1035,9 @@ defmodule ToxicParser.Pratt do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             state = TokenAdapter.pushback(state, token)
 
-            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, min_bp, opts) do
+            call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
+
+            with {:ok, right, state, log} <- Calls.parse_without_led(state, context, log, call_min_bp, opts) do
               # Preserve min_bp so unary operands do not swallow lower-precedence operators.
               led_min_bp = min_bp
 
