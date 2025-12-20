@@ -603,6 +603,19 @@ defmodule ToxicParser.Pratt do
                      ) do
                 operand_result =
                   case TokenAdapter.peek(state_after_base) do
+                    # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
+                    # This matches cases like `@ @ (case ... end)[x]` where the bracket applies to the inner @,
+                    # and the outer @ wraps the whole access_expr.
+                    {:ok, %{kind: :"["}, _} ->
+                      if match?({:@, _, [_]}, operand_base) do
+                        with {:ok, operand_with_bracket, state_after_bracket, log} <-
+                               led_bracket(operand_base, state_after_base, log, at_bp, operand_ctx, []) do
+                          {:ok, operand_with_bracket, TokenAdapter.drop_checkpoint(state_after_bracket, ref), log}
+                        end
+                      else
+                        {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+                      end
+
                     {:ok, next_tok, _} ->
                       if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
                         case bp(next_tok.kind) do
@@ -698,18 +711,52 @@ defmodule ToxicParser.Pratt do
             # The outer context is preserved for led() after the unary is built.
             operand_context = restrict_no_parens_extension(context)
 
-            with {:ok, operand, state, log} <-
-                   parse_rhs(operand_token, state, operand_context, log, operand_min_bp,
+            {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+
+            with {:ok, operand_base, state_after_base, log} <-
+                   parse_rhs(operand_token, checkpoint_state, operand_context, log, operand_min_bp,
                      unary_operand: true
                    ) do
-              op = op_token.value
-              meta = build_meta(op_token.metadata)
-              ast = Builder.Helpers.unary(op, operand, meta)
-              # After building the unary, continue with led() to handle trailing operators.
-              # Use the unary's precedence (operand_min_bp) so only higher-precedence operators
-              # can attach. E.g., `+ a ** b` parses as `(+a) ** b` since ** bp=230 < + bp=300.
-              # For ellipsis/range with operand_min_bp=100, `... a ** b` -> `... (a ** b)`.
-              led(ast, state, log, operand_min_bp, context)
+              operand_result =
+                case TokenAdapter.peek(state_after_base) do
+                  {:ok, next_tok, _} when op_token.kind == :capture_op ->
+                    complex_operand? =
+                      case operand_base do
+                        {op, _meta, args} when is_atom(op) and is_list(args) and length(args) == 2 -> true
+                        _ -> false
+                      end
+
+                    function_capture? = function_capture_operand?(operand_base)
+
+                    case {complex_operand?, function_capture?, contains_do_block?(operand_base), bp(next_tok.kind)} do
+                      {true, false, true, next_bp} when is_integer(next_bp) and next_bp < operand_min_bp ->
+                        state_full = TokenAdapter.rewind(state_after_base, ref)
+
+                        with {:ok, operand_full, state_full, log} <-
+                               parse_rhs(operand_token, state_full, operand_context, log, 0,
+                                 unary_operand: true
+                               ) do
+                          {:ok, operand_full, state_full, log}
+                        end
+
+                      _ ->
+                        {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+                    end
+
+                  _ ->
+                    {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+                end
+
+              with {:ok, operand, state, log} <- operand_result do
+                op = op_token.value
+                meta = build_meta(op_token.metadata)
+                ast = Builder.Helpers.unary(op, operand, meta)
+
+                # After building the unary, continue with led() to handle trailing operators.
+                # Use the unary's precedence (operand_min_bp) so only higher-precedence operators
+                # can attach.
+                led(ast, state, log, operand_min_bp, context)
+              end
             end
           end
         end
@@ -1449,18 +1496,39 @@ defmodule ToxicParser.Pratt do
     # the EOL *after* the operator (see `*_op_eol` + `next_is_eol/2` in elixir_parser.yrl).
     # We only incorporate EOE *before* the operator for pipe_op in map update syntax.
     {state, newlines_after_op} = EOE.skip_newlines_only(state, 0)
-    token_newlines = Map.get(op_token.metadata, :newlines, 0)
+
+    # Elixir's `*_op_eol` rules attach `newlines` from the EOL token that comes
+    # *after* the operator (see `next_is_eol/2` in elixir_parser.yrl).
+    # TokenAdapter sometimes suppresses explicit :eoe tokens for continuation ops,
+    # so for range_op we may need to derive that count from the next token's leading
+    # newline metadata.
+    token_leading_newlines = Map.get(op_token.metadata, :newlines, 0)
 
     effective_newlines =
       cond do
-        op_token.kind in [:range_op, :ellipsis_op] ->
-          if newlines_after_op > 0, do: newlines_after_op, else: token_newlines
-
         op_token.kind == :pipe_op ->
-          Enum.max([newlines_after_op, token_newlines, newlines_before_op])
+          Enum.max([newlines_after_op, newlines_before_op, token_leading_newlines])
+
+        op_token.kind == :range_op and newlines_after_op > 0 ->
+          newlines_after_op
+
+        op_token.kind == :range_op ->
+          rhs_newlines =
+            case TokenAdapter.peek(state) do
+              {:ok, tok, _} -> Map.get(tok.metadata, :newlines, 0)
+              _ -> 0
+            end
+
+          op_leading_newlines = Map.get(op_token.metadata, :newlines, 0)
+
+          if op_leading_newlines > 0 do
+            Enum.min([rhs_newlines, op_leading_newlines])
+          else
+            rhs_newlines
+          end
 
         true ->
-          Enum.max([newlines_after_op, token_newlines])
+          if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
       end
 
     case TokenAdapter.peek(state) do
@@ -2018,17 +2086,16 @@ defmodule ToxicParser.Pratt do
          log,
          opts
        ) do
-    # For RHS parsing, we don't want to allow no_parens_expr extension.
-    # The allow_no_parens_expr flag should only affect the TOP level of expression parsing,
-    # not nested operands. This ensures proper precedence handling in chains like
-    # "for x when is_integer(x) <- xs" where <- should NOT be consumed inside when's RHS.
-    rhs_context = restrict_no_parens_extension(context)
+    # Follow elixir_parser.yrl: RHS can be a no_parens_expr depending on the operator class.
+    # In Pratt, that means we must preserve allow_no_parens_expr on RHS when the surrounding
+    # context allows it (e.g. `<-` RHS can contain `when foo: bar` keyword args).
+    rhs_context = context
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
         rhs_opts =
           opts
-          |> Keyword.put(:allow_no_parens_extension?, false)
+          |> Keyword.put(:allow_no_parens_extension?, context.allow_no_parens_expr)
           |> Keyword.put(:unary_operand, false)
 
         with {:ok, right, state, log} <-
@@ -2232,6 +2299,23 @@ defmodule ToxicParser.Pratt do
   defp build_meta_with_newlines(token_meta, newlines) when newlines > 0 do
     [newlines: newlines] ++ build_meta(token_meta)
   end
+
+  defp function_capture_operand?({:/, _meta, [callee, arity]}) when is_integer(arity) do
+    case callee do
+      {name, _meta, nil} when is_atom(name) -> true
+      {{:., _meta, _args}, _meta2, []} -> true
+      _ -> false
+    end
+  end
+
+  defp function_capture_operand?(_), do: false
+
+  defp contains_do_block?({_, meta, args}) when is_list(meta) and is_list(args) do
+    Keyword.has_key?(meta, :do) or Enum.any?(args, &contains_do_block?/1)
+  end
+
+  defp contains_do_block?(list) when is_list(list), do: Enum.any?(list, &contains_do_block?/1)
+  defp contains_do_block?(_), do: false
 
   defp parse_access_indices(acc, state, _ctx, log) do
     case Brackets.parse_bracket_arg_no_skip(state, log) do
