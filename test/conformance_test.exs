@@ -3439,6 +3439,28 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 127" do
       assert_conforms("%~~~ delta{\n! with=> eggs,receive do ->\n\n\n\n;beta;beta.delta; after -> beta catch () -> receive\n() when delta -> alpha.baz end + beta=> alpha spam, cond, eggs, beta: bar.eggs do ->\n\nbeta\nalpha rescue bar end,41}\n")
     end
+
+    test "repro 128" do
+      assert_conforms("(x -> unquote_splicing'c'\nacydobkey)")
+      assert_conforms("fn x -> unquote_splicing  a\na end")
+      assert_conforms("(x -> unquote_splicing  :error<for\n__DIR__)")
+    end
+
+    test "repro 129" do
+      assert_conforms("a/__STACKTRACE__  cfoo2nil,..")
+    end
+
+    test "repro 130" do
+      assert_conforms("%...{}")
+    end
+
+    test "repro 131" do
+      assert_conforms("fn \"\":\nbaz -> :ok end")
+    end
+
+    test "repro 132" do
+      assert_conforms("%...{}")
+    end
   end
 
   # =============================================================================

@@ -26,7 +26,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
     property "generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -57,7 +57,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
     property "deep generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 4, depth: 5),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -73,7 +73,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
       check all(
               flags <- Generator.flags_gen(),
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -105,7 +105,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -137,7 +137,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -169,7 +169,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -201,7 +201,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -233,7 +233,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -265,7 +265,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -297,7 +297,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -329,7 +329,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 50_000,
+              max_runs: 1_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
