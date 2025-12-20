@@ -175,6 +175,10 @@ defmodule ToxicParser.Grammar.Expressions do
     end
   end
 
+  defp finalize_exprs([{:unquote_splicing, _meta, [_]} = single], state, log) do
+    {:ok, {:__block__, [], [single]}, state, log}
+  end
+
   defp finalize_exprs([single], state, log), do: {:ok, single, state, log}
 
   defp finalize_exprs(many, state, log) do
