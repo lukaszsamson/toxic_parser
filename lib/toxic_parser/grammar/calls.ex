@@ -124,8 +124,8 @@ defmodule ToxicParser.Grammar.Calls do
   # Grammar: no_parens_many_expr -> op_identifier call_args_no_parens_ambig
   #          no_parens_one_ambig -> op_identifier call_args_no_parens_ambig
   defp parse_op_identifier_call(callee_tok, state, ctx, log) do
-    # Parse first arg (the unary expression)
-    with {:ok, first_arg, state, log} <- Expressions.expr(state, Context.matched_expr(), log) do
+    # Parse first arg as no_parens_expr (elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr)
+    with {:ok, first_arg, state, log} <- Expressions.expr(state, Context.no_parens_expr(), log) do
       # Check for comma to see if there are more args
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->

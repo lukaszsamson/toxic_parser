@@ -3384,7 +3384,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("[]\n\nbeta -93 when foo: foo.\nalpha / ~~~ (with;foo;for).\n\nalpha beta +82, qux: baz\n")
     end
 
-    test "repro 116" do
+    test "repro 116b" do
       assert_conforms("spam[foo.delta,]\n\n;&\n\n() /\nbaz.with\n.. + !\n\ntry\n")
     end
 

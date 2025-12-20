@@ -695,6 +695,10 @@ defmodule ToxicParser.Pratt do
                   0
 
 
+                op_token.kind == :ellipsis_op and operand_token.kind == :identifier and
+                    operand_token.value in @do_block_keywords and Context.allow_do_block?(context) ->
+                  0
+
                 op_token.kind in [:ellipsis_op, :range_op] ->
                   100
 
@@ -719,28 +723,52 @@ defmodule ToxicParser.Pratt do
                    ) do
               operand_result =
                 case TokenAdapter.peek(state_after_base) do
-                  {:ok, next_tok, _} when op_token.kind == :capture_op ->
-                    complex_operand? =
-                      case operand_base do
-                        {op, _meta, args} when is_atom(op) and is_list(args) and length(args) == 2 -> true
-                        _ -> false
+                  {:ok, next_tok, _} ->
+                    # elixir_parser.yrl: unmatched_expr -> unary_op_eol expr
+                    # When the operand is a do-block expression, allow lower-precedence operators
+                    # to bind *inside* the unary operand by reparsing with min_bp=0.
+                    if operand_context.allow_do_block and do_block_expr?(operand_base) do
+                      case bp(next_tok.kind) do
+                        next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
+                          state_full = TokenAdapter.rewind(state_after_base, ref)
+
+                          with {:ok, operand_full, state_full, log} <-
+                                 parse_rhs(operand_token, state_full, operand_context, log, 0,
+                                   unary_operand: true
+                                 ) do
+                            {:ok, operand_full, state_full, log}
+                          end
+
+                        _ ->
+                          {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
                       end
+                    else
+                      if op_token.kind == :capture_op do
+                        complex_operand? =
+                          case operand_base do
+                            {op, _meta, args} when is_atom(op) and is_list(args) and length(args) == 2 -> true
+                            _ -> false
+                          end
 
-                    function_capture? = function_capture_operand?(operand_base)
+                        function_capture? = function_capture_operand?(operand_base)
 
-                    case {complex_operand?, function_capture?, contains_do_block?(operand_base), bp(next_tok.kind)} do
-                      {true, false, true, next_bp} when is_integer(next_bp) and next_bp < operand_min_bp ->
-                        state_full = TokenAdapter.rewind(state_after_base, ref)
+                        case {complex_operand?, function_capture?, contains_do_block?(operand_base), bp(next_tok.kind)} do
+                          {true, false, true, next_bp} when is_integer(next_bp) and next_bp < operand_min_bp ->
+                            state_full = TokenAdapter.rewind(state_after_base, ref)
 
-                        with {:ok, operand_full, state_full, log} <-
-                               parse_rhs(operand_token, state_full, operand_context, log, 0,
-                                 unary_operand: true
-                               ) do
-                          {:ok, operand_full, state_full, log}
+                            with {:ok, operand_full, state_full, log} <-
+                                   parse_rhs(operand_token, state_full, operand_context, log, 0,
+                                     unary_operand: true
+                                   ) do
+                              {:ok, operand_full, state_full, log}
+                            end
+
+                          _ ->
+                            {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
                         end
-
-                      _ ->
+                      else
                         {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+                      end
                     end
 
                   _ ->
@@ -1497,39 +1525,11 @@ defmodule ToxicParser.Pratt do
     # We only incorporate EOE *before* the operator for pipe_op in map update syntax.
     {state, newlines_after_op} = EOE.skip_newlines_only(state, 0)
 
-    # Elixir's `*_op_eol` rules attach `newlines` from the EOL token that comes
-    # *after* the operator (see `next_is_eol/2` in elixir_parser.yrl).
-    # TokenAdapter sometimes suppresses explicit :eoe tokens for continuation ops,
-    # so for range_op we may need to derive that count from the next token's leading
-    # newline metadata.
+    # Toxic encodes some line breaks as explicit :eoe tokens (after the operator)
+    # and others as leading newline counts on the operator token itself.
     token_leading_newlines = Map.get(op_token.metadata, :newlines, 0)
 
-    effective_newlines =
-      cond do
-        op_token.kind == :pipe_op ->
-          Enum.max([newlines_after_op, newlines_before_op, token_leading_newlines])
-
-        op_token.kind == :range_op and newlines_after_op > 0 ->
-          newlines_after_op
-
-        op_token.kind == :range_op ->
-          rhs_newlines =
-            case TokenAdapter.peek(state) do
-              {:ok, tok, _} -> Map.get(tok.metadata, :newlines, 0)
-              _ -> 0
-            end
-
-          op_leading_newlines = Map.get(op_token.metadata, :newlines, 0)
-
-          if op_leading_newlines > 0 do
-            Enum.min([rhs_newlines, op_leading_newlines])
-          else
-            rhs_newlines
-          end
-
-        true ->
-          if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
-      end
+    effective_newlines = if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
 
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list
