@@ -29,20 +29,6 @@ defmodule ToxicParser.OperatorsTest do
   """
   use ExUnit.Case, async: false
 
-  # Import for drop_ranges helper if needed for debugging
-  # import Spitfire.TestHelpers, except: [==: 2]
-
-  setup do
-    original = Application.get_env(:spitfire, :tokenizer, :legacy)
-    Application.put_env(:spitfire, :tokenizer, :toxic)
-    Application.put_env(:spitfire, :verify_range_order, true)
-
-    on_exit(fn ->
-      Application.put_env(:spitfire, :tokenizer, original)
-      Application.put_env(:spitfire, :verify_range_order, false)
-    end)
-  end
-
   # =============================================================================
   # Unary Operators
   # =============================================================================
