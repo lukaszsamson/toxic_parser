@@ -3365,6 +3365,32 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 113" do
       assert_conforms("\n\n;..\n@\neggs -beta &&\n@ Default.String\n\nspam.gamma <- gamma when foo: beta, qux: for, qux: eggs\n")
     end
+
+    test "repro 114" do
+      assert_conforms("x..\n//y")
+      assert_conforms("0\n..x//y")
+    end
+
+    test "repro 114a" do
+      assert_conforms("foo.eggs ..\n\n..\n\n17.44 ..\n\ngamma.if")
+      assert_conforms(";@ gamma try, foo.baz ..\n\n// foo")
+    end
+
+    test "repro 115" do
+      assert_conforms("\"\"\"\nfoo\#{}\"\"\"}\n\"\"\"")
+    end
+
+    test "repro 116" do
+      assert_conforms("[]\n\nbeta -93 when foo: foo.\nalpha / ~~~ (with;foo;for).\n\nalpha beta +82, qux: baz\n")
+    end
+
+    test "repro 116" do
+      assert_conforms("spam[foo.delta,]\n\n;&\n\n() /\nbaz.with\n.. + !\n\ntry\n")
+    end
+
+    test "repro 117" do
+      assert_conforms("qux\n\n... unless /\n.. *\n\nunless do after ->\ncase;(\n\ndelta: delta, beta: \n\neggs, spam: \ndelta.\neggs) when (\n).baz -> qux.bar else\n\n () -> beta.baz\n;spam;() when spam +89 -> delta\n end when ... beta baz, (;alpha.\n\nfoo\n\n;for).for\n")
+    end
   end
 
   # =============================================================================
