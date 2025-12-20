@@ -91,9 +91,9 @@ defmodule ToxicParser.Grammar.Maps do
           Pratt.led_dots_and_calls(ast, state, log, Context.matched_expr())
         end
 
-      # Other unary ops (^, !, not, +, -, ...): precedence < dot 310
+      # Other unary ops (^, !, not, +, -): precedence < dot 310
       # So ^t.d should be ^(t.d) - dots are part of the operand
-      {:ok, %{kind: kind} = _tok, _} when kind in [:unary_op, :ellipsis_op, :dual_op] ->
+      {:ok, %{kind: kind} = _tok, _} when kind in [:unary_op, :dual_op] ->
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -103,6 +103,25 @@ defmodule ToxicParser.Grammar.Maps do
           op_meta = token_meta(op_tok.metadata)
           ast = {op_tok.value, op_meta, [operand]}
           {:ok, ast, state, log}
+        end
+
+      # ellipsis_op can also be nullary (elixir_parser.yrl: sub_matched_expr -> ellipsis_op)
+      # as in `%...{}`. If the next token is `{`, treat it as nullary.
+      {:ok, %{kind: :ellipsis_op} = _tok, _} ->
+        {:ok, op_tok, state} = TokenAdapter.next(state)
+        op_meta = token_meta(op_tok.metadata)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :"{"}, _} ->
+            {:ok, {op_tok.value, op_meta, []}, state, log}
+
+          _ ->
+            state = EOE.skip(state)
+
+            with {:ok, operand, state, log} <-
+                   parse_unary_operand_with_dots(state, Context.matched_expr(), log) do
+              {:ok, {op_tok.value, op_meta, [operand]}, state, log}
+            end
         end
 
       # ternary_op :"//" used as unary prefix (e.g., %//foo{})

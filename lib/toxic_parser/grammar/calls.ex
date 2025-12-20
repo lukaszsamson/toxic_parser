@@ -322,7 +322,10 @@ defmodule ToxicParser.Grammar.Calls do
         # BUT only for pure binary operators - tokens like dual_op can be unary,
         # so they should be allowed to start no-parens arguments.
         # The stab_op check is now handled by excluding it from led() entirely.
-        can_be_unary = kind in [:dual_op, :unary_op, :at_op, :capture_op, :ternary_op]
+        # Some tokens have a binary bp but are also valid as standalone/nullary expressions
+        # (elixir_parser.yrl: sub_matched_expr -> range_op | ellipsis_op).
+        can_be_unary =
+          kind in [:dual_op, :unary_op, :at_op, :capture_op, :ternary_op, :range_op, :ellipsis_op]
 
         case {can_be_unary, Pratt.bp(kind)} do
           {false, bp} when is_integer(bp) and bp < min_bp ->
@@ -358,7 +361,7 @@ defmodule ToxicParser.Grammar.Calls do
         end
 
       {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+        {:ok, Enum.reverse(acc), state, log}
 
       {:error, diag, state} ->
         {:error, diag, state, log}

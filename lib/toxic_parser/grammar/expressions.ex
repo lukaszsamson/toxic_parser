@@ -86,6 +86,21 @@ defmodule ToxicParser.Grammar.Expressions do
         # Continue with led() to handle trailing binary operators like `fn -> a end ** b`
         Pratt.led(ast, state, log, 0, ctx)
 
+      {:keyword_key, key_atom, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+          {:ok, [{key_atom, value_ast}], state, log}
+        end
+
+      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+        state = EOE.skip(state)
+
+        with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+          key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+          {:ok, [{key_ast, value_ast}], state, log}
+        end
+
       {:error, reason, state, log} ->
         {:error, reason, state, log}
 
@@ -93,6 +108,21 @@ defmodule ToxicParser.Grammar.Expressions do
         case Containers.parse(state, ctx, log) do
           {:ok, ast, state, log} ->
             {:ok, ast, state, log}
+
+          {:keyword_key, key_atom, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+              {:ok, [{key_atom, value_ast}], state, log}
+            end
+
+          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+            state = EOE.skip(state)
+
+            with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+              key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+              {:ok, [{key_ast, value_ast}], state, log}
+            end
 
           {:error, reason, state, log} ->
             {:error, reason, state, log}
@@ -102,18 +132,14 @@ defmodule ToxicParser.Grammar.Expressions do
               {:ok, ast, state, log} ->
                 {:ok, ast, state, log}
 
-              # String was a quoted keyword key like "a": - parse value and return as keyword pair
               {:keyword_key, key_atom, state, log} ->
-                # Skip EOE (newlines) after the colon before parsing value
                 state = EOE.skip(state)
 
                 with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
                   {:ok, [{key_atom, value_ast}], state, log}
                 end
 
-              # Interpolated keyword key like "fo#{1}o": - build binary_to_atom call
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-                # Skip EOE (newlines) after the colon before parsing value
                 state = EOE.skip(state)
 
                 with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
@@ -123,8 +149,26 @@ defmodule ToxicParser.Grammar.Expressions do
 
               {:no_string, state} ->
                 case Calls.parse(state, ctx, log) do
-                  {:ok, ast, state, log} -> {:ok, ast, state, log}
-                  {:error, reason, state, log} -> {:error, reason, state, log}
+                  {:ok, ast, state, log} ->
+                    {:ok, ast, state, log}
+
+                  {:keyword_key, key_atom, state, log} ->
+                    state = EOE.skip(state)
+
+                    with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+                      {:ok, [{key_atom, value_ast}], state, log}
+                    end
+
+                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+                    state = EOE.skip(state)
+
+                    with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
+                      key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+                      {:ok, [{key_ast, value_ast}], state, log}
+                    end
+
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
                 end
 
               {:error, reason, state, log} ->
@@ -182,7 +226,15 @@ defmodule ToxicParser.Grammar.Expressions do
   defp finalize_exprs([single], state, log), do: {:ok, single, state, log}
 
   defp finalize_exprs(many, state, log) do
-    block = Builder.Helpers.literal({:__block__, [], Enum.reverse(many)})
+    exprs =
+      many
+      |> Enum.reverse()
+      |> Enum.map(fn
+        {:__block__, [], [{:unquote_splicing, _meta, [_]} = u]} -> u
+        other -> other
+      end)
+
+    block = Builder.Helpers.literal({:__block__, [], exprs})
     {:ok, block, state, log}
   end
 

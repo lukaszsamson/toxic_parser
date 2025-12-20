@@ -524,6 +524,7 @@ defmodule ToxicParser.Pratt do
           :")",
           :"]",
           :"}",
+          :"{",
           :">>",
           :end_interpolation,
           :",",
@@ -822,7 +823,6 @@ defmodule ToxicParser.Pratt do
               led(combined, state, log, min_bp, context)
 
             # Not a range - this is an error but we still parse it as {:"//", meta, [left, step]}
-            # The error handling follows spitfire's pattern
             _ ->
               op_meta = build_meta(op_token.metadata)
               combined = {op_token.value, op_meta, [left, step]}

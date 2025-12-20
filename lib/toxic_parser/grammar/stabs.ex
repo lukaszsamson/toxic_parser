@@ -1605,7 +1605,17 @@ defmodule ToxicParser.Grammar.Stabs do
   defp scan_open?(%{kind: kind}, %{percent_pending?: true}) when kind in [:identifier, :alias], do: true
 
   defp scan_open?(%{kind: kind}, _ctx) do
-    kind in [:",", :kw_identifier, :"(", :"[", :"{", :"<<", :%] or
+    kind in [
+      :",",
+      :kw_identifier,
+      :kw_identifier_unsafe_end,
+      :kw_identifier_safe_end,
+      :"(",
+      :"[",
+      :"{",
+      :"<<",
+      :%
+    ] or
       Precedence.binary(kind) != nil or
       Precedence.unary(kind) != nil
   end
@@ -1743,6 +1753,12 @@ defmodule ToxicParser.Grammar.Stabs do
   defp build_stab_block([single]), do: single
 
   defp build_stab_block(exprs) when is_list(exprs) do
+    exprs =
+      Enum.map(exprs, fn
+        {:__block__, [], [{:unquote_splicing, _meta, [_]} = u]} -> u
+        other -> other
+      end)
+
     {:__block__, [], exprs}
   end
 
