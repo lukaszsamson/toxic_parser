@@ -618,11 +618,14 @@ defmodule ToxicParser.Pratt do
 
                     {:ok, next_tok, _} ->
                       if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
-                        case bp(next_tok.kind) do
-                          nil ->
+                        case {next_tok.kind, bp(next_tok.kind)} do
+                          {:pipe_op, _} ->
                             {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
 
-                          next_bp when next_bp < at_bp ->
+                          {_, nil} ->
+                            {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+
+                          {_, next_bp} when next_bp < at_bp ->
                             state_full = TokenAdapter.rewind(state_after_base, ref)
 
                             with {:ok, operand_full, state_full, log} <-
@@ -695,10 +698,6 @@ defmodule ToxicParser.Pratt do
                   0
 
 
-                op_token.kind == :ellipsis_op and operand_token.kind == :identifier and
-                    operand_token.value in @do_block_keywords and Context.allow_do_block?(context) ->
-                  0
-
                 op_token.kind in [:ellipsis_op, :range_op] ->
                   100
 
@@ -727,7 +726,9 @@ defmodule ToxicParser.Pratt do
                     # elixir_parser.yrl: unmatched_expr -> unary_op_eol expr
                     # When the operand is a do-block expression, allow lower-precedence operators
                     # to bind *inside* the unary operand by reparsing with min_bp=0.
-                    if operand_context.allow_do_block and do_block_expr?(operand_base) do
+                    if operand_context.allow_do_block and
+                         (do_block_expr?(operand_base) or
+                            (op_token.kind in [:ellipsis_op, :range_op] and contains_do_block?(operand_base))) do
                       case bp(next_tok.kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           state_full = TokenAdapter.rewind(state_after_base, ref)
@@ -1094,7 +1095,7 @@ defmodule ToxicParser.Pratt do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
-    {state, eoe_tokens, newlines_before_op} = peek_past_eoe(state)
+    {state, eoe_tokens, _newlines_before_op} = peek_past_eoe(state)
 
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
@@ -1106,8 +1107,7 @@ defmodule ToxicParser.Pratt do
           min_bp,
           context,
           opts,
-          eoe_tokens,
-          newlines_before_op
+          eoe_tokens
         )
 
       {:eof, state} ->
@@ -1128,8 +1128,7 @@ defmodule ToxicParser.Pratt do
          min_bp,
          context,
          opts,
-         eoe_tokens,
-         newlines_before_op
+         eoe_tokens
        ) do
     precedence = Precedence.binary(next_token.kind)
 
@@ -1188,7 +1187,7 @@ defmodule ToxicParser.Pratt do
           state = pushback_eoe_tokens(state, eoe_tokens)
           {:ok, left, state, log}
         else
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
         end
 
       # stab_op (->) is NOT a general binary operator - it only appears in stab clause contexts
@@ -1206,11 +1205,11 @@ defmodule ToxicParser.Pratt do
           state = pushback_eoe_tokens(state, eoe_tokens)
           {:ok, left, state, log}
         else
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
         end
 
       {_, {bp, assoc}} when bp >= min_bp ->
-        led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
+        led_binary(left, state, log, min_bp, context, opts, bp, assoc)
 
       # no_parens_expr extension: when context allows it, operators in @no_parens_op_expr_operators
       # can extend matched_expr to no_parens_expr REGARDLESS of min_bp.
@@ -1221,7 +1220,7 @@ defmodule ToxicParser.Pratt do
         allow_extension? = Keyword.get(opts, :allow_no_parens_extension?, true)
 
         if allow_extension? and min_bp == 0 and is_no_parens_op_expr?(kind) and Context.allow_no_parens_expr?(context) do
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
         else
           # No continuation operator found - push back EOE tokens
           state = pushback_eoe_tokens(state, eoe_tokens)
@@ -1511,7 +1510,7 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op) do
+  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc) do
     {:ok, op_token, state} = TokenAdapter.next(state)
     # For right associativity, use same bp to allow chaining at same level
     # For left associativity, use bp+1 to prevent same-level ops from binding to RHS

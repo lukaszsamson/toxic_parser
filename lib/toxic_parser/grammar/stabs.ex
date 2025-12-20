@@ -1078,14 +1078,14 @@ defmodule ToxicParser.Grammar.Stabs do
         case TokenAdapter.peek(state) do
           # Only annotate trailing newline EOE when this is a single-arg paren group.
           # For multi-arg groups like `(a, b\n)`, Elixir does NOT annotate the last arg.
-          {:ok, %{kind: :eoe, value: %{source: source}} = eoe_tok, _} when source != :semicolon ->
+          {:ok, %{kind: :eoe} = eoe_tok, _} ->
             eoe_meta = EOE.build_eoe_meta(eoe_tok)
-            {state, _newlines} = EOE.skip_newlines_only(state, 0)
+            state_after_eoe = EOE.skip(state)
 
-            if acc == [] and match?({:ok, %{kind: :")"}, _}, TokenAdapter.peek(state)) do
-              {EOE.annotate_eoe(expr, eoe_meta), state}
+            if acc == [] and match?({:ok, %{kind: :")"}, _}, TokenAdapter.peek(state_after_eoe)) do
+              {EOE.annotate_eoe(expr, eoe_meta), state_after_eoe}
             else
-              {expr, state}
+              {expr, state_after_eoe}
             end
 
           _ ->

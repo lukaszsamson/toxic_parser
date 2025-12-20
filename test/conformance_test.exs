@@ -3412,7 +3412,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("@ ... receive |\neggs.spam;baz <<< spam .. case.beta +85;@ @ baz[delta: gamma.beta] =\nbaz.alpha +gamma\n")
     end
 
-    test "repro 122" do
+    test "repro 122 (2)" do
       assert_conforms("qux -58, alpha: :bar[foo,\n]\n\n;if .. foo eggs bar +100;58\n& gamma .. bar.gamma ||| ... case when gamma: \ntry, gamma: delta -0")
     end
   end
