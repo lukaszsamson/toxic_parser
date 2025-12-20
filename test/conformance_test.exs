@@ -3349,6 +3349,22 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 109" do
       assert_conforms("if .b*@a do :ok end")
     end
+
+    test "repro 110" do
+      assert_conforms("e\n\n<\nf..x//y")
+    end
+
+    test "repro 111" do
+      assert_conforms("spam;@\nunless <|> ! alpha;@ @\n(case\n\ncond\n\n;)[\n\ngamma.\n\nbar,] - foo")
+    end
+
+    test "repro 112" do
+      assert_conforms("\n~~~ [& try or foo(\nfoo: \nbaz) do beta.case rescue\n (eggs, eggs, cond, eggs: (baz\n\nspam.baz).alpha alpha, foo.baz) -> qux end <-\nreceive.spam -15\n\n];& foo.if")
+    end
+
+    test "repro 113" do
+      assert_conforms("\n\n;..\n@\neggs -beta &&\n@ Default.String\n\nspam.gamma <- gamma when foo: beta, qux: for, qux: eggs\n")
+    end
   end
 
   # =============================================================================
