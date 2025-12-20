@@ -264,10 +264,11 @@ defmodule ToxicParser.Grammar.Expressions do
     end)
   end
 
-  # Determine keyword value context based on whether outer context allows do-blocks.
-  # In paren calls (allow_do_block: true), use container_expr which allows do-blocks.
-  # In no-parens calls (allow_do_block: false), use kw_no_parens_value to prevent
-  # do-blocks from attaching to the keyword value (they belong to outer call).
+  # Determine keyword value context for quoted keyword keys like "a":
+  #
+  # elixir_parser.yrl:
+  #   kw_base -> kw_eol container_expr
+  #   container_expr -> matched_expr | unmatched_expr | no_parens_expr (error)
   defp keyword_value_context(%Context{} = ctx) do
     case ctx.allow_do_block do
       true -> Context.container_expr()

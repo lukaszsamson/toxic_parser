@@ -111,8 +111,7 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list usable in call argument position."
   @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_call(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    # kw_call in elixir_parser.yrl ultimately parses kw_eol container_expr
-    # (container_expr allows do-blocks but not no_parens extension).
+    # elixir_parser.yrl: kw_base -> kw_eol container_expr
     parse_kw_list([], state, ctx, log, 0, Context.container_expr())
   end
 
@@ -149,7 +148,7 @@ defmodule ToxicParser.Grammar.Keywords do
   @doc "Parses a keyword list usable in data (container) position."
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_data(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    # Data/container context allows do-blocks but not no_parens extension.
+    # elixir_parser.yrl: kw_base -> kw_eol container_expr
     parse_kw_list([], state, ctx, log, 0, Context.container_expr())
   end
 

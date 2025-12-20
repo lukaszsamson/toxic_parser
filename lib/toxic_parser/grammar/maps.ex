@@ -409,48 +409,20 @@ defmodule ToxicParser.Grammar.Maps do
     # First, try parsing the full expression without restricting |
     # This allows op_identifier calls (like c!) to consume | as part of their argument
     # e.g., %{c!s|n => 1} should parse as c!(s|n) => 1, not c!s | n => 1
+    state0 = state
+
     case Pratt.parse(state, Context.container_expr(), log) do
       {:ok, base_expr, state, log} ->
-        # Check if the parsed expression IS a pipe expression with valid map update RHS
-        # e.g., map | :a => 1 parses as {:|, _, [map, {:"=>", _, [:a, 1]}]}
-        case check_embedded_map_update(base_expr) do
-          {:update, base, pipe_meta, rhs_entries} ->
-            # The expression itself was a map update pattern
-            state = EOE.skip(state)
-
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"} = close_tok, _} ->
-                {:ok, _close, state} = TokenAdapter.next(state)
-                close_meta = token_meta(close_tok.metadata)
-                update_ast = {:|, pipe_meta, [base, rhs_entries]}
-                {:ok, update_ast, close_meta, state, log}
-
-              {:ok, %{kind: :","}, _} ->
-                # More entries after initial: %{base | k => v, more...}
-                {:ok, _comma, state} = TokenAdapter.next(state)
-                state = EOE.skip(state)
-                parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, log)
-
-              _ ->
-                {:not_update, state}
+        case {base_expr, TokenAdapter.peek(state)} do
+          {{:|, pipe_meta, _}, {:ok, %{kind: :assoc_op}, _}} ->
+            if Keyword.has_key?(pipe_meta, :parens) do
+              handle_map_update_after_base_expr(base_expr, state, log)
+            else
+              parse_map_update_with_min_bp(state0, log)
             end
 
-          :not_update ->
-            # Check for | token AFTER the expression
-            {state, newlines} = EOE.skip_count_newlines(state, 0)
-
-            case TokenAdapter.peek(state) do
-              {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
-                # Found | - this is potentially a map update
-                {:ok, _pipe, state} = TokenAdapter.next(state)
-                {state, newlines_after_pipe} = EOE.skip_newlines_only(state, 0)
-                pipe_meta_kw = token_meta_with_newlines(pipe_meta, max(newlines, newlines_after_pipe))
-                parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
-
-              _ ->
-                # No | found - not a map update
-                {:not_update, state}
-            end
+          _ ->
+            handle_map_update_after_base_expr(base_expr, state, log)
         end
 
       {:keyword_key, _, _state, _} ->
@@ -471,6 +443,43 @@ defmodule ToxicParser.Grammar.Maps do
         # Parsing failed - likely due to keyword after |
         # Retry with min_bp above pipe_op to not consume |
         parse_map_update_with_min_bp(state, log)
+    end
+  end
+
+  defp handle_map_update_after_base_expr(base_expr, state, log) do
+    case check_embedded_map_update(base_expr) do
+      {:update, base, pipe_meta, rhs_entries} ->
+        state = EOE.skip(state)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :"}"} = close_tok, _} ->
+            {:ok, _close, state} = TokenAdapter.next(state)
+            close_meta = token_meta(close_tok.metadata)
+            update_ast = {:|, pipe_meta, [base, rhs_entries]}
+            {:ok, update_ast, close_meta, state, log}
+
+          {:ok, %{kind: :","}, _} ->
+            {:ok, _comma, state} = TokenAdapter.next(state)
+            state = EOE.skip(state)
+            parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, log)
+
+          _ ->
+            {:not_update, state}
+        end
+
+      :not_update ->
+        {state, newlines} = EOE.skip_count_newlines(state, 0)
+
+        case TokenAdapter.peek(state) do
+          {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
+            {:ok, _pipe, state} = TokenAdapter.next(state)
+            {state, newlines_after_pipe} = EOE.skip_newlines_only(state, 0)
+            pipe_meta_kw = token_meta_with_newlines(pipe_meta, max(newlines, newlines_after_pipe))
+            parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
+
+          _ ->
+            {:not_update, state}
+        end
     end
   end
 
@@ -546,6 +555,34 @@ defmodule ToxicParser.Grammar.Maps do
       :not_assoc ->
         {:valid, [rhs]}
     end
+  end
+
+  # Extract the rightmost => from an expression tree.
+  # Used for validating map-update RHS like `base | k1 | k2 => v`.
+  defp extract_assoc({:"=>", meta, [key, value]}), do: {:assoc, key, value, meta}
+
+  defp extract_assoc({callee, meta, args}) when is_list(meta) and is_list(args) do
+    case extract_assoc_in_args(args) do
+      {:assoc, new_args, value, assoc_meta} -> {:assoc, {callee, meta, new_args}, value, assoc_meta}
+      :not_assoc -> :not_assoc
+    end
+  end
+
+  defp extract_assoc(_), do: :not_assoc
+
+  defp extract_assoc_in_args(args) do
+    args
+    |> Enum.with_index()
+    |> Enum.reverse()
+    |> Enum.reduce_while(:not_assoc, fn {arg, idx}, _acc ->
+      case extract_assoc(arg) do
+        {:assoc, key, value, assoc_meta} ->
+          {:halt, {:assoc, List.replace_at(args, idx, key), value, assoc_meta}}
+
+        :not_assoc ->
+          {:cont, :not_assoc}
+      end
+    end)
   end
 
   # Annotate a single assoc entry with :assoc metadata
@@ -825,97 +862,33 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  # Parse assoc_expr: key => value - returns {key, value} tuple
-  # Grammar: assoc_expr -> matched_expr '=>' expr
-  # Note: In maps, => acts as a delimiter, not as a regular binary operator
-  # So %{a :: b => c} has key=(a :: b) and value=c, even though :: has lower
-  # precedence than => normally.
+  # Parse assoc_expr (elixir_parser.yrl):
+  #   assoc_expr -> matched_expr assoc_op_eol matched_expr
+  #   assoc_expr -> unmatched_expr assoc_op_eol unmatched_expr
+  #   ...mixed matched/unmatched...
   #
-  # Strategy: Parse using min_bp just above => to get the key, then manually
-  # consume => and parse the value. This ensures => is not consumed as part
-  # of the key expression.
+  # We parse the LHS as container_expr but stop before consuming `=>`, then
+  # consume `=>` (+ optional eol), and parse the RHS as container_expr.
   defp parse_assoc_expr(state, ctx, log) do
-    # Even when the surrounding context is :matched (e.g. inside no-parens call
-    # args), map keys/values must still allow full container expressions,
-    # including block expressions like `try do ... end` used as a key.
-    #
-    # This matches Elixir's behavior: you can write `%{try do ... end => 1}`.
     _ctx = ctx
 
-    # Parse the full expression - this will include => as a binary operator
-    # Then extract the key/value from the rightmost => in the expression tree.
-    case Pratt.parse_with_min_bp(state, Context.unmatched_expr(), log, 0, stop_at_comma: true) do
-      {:ok, expr, state, log} ->
-        case extract_assoc(expr) do
-          {:assoc, key, value, assoc_meta} ->
-            annotated_key = annotate_assoc(key, assoc_meta)
-            {:ok, {annotated_key, value}, state, log}
+    with {:ok, key, state, log} <-
+           Pratt.parse_with_min_bp(state, Context.container_expr(), log, 0) do
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :assoc_op} = assoc_tok, state} ->
+          {:ok, _assoc_tok, state} = TokenAdapter.next(state)
+          assoc_meta = token_meta(assoc_tok.metadata)
+          state = EOE.skip(state)
 
-          :not_assoc ->
-            {:ok, expr, state, log}
-        end
+          with {:ok, value, state, log} <- Pratt.parse_with_min_bp(state, Context.container_expr(), log, 0) do
+            {:ok, {annotate_assoc(key, assoc_meta), value}, state, log}
+          end
 
-      # keyword_key means "string": - convert to keyword pair
-      {:keyword_key, key_atom, state, log} ->
-        alias ToxicParser.Grammar.Expressions
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               Expressions.expr(state, Context.unmatched_expr(), log) do
-          {:ok, {key_atom, value_ast}, state, log}
-        end
-
-      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-        alias ToxicParser.Grammar.Expressions
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <-
-               Expressions.expr(state, Context.unmatched_expr(), log) do
-          key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-          {:ok, {key_ast, value_ast}, state, log}
-        end
-
-      {:error, _, _, _} = error ->
-        error
-    end
-  end
-
-  # Extract the rightmost => from the expression tree
-  # In a :: (b => c), we want key=(a :: b), value=c
-  # This transforms the AST to extract the correct key/value split
-  defp extract_assoc({:"=>", meta, [key, value]}) do
-    # Found => at top level - this is an assoc expression
-    {:assoc, key, value, meta}
-  end
-
-  # Any expression node with arguments (operators and calls).
-  # Scan args right-to-left and pull out the rightmost assoc, rebuilding the node.
-  # Call / remote call - scan args right-to-left and pull out the rightmost assoc.
-  defp extract_assoc({callee, meta, args} = _expr) when is_list(meta) and is_list(args) do
-    case extract_assoc_in_args(args) do
-      {:assoc, new_args, value, assoc_meta} ->
-        {:assoc, {callee, meta, new_args}, value, assoc_meta}
-
-      :not_assoc ->
-        :not_assoc
-    end
-  end
-
-  defp extract_assoc(_), do: :not_assoc
-
-  defp extract_assoc_in_args(args) do
-    args
-    |> Enum.with_index()
-    |> Enum.reverse()
-    |> Enum.reduce_while(:not_assoc, fn {arg, idx}, _acc ->
-      case extract_assoc(arg) do
-        {:assoc, key, value, assoc_meta} ->
-          {:halt, {:assoc, List.replace_at(args, idx, key), value, assoc_meta}}
-
-        :not_assoc ->
-          {:cont, :not_assoc}
+        _ ->
+          # elixir_parser.yrl: assoc_expr -> map_base_expr
+          {:ok, key, state, log}
       end
-    end)
+    end
   end
 
   # Annotate expression with :assoc metadata (for LHS of => operator)

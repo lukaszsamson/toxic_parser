@@ -1197,16 +1197,11 @@ defmodule ToxicParser.Pratt do
         state = pushback_eoe_tokens(state, eoe_tokens)
         {:ok, left, state, log}
 
-      # assoc_op (=>) is NOT a general binary operator - it only appears in map contexts
-      # In no-parens call context, stop at => to avoid parsing n(&n=>1) as n(&(n=>1))
-      # In normal context (inside maps), allow => to be consumed
-      {:assoc_op, {bp, assoc}} when bp >= min_bp ->
-        if Keyword.get(opts, :stop_at_assoc, false) do
-          state = pushback_eoe_tokens(state, eoe_tokens)
-          {:ok, left, state, log}
-        else
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
-        end
+      # assoc_op (=>) is map-only in elixir_parser.yrl (assoc_expr / map grammar),
+      # so it must NOT behave like a general binary operator in Pratt parsing.
+      {:assoc_op, {_bp, _assoc}} ->
+        state = pushback_eoe_tokens(state, eoe_tokens)
+        {:ok, left, state, log}
 
       {_, {bp, assoc}} when bp >= min_bp ->
         led_binary(left, state, log, min_bp, context, opts, bp, assoc)
