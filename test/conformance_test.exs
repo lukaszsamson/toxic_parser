@@ -2883,6 +2883,11 @@ defmodule ToxicParser.ConformanceTest do
     assert_conforms("((a, foo: x when y: z, z: w) -> 1)")
   end
 
+  test "ternary combinations" do
+    assert_conforms("// foo do ... end ** 2")
+    assert_conforms("// foo() ** 2")
+  end
+
   describe "newlines" do
     test "repro 1" do
       assert_conforms("foo \n;")
