@@ -22,11 +22,11 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -38,10 +38,10 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - shallow" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "shallow generated tokens produce conformant ASTs" do
       check all(
-              tokens <- Generator.tokens_gen(max_forms: 1, depth: 1),
+              tokens <- Generator.tokens_gen(max_forms: 2, depth: 1),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -53,11 +53,11 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - deep" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "deep generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 4, depth: 5),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -68,12 +68,12 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - random flags" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with random feature flags produce conformant ASTs" do
       check all(
               flags <- Generator.flags_gen(),
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -84,7 +84,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - minimal features" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with all optional features disabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -105,7 +105,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -116,7 +116,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - lists only" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with only lists enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -137,7 +137,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -148,7 +148,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - calls only" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with only calls enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -169,7 +169,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -180,7 +180,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - operators only" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with only operators enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -201,7 +201,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -212,7 +212,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - fn and stabs" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with fn and stabs enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -233,7 +233,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -244,7 +244,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - do blocks" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with do blocks enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -265,7 +265,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -276,7 +276,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - maps and structs" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with maps enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -297,7 +297,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -308,7 +308,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   describe "token conformance - bitstrings" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "generated tokens with bitstrings enabled produce conformant ASTs" do
       flags =
         Generator.default_flags()
@@ -329,7 +329,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 5_000,
+              max_runs: 50_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
