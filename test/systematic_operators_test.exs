@@ -1,5 +1,6 @@
 defmodule ToxicParser.SystematicOperatorsTest do
   use ExUnit.Case, async: false
+  import ExUnit.CaptureIO
 
   # =============================================================================
   # Operator Classifications
@@ -163,7 +164,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
   defp op_to_string(op), do: Atom.to_string(op)
 
   defp s2q(code) do
-    Code.string_to_quoted(code, columns: true, token_metadata: true)
+    capture_io(:standard_error, fn ->
+      send(self(), {:result, Code.string_to_quoted(code, columns: true, token_metadata: true)})
+    end)
+
+    receive do
+      {:result, result} -> result
+    end
   rescue
     e ->
       File.write!(
@@ -173,7 +180,6 @@ defmodule ToxicParser.SystematicOperatorsTest do
         [:append]
       )
 
-      # IO.warn("Reference parser crashed on:\n" <> code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__))
       {:error, :reference_parser_crash}
   end
 

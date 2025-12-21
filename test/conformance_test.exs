@@ -3478,6 +3478,18 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 136" do
       assert_conforms("%not().e{}")
     end
+
+    test "repro 137" do
+      assert_conforms("%{-f!b,rc => 1}")
+    end
+
+    test "repro 138" do
+      assert_conforms("f g (b!d), h")
+    end
+
+    test "repro 139" do
+      assert_conforms("%{y,!try super,__MODULE__ => 1}")
+    end
   end
 
   # =============================================================================
