@@ -47,11 +47,10 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
               max_runs: 50000,
               max_shrinks: 50
             ) do
-
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-          run_comparison(code)
+        run_comparison(code)
       end
     end
 
@@ -63,11 +62,10 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
               max_runs: 1000,
               max_shrinks: 50
             ) do
-
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-          run_comparison(code)
+        run_comparison(code)
       end
     end
 
@@ -75,15 +73,20 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
     @tag timeout: 1_200_000
     property "matched only" do
       check all(
-              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: false, allow_no_parens: false),
-              max_runs: 100000,
+              tree <-
+                Gen.grammar(
+                  max_depth: 2,
+                  max_forms: 5,
+                  allow_unmatched: false,
+                  allow_no_parens: false
+                ),
+              max_runs: 100_000,
               max_shrinks: 50
             ) do
-
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-          run_comparison(code)
+        run_comparison(code)
       end
     end
 
@@ -91,15 +94,20 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
     @tag timeout: 1_200_000
     property "no parens" do
       check all(
-              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: false, allow_no_parens: true),
+              tree <-
+                Gen.grammar(
+                  max_depth: 2,
+                  max_forms: 5,
+                  allow_unmatched: false,
+                  allow_no_parens: true
+                ),
               max_runs: 50000,
               max_shrinks: 50
             ) do
-
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-          run_comparison(code)
+        run_comparison(code)
       end
     end
 
@@ -107,15 +115,20 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
     @tag timeout: 1_200_000
     property "unmatched" do
       check all(
-              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: true, allow_no_parens: false),
+              tree <-
+                Gen.grammar(
+                  max_depth: 2,
+                  max_forms: 5,
+                  allow_unmatched: true,
+                  allow_no_parens: false
+                ),
               max_runs: 50000,
               max_shrinks: 50
             ) do
-
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-          run_comparison(code)
+        run_comparison(code)
       end
     end
   end
@@ -126,45 +139,48 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
 
   defp run_comparison(code) do
     capture_io(:standard_error, fn ->
-    # Use Code.with_diagnostics to capture warnings
-    result = try do
-        Code.string_to_quoted(code, @oracle_opts)
-    rescue
-      _ -> {:error, :oracle_crash}
-    end
+      # Use Code.with_diagnostics to capture warnings
+      result =
+        try do
+          Code.string_to_quoted(code, @oracle_opts)
+        rescue
+          _ -> {:error, :oracle_crash}
+        end
 
-    case result do
-      {:ok, {:__block__, _, []}} ->
-        # Empty block, skip
-        :ok
+      case result do
+        {:ok, {:__block__, _, []}} ->
+          # Empty block, skip
+          :ok
 
-      {:ok, oracle_ast} ->
-        # Parse with Toxic using same options as oracle
-        # try do
-        case toxic_parse(code) do
-          {:ok, toxic_ast} ->
-            # Normalize and compare ASTs
-            oracle_normalized = normalize_ast(oracle_ast)
-            toxic_normalized = normalize_ast(toxic_ast)
+        {:ok, oracle_ast} ->
+          # Parse with Toxic using same options as oracle
+          # try do
+          case toxic_parse(code) do
+            {:ok, toxic_ast} ->
+              # Normalize and compare ASTs
+              oracle_normalized = normalize_ast(oracle_ast)
+              toxic_normalized = normalize_ast(toxic_ast)
 
-            assert oracle_normalized == toxic_normalized,
-                  """
-                  AST mismatch for code: #{inspect(code)}
+              assert oracle_normalized == toxic_normalized,
+                     """
+                     AST mismatch for code: #{inspect(code)}
 
-                  Oracle:
-                  #{inspect(oracle_normalized, pretty: true)}
+                     Oracle:
+                     #{inspect(oracle_normalized, pretty: true)}
 
-                  Toxic:
-                  #{inspect(toxic_normalized, pretty: true)}
-                  """
+                     Toxic:
+                     #{inspect(toxic_normalized, pretty: true)}
+                     """
+
             {:error, reason} ->
-              flunk """
-                  Parser error for: #{inspect(code)}
+              flunk("""
+              Parser error for: #{inspect(code)}
 
-                  Toxic:
-                  #{inspect(reason, pretty: true)}
-                  """
+              Toxic:
+              #{inspect(reason, pretty: true)}
+              """)
           end
+
         # rescue
         #   error ->
         #     flunk """
@@ -175,11 +191,11 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
         #           """
         # end
 
-      {:error, _} ->
-        # Oracle rejected, skip this sample
-        :ok
-    end
-  end)
+        {:error, _} ->
+          # Oracle rejected, skip this sample
+          :ok
+      end
+    end)
   end
 
   defp toxic_parse(code) do

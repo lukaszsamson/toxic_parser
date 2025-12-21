@@ -1721,44 +1721,44 @@ defmodule ToxicParser.CharPropertyTest do
 
   defp run_comparison(context, code) do
     capture_io(:standard_error, fn ->
-    # Use Code.with_diagnostics to capture warnings
-    {result, _diagnostics} =
-      Code.with_diagnostics(fn ->
-        Code.string_to_quoted(code, @oracle_opts)
-      end)
+      # Use Code.with_diagnostics to capture warnings
+      {result, _diagnostics} =
+        Code.with_diagnostics(fn ->
+          Code.string_to_quoted(code, @oracle_opts)
+        end)
 
-    case result do
-      {:ok, {:__block__, _, []}} ->
-        :ok
+      case result do
+        {:ok, {:__block__, _, []}} ->
+          :ok
 
-      {:ok, oracle_ast} ->
-        # IO.puts(">>>>> [#{context}]\n" <> code <> "\n<<<<<")
-        # Parse with Toxic using same options as oracle
-        assert {:ok, toxic_ast} = toxic_parse(code)
+        {:ok, oracle_ast} ->
+          # IO.puts(">>>>> [#{context}]\n" <> code <> "\n<<<<<")
+          # Parse with Toxic using same options as oracle
+          assert {:ok, toxic_ast} = toxic_parse(code)
 
-        # Apply workaround for parser bugs with not/! in forms
-        # {oracle_ast, toxic_ast} =
-        #   fix_deprecated_not_in_meta(oracle_ast, toxic_ast)
+          # Apply workaround for parser bugs with not/! in forms
+          # {oracle_ast, toxic_ast} =
+          #   fix_deprecated_not_in_meta(oracle_ast, toxic_ast)
 
-        # Normalize and compare ASTs
-        oracle_normalized = normalize_ast(oracle_ast)
-        toxic_normalized = normalize_ast(toxic_ast)
+          # Normalize and compare ASTs
+          oracle_normalized = normalize_ast(oracle_ast)
+          toxic_normalized = normalize_ast(toxic_ast)
 
-        assert oracle_normalized == toxic_normalized,
-               """
-               AST mismatch in context #{context} for code: #{inspect(code)}
+          assert oracle_normalized == toxic_normalized,
+                 """
+                 AST mismatch in context #{context} for code: #{inspect(code)}
 
-               Oracle:
-               #{inspect(oracle_normalized, pretty: true)}
+                 Oracle:
+                 #{inspect(oracle_normalized, pretty: true)}
 
-               Toxic:
-               #{inspect(toxic_normalized, pretty: true)}
-               """
+                 Toxic:
+                 #{inspect(toxic_normalized, pretty: true)}
+                 """
 
-      {:error, _} ->
-        # Oracle rejected, skip this sample
-        :ok
-    end
+        {:error, _} ->
+          # Oracle rejected, skip this sample
+          :ok
+      end
     end)
   end
 

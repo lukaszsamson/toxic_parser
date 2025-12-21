@@ -18,7 +18,6 @@ defmodule ToxicParser.TokenPropertyTest do
     end
   end
 
-
   @tag :property
   property "generated token lists round-trip with random feature flags" do
     check all(
@@ -56,7 +55,10 @@ defmodule ToxicParser.TokenPropertyTest do
         enable_no_parens_calls: false
       })
 
-    check all(tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2), max_runs: 2_000) do
+    check all(
+            tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 2),
+            max_runs: 2_000
+          ) do
       code = Toxic.to_string(tokens)
 
       lexed =

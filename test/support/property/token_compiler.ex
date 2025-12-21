@@ -1212,7 +1212,11 @@ defmodule ToxicParser.Property.TokenCompiler do
   end
 
   # Variant where open_paren had a trailing newline and leading semicolon
-  defp do_to_tokens({:paren_stab_nl_semi, {:stab_eoe, clauses, trailing_eoe}, newlines}, layout, opts)
+  defp do_to_tokens(
+         {:paren_stab_nl_semi, {:stab_eoe, clauses, trailing_eoe}, newlines},
+         layout,
+         opts
+       )
        when is_integer(newlines) and newlines > 0 do
     # Compile '(' - with space before
     {open_meta, layout} = TokenLayout.space_before(layout, "(", nil)
@@ -1926,7 +1930,11 @@ defmodule ToxicParser.Property.TokenCompiler do
     compile_kw_base(pairs, layout, opts, :first)
   end
 
-  defp compile_call_args_parens({:call_args_parens, {:kw_only, {:kw_call_trailing, pairs}}}, layout, opts) do
+  defp compile_call_args_parens(
+         {:call_args_parens, {:kw_only, {:kw_call_trailing, pairs}}},
+         layout,
+         opts
+       ) do
     {kw_tokens, layout} = compile_kw_base(pairs, layout, opts, :first)
     # Add trailing comma
     {comma_meta, layout} = TokenLayout.stick_right(layout, ",", nil)
@@ -1935,7 +1943,8 @@ defmodule ToxicParser.Property.TokenCompiler do
   end
 
   # Old format for backward compatibility: [{key, value}, ...]
-  defp compile_call_args_parens({:call_args_parens, {:kw_only, pairs}}, layout, opts) when is_list(pairs) do
+  defp compile_call_args_parens({:call_args_parens, {:kw_only, pairs}}, layout, opts)
+       when is_list(pairs) do
     compile_kw_call_args(pairs, layout, opts, :first)
   end
 
@@ -1946,7 +1955,11 @@ defmodule ToxicParser.Property.TokenCompiler do
 
   # Positional + trailing kw: (1, 2, a: 3)
   # New format: {:kw_call, pairs} or {:kw_call_trailing, pairs}
-  defp compile_call_args_parens({:call_args_parens, {:positional_with_kw, exprs, {:kw_call, kw_pairs}}}, layout, opts) do
+  defp compile_call_args_parens(
+         {:call_args_parens, {:positional_with_kw, exprs, {:kw_call, kw_pairs}}},
+         layout,
+         opts
+       ) do
     # Compile positional args first
     {pos_tokens, layout} = compile_args_in_parens(exprs, layout, opts)
 
@@ -1960,7 +1973,11 @@ defmodule ToxicParser.Property.TokenCompiler do
     {pos_tokens ++ [comma_token] ++ kw_tokens, layout}
   end
 
-  defp compile_call_args_parens({:call_args_parens, {:positional_with_kw, exprs, {:kw_call_trailing, kw_pairs}}}, layout, opts) do
+  defp compile_call_args_parens(
+         {:call_args_parens, {:positional_with_kw, exprs, {:kw_call_trailing, kw_pairs}}},
+         layout,
+         opts
+       ) do
     # Compile positional args first
     {pos_tokens, layout} = compile_args_in_parens(exprs, layout, opts)
 
@@ -1979,7 +1996,12 @@ defmodule ToxicParser.Property.TokenCompiler do
   end
 
   # Old format for backward compatibility: plain list of pairs
-  defp compile_call_args_parens({:call_args_parens, {:positional_with_kw, exprs, kw_pairs}}, layout, opts) when is_list(kw_pairs) do
+  defp compile_call_args_parens(
+         {:call_args_parens, {:positional_with_kw, exprs, kw_pairs}},
+         layout,
+         opts
+       )
+       when is_list(kw_pairs) do
     # Compile positional args first
     {pos_tokens, layout} = compile_args_in_parens(exprs, layout, opts)
 

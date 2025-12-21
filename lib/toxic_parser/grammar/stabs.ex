@@ -89,7 +89,11 @@ defmodule ToxicParser.Grammar.Stabs do
     {:__block__, [], [expr]}
   end
 
-  defp unwrap_single_non_stab_with_parens([{:unquote_splicing, _meta, [_]} = single], open_meta, close_meta) do
+  defp unwrap_single_non_stab_with_parens(
+         [{:unquote_splicing, _meta, [_]} = single],
+         open_meta,
+         close_meta
+       ) do
     {:__block__, Meta.closing_meta(open_meta, close_meta), [single]}
   end
 
@@ -797,6 +801,7 @@ defmodule ToxicParser.Grammar.Stabs do
                 case TokenAdapter.next(state) do
                   {:ok, %{kind: :stab_op} = stab_tok, state} ->
                     stab_base_meta = token_meta(stab_tok.metadata)
+
                     # Newlines metadata for `->` comes from the EOE after the operator (stab_op_eol)
                     # and from the token itself when `->` starts on a new line.
                     token_newlines = Map.get(stab_tok.metadata, :newlines, 0)
@@ -1106,7 +1111,8 @@ defmodule ToxicParser.Grammar.Stabs do
               cond do
                 Keywords.starts_kw?(tok) ->
                   # Expressions followed by keywords
-                  with {:ok, kw_list, state, log} <- Keywords.parse_kw_no_parens_call(state, ctx, log) do
+                  with {:ok, kw_list, state, log} <-
+                         Keywords.parse_kw_no_parens_call(state, ctx, log) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
                       {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, log}
@@ -1414,7 +1420,14 @@ defmodule ToxicParser.Grammar.Stabs do
   """
   @spec parse_stab_items_until(list(), State.t(), Pratt.context(), EventLog.t(), atom(), [atom()]) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
-  def parse_stab_items_until(acc, %State{} = state, %Context{} = ctx, %EventLog{} = log, terminator, stop_kinds \\ []) do
+  def parse_stab_items_until(
+        acc,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        terminator,
+        stop_kinds \\ []
+      ) do
     state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
@@ -1433,7 +1446,12 @@ defmodule ToxicParser.Grammar.Stabs do
 
                 {:not_stab, _state, log} ->
                   with {:ok, expr, state, log} <-
-                         Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                         Pratt.parse_with_min_bp(
+                           state,
+                           Context.expr(),
+                           log,
+                           Precedence.stab_op_bp() + 1
+                         ) do
                     {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
                     parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
                   end
@@ -1455,7 +1473,12 @@ defmodule ToxicParser.Grammar.Stabs do
                   state = TokenAdapter.rewind(checkpoint_state, ref)
 
                   with {:ok, expr, state, log} <-
-                         Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                         Pratt.parse_with_min_bp(
+                           state,
+                           Context.expr(),
+                           log,
+                           Precedence.stab_op_bp() + 1
+                         ) do
                     {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
                     parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
                   end
@@ -1467,7 +1490,12 @@ defmodule ToxicParser.Grammar.Stabs do
             _ ->
               # Parse as plain expr, stopping before `->`.
               with {:ok, expr, state, log} <-
-                     Pratt.parse_with_min_bp(state, Context.expr(), log, Precedence.stab_op_bp() + 1) do
+                     Pratt.parse_with_min_bp(
+                       state,
+                       Context.expr(),
+                       log,
+                       Precedence.stab_op_bp() + 1
+                     ) do
                 {expr, state} = maybe_annotate_and_consume_eoe(expr, state)
                 parse_stab_items_until([expr | acc], state, ctx, log, terminator, stop_kinds)
               end
@@ -1523,7 +1551,8 @@ defmodule ToxicParser.Grammar.Stabs do
     scan_classify(state, [], ctx, terminator, stop_kinds, 200, false)
   end
 
-  defp scan_classify(state, consumed, _ctx, _terminator, _stop_kinds, max, _boundary?) when max <= 0 do
+  defp scan_classify(state, consumed, _ctx, _terminator, _stop_kinds, max, _boundary?)
+       when max <= 0 do
     {:unknown, TokenAdapter.pushback_many(state, Enum.reverse(consumed))}
   end
 
@@ -1552,7 +1581,15 @@ defmodule ToxicParser.Grammar.Stabs do
             scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, true)
 
           top? and tok.kind == :eoe ->
-            scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, boundary?)
+            scan_classify(
+              state2,
+              [tok | consumed],
+              ctx,
+              terminator,
+              stop_kinds,
+              max - 1,
+              boundary?
+            )
 
           tok.kind == :error_token ->
             {:unknown, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
@@ -1577,7 +1614,9 @@ defmodule ToxicParser.Grammar.Stabs do
     |> Map.put(:open?, scan_open?(tok, ctx))
   end
 
-  defp scan_update_percent(%{percent_pending?: true} = ctx, %{kind: :"{"}), do: %{ctx | percent_pending?: false}
+  defp scan_update_percent(%{percent_pending?: true} = ctx, %{kind: :"{"}),
+    do: %{ctx | percent_pending?: false}
+
   defp scan_update_percent(ctx, %{kind: :%}), do: %{ctx | percent_pending?: true}
   defp scan_update_percent(ctx, _), do: ctx
 
@@ -1606,7 +1645,8 @@ defmodule ToxicParser.Grammar.Stabs do
     ctx
   end
 
-  defp scan_open?(%{kind: kind}, %{percent_pending?: true}) when kind in [:identifier, :alias], do: true
+  defp scan_open?(%{kind: kind}, %{percent_pending?: true}) when kind in [:identifier, :alias],
+    do: true
 
   defp scan_open?(%{kind: kind}, _ctx) do
     kind in [

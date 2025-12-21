@@ -32,7 +32,6 @@ defmodule ToxicParser.Generator do
     fixed_map(@flag_keys |> Enum.map(&{&1, boolean()}) |> Map.new())
   end
 
-
   # Minimal grammar-faithful token generator (starter subset).
   #
   # Generates *Toxic streaming tokens* (with ranged metas) in a way that matches
@@ -186,37 +185,32 @@ defmodule ToxicParser.Generator do
       [
         {:always, 12, sub_matched_expr_raw(state)},
         {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(unary_op_eol_no_ternary_raw(), fn op ->
            bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         1,
+        {:enable_unary_op, 1,
          bind(ternary_op_eol_raw(), fn op ->
            bind(matched_expr_no_binary_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(at_op_eol_raw(), fn op ->
            # `@` only lexes as :at_op when applied to an identifier-ish target.
            bind(map_at_target_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(capture_op_eol_raw(), fn op ->
            bind(matched_expr_no_binary_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         1,
+        {:enable_unary_op, 1,
          bind(ellipsis_op_raw(), fn op ->
            bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
              constant(op ++ rhs)
@@ -241,36 +235,31 @@ defmodule ToxicParser.Generator do
       [
         {:always, 12, sub_matched_expr_no_nullary_raw(state)},
         {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(unary_op_eol_no_ternary_raw(), fn op ->
            bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         1,
+        {:enable_unary_op, 1,
          bind(ternary_op_eol_raw(), fn op ->
            bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(at_op_eol_raw(), fn op ->
            bind(map_at_target_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(capture_op_eol_raw(), fn op ->
            bind(matched_expr_no_binary_no_nullary_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         1,
+        {:enable_unary_op, 1,
          bind(ellipsis_op_raw(), fn op ->
            bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
              constant(op ++ rhs)
@@ -381,29 +370,25 @@ defmodule ToxicParser.Generator do
         [
           {:always, 12, sub_matched_expr_raw(state)},
           {:enable_no_parens_calls, 3, no_parens_one_expr_raw(state)},
-          {:enable_unary_op,
-           2,
+          {:enable_unary_op, 2,
            bind(unary_op_eol_no_ternary_raw(), fn op ->
              bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
                constant(op ++ rhs)
              end)
            end)},
-          {:enable_unary_op,
-           2,
+          {:enable_unary_op, 2,
            bind(at_op_eol_raw(), fn op ->
              bind(map_at_target_raw(state), fn rhs ->
                constant(op ++ rhs)
              end)
            end)},
-          {:enable_unary_op,
-           2,
+          {:enable_unary_op, 2,
            bind(capture_op_eol_raw(), fn op ->
              bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
                constant(op ++ rhs)
              end)
            end)},
-          {:enable_unary_op,
-           1,
+          {:enable_unary_op, 1,
            bind(ellipsis_op_raw(), fn op ->
              bind(matched_expr_no_ternary_prefix_raw(state), fn rhs ->
                constant(op ++ rhs)
@@ -573,7 +558,7 @@ defmodule ToxicParser.Generator do
   defp pipe_op_no_eol_raw, do: pipe_op_raw()
 
   defp arrow_op_no_eol_raw do
-    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :<|>, :"<|>"]), fn op ->
+    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :"<|>", :"<|>"]), fn op ->
       constant([{:arrow_op, op, 0}])
     end)
   end
@@ -603,7 +588,7 @@ defmodule ToxicParser.Generator do
   end
 
   defp arrow_op_eol_raw do
-    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :<|>, :"<|>"]), fn op ->
+    bind(member_of([:|>, :<<<, :>>>, :<<~, :~>>, :<~, :~>, :<~>, :"<|>", :"<|>"]), fn op ->
       frequency([
         {4, constant([{:arrow_op, op, 0}, {:gap_space, 1}])},
         {1,
@@ -843,16 +828,14 @@ defmodule ToxicParser.Generator do
   defp call_args_no_parens_many_raw(state) do
     entries =
       [
-        {:enable_kw,
-         2,
+        {:enable_kw, 2,
          bind(matched_expr_raw(decr_depth(state)), fn first ->
            bind(call_args_no_parens_kw_raw(state), fn kw ->
              constant(first ++ [:comma, {:gap_space, 1}] ++ kw)
            end)
          end)},
         {:always, 4, call_args_no_parens_comma_expr_raw(state)},
-        {:enable_kw,
-         2,
+        {:enable_kw, 2,
          bind(call_args_no_parens_comma_expr_raw(state), fn exprs ->
            bind(call_args_no_parens_kw_raw(state), fn kw ->
              constant(exprs ++ [:comma, {:gap_space, 1}] ++ kw)
@@ -868,8 +851,7 @@ defmodule ToxicParser.Generator do
   defp stab_parens_many_raw(state) do
     entries =
       [
-        {:enable_kw,
-         3,
+        {:enable_kw, 3,
          bind(open_paren_raw(), fn open ->
            bind(call_args_no_parens_kw_raw(state), fn kw ->
              bind(close_paren_raw(), fn close ->
@@ -877,8 +859,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         2,
+        {:always, 2,
          bind(open_paren_raw(), fn open ->
            bind(call_args_no_parens_many_raw(state), fn many ->
              bind(close_paren_raw(), fn close ->
@@ -1191,7 +1172,11 @@ defmodule ToxicParser.Generator do
        bind(empty_paren_raw(), fn parens ->
          bind(expr_raw(state), fn when_expr ->
            bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
-             constant(parens ++ [{:gap_space, 1}] ++ when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs)
+             constant(
+               parens ++
+                 [{:gap_space, 1}] ++
+                 when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs
+             )
            end)
          end)
        end)},
@@ -1211,7 +1196,11 @@ defmodule ToxicParser.Generator do
        bind(stab_parens_many_raw(state), fn parens_many ->
          bind(expr_raw(state), fn when_expr ->
            bind(stab_op_eol_and_expr_raw(state), fn op_and_rhs ->
-             constant(parens_many ++ [{:gap_space, 1}] ++ when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs)
+             constant(
+               parens_many ++
+                 [{:gap_space, 1}] ++
+                 when_op_raw() ++ when_expr ++ [{:gap_space, 1}] ++ op_and_rhs
+             )
            end)
          end)
        end)},
@@ -1662,7 +1651,11 @@ defmodule ToxicParser.Generator do
 
   # assoc_update -> expr pipe_op_eol assoc_expr
   defp assoc_update_raw(state) do
-    lhs_gen = frequency([{1, matched_expr_raw(decr_depth(state))}, {1, unmatched_expr_raw(decr_depth(state))}])
+    lhs_gen =
+      frequency([
+        {1, matched_expr_raw(decr_depth(state))},
+        {1, unmatched_expr_raw(decr_depth(state))}
+      ])
 
     bind(lhs_gen, fn lhs ->
       frequency([
@@ -1688,13 +1681,19 @@ defmodule ToxicParser.Generator do
 
   # assoc_update_kw -> expr pipe_op_eol kw_data
   defp assoc_update_kw_raw(state) do
-    bind(frequency([{1, matched_expr_raw(decr_depth(state))}, {1, unmatched_expr_raw(decr_depth(state))}]), fn lhs ->
-      bind(pipe_op_eol_raw(), fn pipe ->
-        bind(kw_data_raw(decr_depth(state)), fn kw ->
-          constant(lhs ++ pipe ++ kw)
+    bind(
+      frequency([
+        {1, matched_expr_raw(decr_depth(state))},
+        {1, unmatched_expr_raw(decr_depth(state))}
+      ]),
+      fn lhs ->
+        bind(pipe_op_eol_raw(), fn pipe ->
+          bind(kw_data_raw(decr_depth(state)), fn kw ->
+            constant(lhs ++ pipe ++ kw)
+          end)
         end)
-      end)
-    end)
+      end
+    )
   end
 
   defp map_base_expr_no_ternary_raw(state) do
@@ -1778,22 +1777,19 @@ defmodule ToxicParser.Generator do
   defp map_close_raw(state) do
     entries =
       [
-        {:enable_kw,
-         3,
+        {:enable_kw, 3,
          bind(kw_data_raw(state), fn kw ->
            bind(close_curly_raw(), fn close ->
              constant(kw ++ close)
            end)
          end)},
-        {:always,
-         5,
+        {:always, 5,
          bind(assoc_raw(state), fn assoc ->
            bind(close_curly_raw(), fn close ->
              constant(assoc ++ close)
            end)
          end)},
-        {:enable_kw,
-         1,
+        {:enable_kw, 1,
          bind(assoc_base_raw(state), fn base ->
            bind(kw_data_raw(state), fn kw ->
              bind(close_curly_raw(), fn close ->
@@ -1823,22 +1819,19 @@ defmodule ToxicParser.Generator do
   defp map_args_raw(state) do
     entries =
       [
-        {:always,
-         3,
+        {:always, 3,
          bind(open_curly_raw(), fn open ->
            bind(close_curly_raw(), fn close ->
              constant(open ++ close)
            end)
          end)},
-        {:always,
-         4,
+        {:always, 4,
          bind(open_curly_raw(), fn open ->
            bind(map_close_raw(state), fn close ->
              constant(open ++ close)
            end)
          end)},
-        {:always,
-         2,
+        {:always, 2,
          bind(open_curly_raw(), fn open ->
            bind(assoc_update_raw(state), fn upd ->
              bind(close_curly_raw(), fn close ->
@@ -1846,8 +1839,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         1,
+        {:always, 1,
          bind(open_curly_raw(), fn open ->
            bind(assoc_update_raw(state), fn upd ->
              bind(close_curly_raw(), fn close ->
@@ -1855,8 +1847,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         1,
+        {:always, 1,
          bind(open_curly_raw(), fn open ->
            bind(assoc_update_raw(state), fn upd ->
              bind(map_close_raw(state), fn close ->
@@ -1864,8 +1855,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:enable_kw,
-         1,
+        {:enable_kw, 1,
          bind(open_curly_raw(), fn open ->
            bind(assoc_update_kw_raw(state), fn upd ->
              bind(close_curly_raw(), fn close ->
@@ -1893,8 +1883,7 @@ defmodule ToxicParser.Generator do
   defp bracket_arg_raw(state) do
     entries =
       [
-        {:enable_kw,
-         3,
+        {:enable_kw, 3,
          bind(open_bracket_raw(), fn open ->
            bind(kw_data_raw(state), fn kw ->
              bind(close_bracket_raw(), fn close ->
@@ -1902,8 +1891,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         4,
+        {:always, 4,
          bind(open_bracket_raw(), fn open ->
            bind(container_expr_raw(state), fn expr ->
              bind(close_bracket_raw(), fn close ->
@@ -1911,8 +1899,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         2,
+        {:always, 2,
          bind(open_bracket_raw(), fn open ->
            bind(container_expr_raw(state), fn expr ->
              bind(close_bracket_raw(), fn close ->
@@ -2058,13 +2045,11 @@ defmodule ToxicParser.Generator do
   defp call_args_parens_raw(state) do
     entries =
       [
-        {:always,
-         3,
+        {:always, 3,
          bind(open_paren_raw(), fn open ->
            constant(open ++ [:rparen])
          end)},
-        {:always,
-         1,
+        {:always, 1,
          bind(open_paren_raw(), fn open ->
            bind(no_parens_expr_raw(decr_depth(state)), fn expr ->
              bind(close_paren_raw(), fn close ->
@@ -2072,8 +2057,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:enable_kw,
-         2,
+        {:enable_kw, 2,
          bind(open_paren_raw(), fn open ->
            bind(kw_call_raw(state), fn kw ->
              bind(close_paren_raw(), fn close ->
@@ -2081,8 +2065,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:always,
-         4,
+        {:always, 4,
          bind(open_paren_raw(), fn open ->
            bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
              bind(close_paren_raw(), fn close ->
@@ -2090,8 +2073,7 @@ defmodule ToxicParser.Generator do
              end)
            end)
          end)},
-        {:enable_kw,
-         2,
+        {:enable_kw, 2,
          bind(open_paren_raw(), fn open ->
            bind(call_args_parens_base_raw(decr_depth(state)), fn base ->
              bind(kw_call_raw(state), fn kw ->
@@ -2103,7 +2085,11 @@ defmodule ToxicParser.Generator do
          end)}
       ]
 
-    freq_enabled(state, entries, bind(open_paren_raw(), fn open -> constant(open ++ [:rparen]) end))
+    freq_enabled(
+      state,
+      entries,
+      bind(open_paren_raw(), fn open -> constant(open ++ [:rparen]) end)
+    )
   end
 
   defp open_paren_raw do
@@ -2153,8 +2139,7 @@ defmodule ToxicParser.Generator do
           [
             {:always, 6, base},
             {:enable_binary_op, 2, no_parens_expr_binary_raw(state)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(unary_op_eol_raw(), fn op ->
                rhs_gen =
                  case {List.first(op), List.last(op)} do
@@ -2167,22 +2152,19 @@ defmodule ToxicParser.Generator do
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(at_op_eol_raw(), fn op ->
                bind(no_parens_expr_raw(state), fn expr ->
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(capture_op_eol_raw(), fn op ->
                bind(no_parens_expr_raw(state), fn expr ->
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(ellipsis_op_raw(), fn op ->
                bind(no_parens_expr_raw(state), fn expr ->
                  constant(op ++ expr)
@@ -2214,29 +2196,25 @@ defmodule ToxicParser.Generator do
           [
             {:always, 6, base},
             {:enable_binary_op, 2, no_parens_expr_binary_raw(state)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(unary_op_eol_no_ternary_raw(), fn op ->
                bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(at_op_eol_raw(), fn op ->
                bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(capture_op_eol_raw(), fn op ->
                bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
                  constant(op ++ expr)
                end)
              end)},
-            {:enable_unary_op,
-             1,
+            {:enable_unary_op, 1,
              bind(ellipsis_op_raw(), fn op ->
                bind(no_parens_expr_no_ternary_prefix_raw(state), fn expr ->
                  constant(op ++ expr)
@@ -2380,7 +2358,6 @@ defmodule ToxicParser.Generator do
 
   # kw_call is close enough to kw_data for this property test.
   defp kw_call_raw(state), do: kw_data_raw(state)
-
 
   defp flags_from_opts(opts) do
     flags = default_flags() |> Map.merge(Keyword.get(opts, :flags, %{}))
@@ -2636,8 +2613,7 @@ defmodule ToxicParser.Generator do
       [
         {:always, 10, matched_expr_raw(state)},
         {:enable_do_blocks, 1, block_expr_raw(state)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(unary_op_eol_raw(), fn op ->
            rhs_gen =
              case List.last(op) do
@@ -2649,22 +2625,19 @@ defmodule ToxicParser.Generator do
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(at_op_eol_raw(), fn op ->
            bind(expr_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         2,
+        {:enable_unary_op, 2,
          bind(capture_op_eol_raw(), fn op ->
            bind(expr_raw(state), fn rhs ->
              constant(op ++ rhs)
            end)
          end)},
-        {:enable_unary_op,
-         1,
+        {:enable_unary_op, 1,
          bind(ellipsis_op_raw(), fn op ->
            bind(expr_raw(state), fn rhs ->
              constant(op ++ rhs)
@@ -2963,7 +2936,8 @@ defmodule ToxicParser.Generator do
 
   defp coalesce_eols(raw_tokens), do: do_coalesce_eols(raw_tokens, [])
 
-  defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:eol, a + b} | rest], acc)
+  defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc),
+    do: do_coalesce_eols([{:eol, a + b} | rest], acc)
 
   # Toxic folds leading EOLs into some operator meta.extra (no standalone :eol token).
   defp do_coalesce_eols([{:eol, n}, {:range_op, op, extra} | rest], acc) do
@@ -3062,12 +3036,18 @@ defmodule ToxicParser.Generator do
   end
 
   # Toxic folds newlines after comma into the comma token meta (no standalone :eol token).
-  defp do_coalesce_eols([:comma, {:eol, n} | rest], acc), do: do_coalesce_eols([{:comma, n} | rest], acc)
-  defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:comma, a + b} | rest], acc)
+  defp do_coalesce_eols([:comma, {:eol, n} | rest], acc),
+    do: do_coalesce_eols([{:comma, n} | rest], acc)
+
+  defp do_coalesce_eols([{:comma, a}, {:eol, b} | rest], acc),
+    do: do_coalesce_eols([{:comma, a + b} | rest], acc)
 
   # Toxic folds newlines after semicolon into the semicolon token meta (no standalone :eol token).
-  defp do_coalesce_eols([:semi, {:eol, n} | rest], acc), do: do_coalesce_eols([{:semi, n} | rest], acc)
-  defp do_coalesce_eols([{:semi, a}, {:eol, b} | rest], acc), do: do_coalesce_eols([{:semi, a + b} | rest], acc)
+  defp do_coalesce_eols([:semi, {:eol, n} | rest], acc),
+    do: do_coalesce_eols([{:semi, n} | rest], acc)
+
+  defp do_coalesce_eols([{:semi, a}, {:eol, b} | rest], acc),
+    do: do_coalesce_eols([{:semi, a + b} | rest], acc)
 
   defp do_coalesce_eols([h | t], acc), do: do_coalesce_eols(t, [h | acc])
   defp do_coalesce_eols([], acc), do: Enum.reverse(acc)
@@ -3472,7 +3452,8 @@ defmodule ToxicParser.Generator do
   end
 
   defp materialize_token({:range_op, op, leading_eol}, {line, col}) do
-    {line, col} = if leading_eol && leading_eol > 0, do: {line + leading_eol, 1}, else: {line, col}
+    {line, col} =
+      if leading_eol && leading_eol > 0, do: {line + leading_eol, 1}, else: {line, col}
 
     start = {line, col}
     stop = {line, col + 2}

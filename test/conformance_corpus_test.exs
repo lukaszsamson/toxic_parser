@@ -5,7 +5,6 @@ defmodule ToxicParser.ConformanceCorpusTest do
   @ignored_dirs ["_build", "deps", ".git", "tmp", "priv", "rel", "cover", "doc", "logs"]
 
   @tag timeout: :infinity
-  @tag :skip
   test "elixir sources" do
     # files = @regressions
     files = collect_files(nil)
@@ -14,7 +13,7 @@ defmodule ToxicParser.ConformanceCorpusTest do
       code = file |> File.read!()
       # lines = String.split(source, "\n")
       # assert toxic_parse(code) == s2q(code)
-      IO.puts("Parsing: #{file}")
+      # IO.puts("Parsing: #{file}")
       res = toxic_parse(code) == s2q(code)
 
       if not res do

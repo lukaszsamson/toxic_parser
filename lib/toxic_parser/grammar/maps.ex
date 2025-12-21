@@ -235,9 +235,11 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       # Container as operand (e.g., %@[]{} where [] is the operand)
+      # In struct-base context we must not let the container consume trailing dots/calls,
+      # because `{` belongs to the outer `%...{}` body.
       {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
         alias ToxicParser.Grammar.Containers
-        Containers.parse(state, ctx, log)
+        Containers.parse(state, ctx, log, 10000)
 
       # Paren call as operand (e.g., %@i(){} where i() is the operand)
       # Parse identifier then consume () as a paren call
@@ -303,7 +305,10 @@ defmodule ToxicParser.Grammar.Maps do
       # Container as operand
       {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
         alias ToxicParser.Grammar.Containers
-        Containers.parse(state, ctx, log)
+
+        with {:ok, base, state, log} <- Containers.parse(state, ctx, log, 10000) do
+          Pratt.led_dots_and_calls(base, state, log, ctx)
+        end
 
       # Base expression - parse and apply dots
       _ ->
@@ -582,8 +587,11 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp extract_assoc({callee, meta, args}) when is_list(meta) and is_list(args) do
     case extract_assoc_in_args(args) do
-      {:assoc, new_args, value, assoc_meta} -> {:assoc, {callee, meta, new_args}, value, assoc_meta}
-      :not_assoc -> :not_assoc
+      {:assoc, new_args, value, assoc_meta} ->
+        {:assoc, {callee, meta, new_args}, value, assoc_meta}
+
+      :not_assoc ->
+        :not_assoc
     end
   end
 
@@ -899,7 +907,8 @@ defmodule ToxicParser.Grammar.Maps do
           assoc_meta = token_meta(assoc_tok.metadata)
           state = EOE.skip(state)
 
-          with {:ok, value, state, log} <- Pratt.parse_with_min_bp(state, Context.container_expr(), log, 0) do
+          with {:ok, value, state, log} <-
+                 Pratt.parse_with_min_bp(state, Context.container_expr(), log, 0) do
             {:ok, {annotate_assoc(key, assoc_meta), value}, state, log}
           end
 

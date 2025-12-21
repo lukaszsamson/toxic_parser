@@ -172,13 +172,13 @@ defmodule ToxicParser.SystematicOperatorsTest do
       {:result, result} -> result
     end
   rescue
-    e ->
-      File.write!(
-        "ref_parser.txt",
-        "Reference parser crashed on:\n" <>
-          code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__) <> "\n",
-        [:append]
-      )
+    _e ->
+      # File.write!(
+      #   "ref_parser.txt",
+      #   "Reference parser crashed on:\n" <>
+      #     code <> "\n>>>>" <> Exception.format(:error, e, __STACKTRACE__) <> "\n",
+      #   [:append]
+      # )
 
       {:error, :reference_parser_crash}
   end

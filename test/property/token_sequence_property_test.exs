@@ -111,9 +111,11 @@ defmodule ToxicParser.TokenSequencePropertyTest do
   end
 
   defp interleave([token], []), do: token
+
   defp interleave([token | rest_tokens], [sep | rest_seps]) do
     token <> sep <> interleave(rest_tokens, rest_seps)
   end
+
   defp interleave([], []), do: ""
 
   # ===========================================================================
@@ -620,7 +622,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(identifier_gen, min_length: 1, max_length: 8),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -638,7 +641,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(keyword_gen, min_length: 1, max_length: 8),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -656,7 +660,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(operator_gen, min_length: 1, max_length: 8),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -674,7 +679,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(container_gen, min_length: 1, max_length: 12),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -692,7 +698,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(token_gen, min_length: 1, max_length: 10),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -710,7 +717,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(token_gen, min_length: 1, max_length: 10),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -728,7 +736,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(token_gen, min_length: 1, max_length: 10),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -742,11 +751,13 @@ defmodule ToxicParser.TokenSequencePropertyTest do
     @tag :property
     @tag timeout: 120_000
     property "sequences without containers produce conformant ASTs" do
-      token_gen = StreamData.member_of(@identifiers ++ @keywords ++ @operators ++ @atoms ++ @numbers)
+      token_gen =
+        StreamData.member_of(@identifiers ++ @keywords ++ @operators ++ @atoms ++ @numbers)
 
       check all(
               tokens <- StreamData.list_of(token_gen, min_length: 1, max_length: 10),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -766,7 +777,8 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
       check all(
               tokens <- StreamData.list_of(token_gen, min_length: 1, max_length: 12),
-              separators <- StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
+              separators <-
+                StreamData.list_of(separator_gen(), length: max(0, length(tokens) - 1)),
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
@@ -1038,51 +1050,51 @@ defmodule ToxicParser.TokenSequencePropertyTest do
 
   defp run_comparison_with_context(context, code) do
     capture_io(:standard_error, fn ->
-    result =
-      try do
-        Code.string_to_quoted(code, @oracle_opts)
-      rescue
-        _ -> {:error, :oracle_crash}
-      end
-
-    case result do
-      {:ok, {:__block__, _, []}} ->
-        # Empty block, skip
-        :ok
-
-      {:ok, oracle_ast} ->
-        # Parse with Toxic using same options as oracle
-        case toxic_parse(code) do
-          {:ok, toxic_ast} ->
-            # Normalize and compare ASTs
-            oracle_normalized = normalize_ast(oracle_ast)
-            toxic_normalized = normalize_ast(toxic_ast)
-
-            assert oracle_normalized == toxic_normalized,
-                   """
-                   AST mismatch in context #{context} for code: #{inspect(code)}
-
-                   Oracle:
-                   #{inspect(oracle_normalized, pretty: true)}
-
-                   Toxic:
-                   #{inspect(toxic_normalized, pretty: true)}
-                   """
-
-          {:error, reason} ->
-            flunk("""
-            Parser error in context #{context} for: #{inspect(code)}
-
-            Toxic:
-            #{inspect(reason, pretty: true)}
-            """)
+      result =
+        try do
+          Code.string_to_quoted(code, @oracle_opts)
+        rescue
+          _ -> {:error, :oracle_crash}
         end
 
-      {:error, _} ->
-        # Oracle rejected, skip this sample
-        :ok
-    end
-  end)
+      case result do
+        {:ok, {:__block__, _, []}} ->
+          # Empty block, skip
+          :ok
+
+        {:ok, oracle_ast} ->
+          # Parse with Toxic using same options as oracle
+          case toxic_parse(code) do
+            {:ok, toxic_ast} ->
+              # Normalize and compare ASTs
+              oracle_normalized = normalize_ast(oracle_ast)
+              toxic_normalized = normalize_ast(toxic_ast)
+
+              assert oracle_normalized == toxic_normalized,
+                     """
+                     AST mismatch in context #{context} for code: #{inspect(code)}
+
+                     Oracle:
+                     #{inspect(oracle_normalized, pretty: true)}
+
+                     Toxic:
+                     #{inspect(toxic_normalized, pretty: true)}
+                     """
+
+            {:error, reason} ->
+              flunk("""
+              Parser error in context #{context} for: #{inspect(code)}
+
+              Toxic:
+              #{inspect(reason, pretty: true)}
+              """)
+          end
+
+        {:error, _} ->
+          # Oracle rejected, skip this sample
+          :ok
+      end
+    end)
   end
 
   defp toxic_parse(code) do

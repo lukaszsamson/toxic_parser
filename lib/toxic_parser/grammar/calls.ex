@@ -420,8 +420,15 @@ defmodule ToxicParser.Grammar.Calls do
   The caller is responsible for calling led() with the correct min_bp.
   Optional `min_bp` parameter (default 0) is threaded through to argument parsing.
   """
-  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
-  def parse_without_led(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
+  @spec parse_without_led(State.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) ::
+          result()
+  def parse_without_led(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp \\ 0,
+        opts \\ []
+      ) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         case Identifiers.classify(tok.kind) do
@@ -527,14 +534,15 @@ defmodule ToxicParser.Grammar.Calls do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
+    # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
     with {:ok, first_arg, state, log} <-
-           # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
            Pratt.parse_with_min_bp(state, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
           {:ok, _comma, state} = TokenAdapter.next(state)
 
-          with {:ok, args, state, log} <- parse_no_parens_args([first_arg], state, ctx, log, 0, opts) do
+          with {:ok, args, state, log} <-
+                 parse_no_parens_args([first_arg], state, ctx, log, 0, opts) do
             callee = callee_tok.value
             meta = Builder.Helpers.token_meta(callee_tok.metadata)
             ast = {callee, meta, args}

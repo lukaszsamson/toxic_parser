@@ -112,7 +112,8 @@ defmodule ToxicParser.Grammar.Blocks do
   defp parse_labeled_sections(acc, label, state, ctx, log) do
     stop_kinds = [:end, :block_identifier, :else, :catch, :rescue, :after]
 
-    with {:ok, items_rev, state, log} <- Stabs.parse_stab_items_until([], state, ctx, log, :end, stop_kinds) do
+    with {:ok, items_rev, state, log} <-
+           Stabs.parse_stab_items_until([], state, ctx, log, :end, stop_kinds) do
       section_value = Stabs.build_section_value(items_rev)
       acc = [{label, section_value} | acc]
 

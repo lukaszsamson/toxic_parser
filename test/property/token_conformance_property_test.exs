@@ -405,45 +405,48 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
   defp run_comparison(code) do
     capture_io(:standard_error, fn ->
-    # Use Code.with_diagnostics to capture warnings
-    result = try do
-        Code.string_to_quoted(code, @oracle_opts)
-    rescue
-      _ -> {:error, :oracle_crash}
-    end
+      # Use Code.with_diagnostics to capture warnings
+      result =
+        try do
+          Code.string_to_quoted(code, @oracle_opts)
+        rescue
+          _ -> {:error, :oracle_crash}
+        end
 
-    case result do
-      {:ok, {:__block__, _, []}} ->
-        # Empty block, skip
-        :ok
+      case result do
+        {:ok, {:__block__, _, []}} ->
+          # Empty block, skip
+          :ok
 
-      {:ok, oracle_ast} ->
-        # Parse with Toxic using same options as oracle
-        # try do
-        case toxic_parse(code) do
-          {:ok, toxic_ast} ->
-            # Normalize and compare ASTs
-            oracle_normalized = normalize_ast(oracle_ast)
-            toxic_normalized = normalize_ast(toxic_ast)
+        {:ok, oracle_ast} ->
+          # Parse with Toxic using same options as oracle
+          # try do
+          case toxic_parse(code) do
+            {:ok, toxic_ast} ->
+              # Normalize and compare ASTs
+              oracle_normalized = normalize_ast(oracle_ast)
+              toxic_normalized = normalize_ast(toxic_ast)
 
-            assert oracle_normalized == toxic_normalized,
-                  """
-                  AST mismatch for code: #{inspect(code)}
+              assert oracle_normalized == toxic_normalized,
+                     """
+                     AST mismatch for code: #{inspect(code)}
 
-                  Oracle:
-                  #{inspect(oracle_normalized, pretty: true)}
+                     Oracle:
+                     #{inspect(oracle_normalized, pretty: true)}
 
-                  Toxic:
-                  #{inspect(toxic_normalized, pretty: true)}
-                  """
+                     Toxic:
+                     #{inspect(toxic_normalized, pretty: true)}
+                     """
+
             {:error, reason} ->
-              flunk """
-                  Parser error for: #{inspect(code)}
+              flunk("""
+              Parser error for: #{inspect(code)}
 
-                  Toxic:
-                  #{inspect(reason, pretty: true)}
-                  """
+              Toxic:
+              #{inspect(reason, pretty: true)}
+              """)
           end
+
         # rescue
         #   error ->
         #     flunk """
@@ -454,11 +457,11 @@ defmodule ToxicParser.TokenConformancePropertyTest do
         #           """
         # end
 
-      {:error, _} ->
-        # Oracle rejected, skip this sample
-        :ok
-    end
-  end)
+        {:error, _} ->
+          # Oracle rejected, skip this sample
+          :ok
+      end
+    end)
   end
 
   defp toxic_parse(code) do

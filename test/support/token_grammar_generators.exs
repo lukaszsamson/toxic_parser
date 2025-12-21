@@ -787,9 +787,12 @@ defmodule ToxicParser.TokenGrammarGenerators do
 
   defp gen_container_expr_list(state, count) when count > 0 do
     StreamData.bind(gen_container_expr(state), fn expr ->
-      StreamData.bind(gen_container_expr_list(GrammarTree.decr_nodes(state), count - 1), fn rest ->
-        StreamData.constant([expr | rest])
-      end)
+      StreamData.bind(
+        gen_container_expr_list(GrammarTree.decr_nodes(state), count - 1),
+        fn rest ->
+          StreamData.constant([expr | rest])
+        end
+      )
     end)
   end
 
@@ -813,7 +816,8 @@ defmodule ToxicParser.TokenGrammarGenerators do
       # Just positional
       {6, gen_container_args_base(child_state) |> StreamData.map(&{:container_args, &1})},
       # Trailing comma
-      {1, gen_container_args_base(child_state) |> StreamData.map(&{:container_args_trailing, &1})},
+      {1,
+       gen_container_args_base(child_state) |> StreamData.map(&{:container_args_trailing, &1})},
       # Positional + kw_data
       {3,
        StreamData.bind(gen_container_args_base(child_state, 1, 2), fn positional ->
@@ -997,9 +1001,12 @@ defmodule ToxicParser.TokenGrammarGenerators do
         # Keyword only: (a: 1)
         {2, gen_kw_call(child_state) |> StreamData.map(&{:call_args_parens, {:kw_only, &1}})},
         # Positional only: (1, 2)
-        {4, gen_call_args_parens_base_simple(1, 3) |> StreamData.map(&{:call_args_parens, {:positional, &1}})},
+        {4,
+         gen_call_args_parens_base_simple(1, 3)
+         |> StreamData.map(&{:call_args_parens, {:positional, &1}})},
         # Positional + kw: (1, a: 2)
-        {2, gen_positional_with_kw_simple(child_state) |> StreamData.map(&{:call_args_parens, &1})}
+        {2,
+         gen_positional_with_kw_simple(child_state) |> StreamData.map(&{:call_args_parens, &1})}
       ])
     else
       restricted_state = restrict_unmatched(child_state)
@@ -1008,11 +1015,16 @@ defmodule ToxicParser.TokenGrammarGenerators do
         # Empty: ()
         {2, StreamData.constant({:call_args_parens, :empty})},
         # Single no_parens_expr: (foo bar)
-        {1, gen_no_parens_expr(child_state) |> StreamData.map(&{:call_args_parens, {:no_parens_expr, &1}})},
+        {1,
+         gen_no_parens_expr(child_state)
+         |> StreamData.map(&{:call_args_parens, {:no_parens_expr, &1}})},
         # Keyword only: (a: 1, b: 2)
-        {2, gen_kw_call(restricted_state) |> StreamData.map(&{:call_args_parens, {:kw_only, &1}})},
+        {2,
+         gen_kw_call(restricted_state) |> StreamData.map(&{:call_args_parens, {:kw_only, &1}})},
         # Positional only: (expr, expr)
-        {4, gen_call_args_parens_base(restricted_state, 1, 3) |> StreamData.map(&{:call_args_parens, {:positional, &1}})},
+        {4,
+         gen_call_args_parens_base(restricted_state, 1, 3)
+         |> StreamData.map(&{:call_args_parens, {:positional, &1}})},
         # Positional + kw: (expr, a: 1)
         {2, gen_positional_with_kw(restricted_state) |> StreamData.map(&{:call_args_parens, &1})}
       ])
@@ -1071,9 +1083,12 @@ defmodule ToxicParser.TokenGrammarGenerators do
       ])
 
     StreamData.bind(expr_gen, fn expr ->
-      StreamData.bind(gen_call_args_parens_expr_list(GrammarTree.decr_nodes(state), count - 1), fn rest ->
-        StreamData.constant([expr | rest])
-      end)
+      StreamData.bind(
+        gen_call_args_parens_expr_list(GrammarTree.decr_nodes(state), count - 1),
+        fn rest ->
+          StreamData.constant([expr | rest])
+        end
+      )
     end)
   end
 
@@ -2172,21 +2187,21 @@ defmodule ToxicParser.TokenGrammarGenerators do
 
       # Variant 2: Positional with trailing keyword args (call_args_no_parens_many with kw)
       # Examples: (a, key: 1), (x, y, foo: :bar)
-        {2,
-         StreamData.bind(StreamData.integer(1..3), fn pos_count ->
-           StreamData.bind(gen_pattern_identifier_list(pos_count), fn pos ->
-             StreamData.bind(gen_call_args_no_parens_kw(), fn kw ->
-               StreamData.constant({:many_parens, pos ++ [kw]})
-             end)
+      {2,
+       StreamData.bind(StreamData.integer(1..3), fn pos_count ->
+         StreamData.bind(gen_pattern_identifier_list(pos_count), fn pos ->
+           StreamData.bind(gen_call_args_no_parens_kw(), fn kw ->
+             StreamData.constant({:many_parens, pos ++ [kw]})
            end)
-         end)},
+         end)
+       end)},
 
       # Variant 3: Keyword-only inside parens (call_args_no_parens_kw)
       # Examples: (key: val), (a: 1, b: 2)
-        {1,
-         StreamData.bind(gen_call_args_no_parens_kw(), fn kw ->
-           StreamData.constant({:many_parens, [kw]})
-         end)}
+      {1,
+       StreamData.bind(gen_call_args_no_parens_kw(), fn kw ->
+         StreamData.constant({:many_parens, [kw]})
+       end)}
     ])
   end
 
