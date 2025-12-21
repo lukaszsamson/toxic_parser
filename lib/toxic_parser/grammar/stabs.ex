@@ -861,6 +861,10 @@ defmodule ToxicParser.Grammar.Stabs do
     # For keyword lists (plain lists), parens go on the stab arrow.
     # For literals (no metadata carrier), Elixir drops the parens.
     case single_pattern do
+      # elixir_parser.yrl build_paren_stab/3: rearrange_uop(not/!) into a __block__
+      {op, _meta, [_]} when op in [:!, :not] ->
+        {[{:__block__, [], [single_pattern]}], stab_meta}
+
       {_name, meta, _args} when is_list(meta) ->
         pattern_with_parens = add_parens_to_pattern(single_pattern, parens_meta)
         {[pattern_with_parens], stab_meta}

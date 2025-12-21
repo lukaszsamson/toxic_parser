@@ -706,11 +706,28 @@ defmodule ToxicParser.Pratt do
                   end
               end
 
-            # Unary operator operands must NOT allow no_parens_expr extension.
+            # Most unary operator operands must NOT allow no_parens_expr extension.
             # The extension bypasses min_bp which would break "-1 + 2" (making it "-(1+2)").
-            # Restrict the context to disable extension inside the operand.
+            # Exception: ellipsis_op follows yecc rules and can take expr/no_parens_expr operands.
             # The outer context is preserved for led() after the unary is built.
-            operand_context = restrict_no_parens_extension(context)
+            operand_context =
+              if op_token.kind == :ellipsis_op do
+                cond do
+                  # no_parens_expr -> ellipsis_op no_parens_expr
+                  Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
+                    Context.no_parens_expr()
+
+                  # unmatched_expr -> ellipsis_op expr
+                  Context.allow_do_block?(context) ->
+                    Context.expr()
+
+                  # matched_expr -> ellipsis_op matched_expr
+                  true ->
+                    Context.matched_expr()
+                end
+              else
+                restrict_no_parens_extension(context)
+              end
 
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
 

@@ -1,0 +1,38 @@
+ToxicParser Profiler
+====================
+Target: parser
+Profiler: auto
+Profile type: time
+Matching: ToxicParser.Precedence.*
+File limit: 30
+
+Projects: man, bin, LICENSES, .ort, .github, lib, .git
+Collected 30 files to profile
+
+Loading code...
+Running baseline measurement...
+
+Baseline Results:
+-----------------
+Files processed: 30
+Total AST nodes: 51154
+Total bytes: 779572
+Baseline time: 2290.29 ms
+Throughput: 22335.0 AST nodes/sec
+Throughput: 332.4 KB/sec
+
+Running profiler (auto, time)...
+
+Using tprof (OTP 27+)
+Warmup...
+
+
+Profile results of #PID<0.195.0>
+#                                        CALLS      %  TIME µS/CALL
+Total                                   809481 100.00 55780    0.07
+ToxicParser.Precedence.stab_op_bp/0      10562   0.79   442    0.04
+ToxicParser.Precedence.bp_from_binary/1  10562   1.43   797    0.08
+ToxicParser.Precedence.unary/1          108617  10.77  6006    0.06
+ToxicParser.Precedence.binary/1         679740  87.01 48535    0.07
+
+Profile done over 4 matching functions

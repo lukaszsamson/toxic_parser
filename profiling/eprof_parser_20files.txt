@@ -1,0 +1,586 @@
+ToxicParser Profiler
+====================
+Target: parser
+Profiler: eprof
+Profile type: time
+Matching: all functions
+File limit: 20
+
+Projects: man, bin, LICENSES, .ort, .github, lib, .git
+Collected 20 files to profile
+
+Loading code...
+Running baseline measurement...
+
+Baseline Results:
+-----------------
+Files processed: 20
+Total AST nodes: 20850
+Total bytes: 315762
+Baseline time: 881.66 ms
+Throughput: 23649.0 AST nodes/sec
+Throughput: 349.75 KB/sec
+
+Running profiler (eprof, time)...
+
+Using eprof
+Warmup...
+
+
+Profile results of #PID<0.195.0>
+#                                                                                      CALLS    %   TIME µS/CALL
+Total                                                                                1104175 100. 758662    0.07
+anonymous fn/1 in ToxicParser.Grammar.Containers.finalize_list_items/1                    14 0.00      0    0.00
+anonymous fn/1 in ToxicParser.Grammar.Maps.finalize_map_close_items/1                      8 0.00      0    0.00
+ToxicParser.Grammar.Stabs.unwrap_single_non_stab_with_parens/3                             8 0.00      0    0.00
+ToxicParser.Grammar.Stabs.parse_stab_eoe/4                                                 8 0.00      0    0.00
+:erlang.apply/2                                                                            1 0.00      1    1.00
+:unicode_util.gc_ext_pict/3                                                               20 0.00      1    0.05
+:unicode_util.gc_ext_pict/2                                                               20 0.00      1    0.05
+anonymous fn/1 in ToxicParser.Grammar.Maps.finalize_map_close_items/1                     30 0.00      1    0.03
+ToxicParser.Grammar.Maps.classify_pipe_rhs_for_map_update/1                                8 0.00      1    0.13
+ToxicParser.Context.unmatched_expr/0                                                      38 0.00      1    0.03
+:file.file_name/1                                                                         20 0.00      2    0.10
+:erlang.dt_spread_tag/1                                                                   20 0.00      2    0.10
+:erlang.dt_restore_tag/1                                                                  20 0.00      2    0.10
+ToxicParser.Pratt.parse_access_indices/4                                                  13 0.00      2    0.15
+ToxicParser.Pratt.build_meta_from_location/1                                              30 0.00      2    0.07
+ToxicParser.Grammar.Maps.extract_assoc/1                                                  38 0.00      2    0.05
+ToxicParser.Grammar.Stabs.parse_paren_stab/5                                               8 0.00      2    0.25
+:file.check_args/1                                                                        40 0.00      3    0.08
+String.Chars.impl_for/1                                                                   64 0.00      3    0.05
+IO.chardata_to_string/1                                                                   20 0.00      3    0.15
+anonymous fn/5 in ToxicParser.Grammar.Containers.parse_paren_content/5                    46 0.00      3    0.07
+ToxicParser.Grammar.Containers.parse_expr_in_paren_with_meta/5                            46 0.00      3    0.07
+ToxicParser.Grammar.Containers.build_parens_meta/2                                        46 0.00      3    0.07
+anonymous fn/2 in ToxicProfiler.run_profile/2                                              1 0.00      3    3.00
+ToxicParser.Grammar.Maps.check_embedded_map_update/1                                      38 0.00      3    0.08
+ToxicParser.Grammar.Maps.build_map_update_ast/4                                           72 0.00      3    0.04
+anonymous fn/4 in :gen.call/4                                                             20 0.00      3    0.15
+ToxicParser.EventLog.new/0                                                                40 0.00      3    0.08
+:erlang.binary_to_atom/1                                                                  40 0.00      4    0.10
+ToxicParser.Grammar.Maps.annotate_assoc/2                                                 46 0.00      4    0.09
+:gen.call/4                                                                               20 0.00      4    0.20
+ToxicParser.Grammar.Calls.build_access/3                                                 116 0.00      5    0.04
+ToxicParser.check_remaining_tokens/2                                                      20 0.00      5    0.25
+:erlang.binary_to_atom/2                                                                  40 0.00      5    0.13
+String.Tokenizer.unicode_upper/1                                                         144 0.00      5    0.03
+String.Tokenizer.unicode_start/1                                                         144 0.00      5    0.03
+String.Tokenizer.normalize_start/1                                                       144 0.00      5    0.03
+ToxicParser.Grammar.Stabs.try_parse_stab_clause/3                                         90 0.00      5    0.06
+String.Chars.impl_for!/1                                                                  64 0.00      6    0.09
+ToxicParser.Grammar.Strings.build_interpolated_parts_unescape/2                           54 0.00      6    0.11
+ToxicParser.Grammar.Maps.token_meta_with_newlines/2                                       64 0.00      6    0.09
+anonymous fn/3 in ToxicParser.Grammar.Brackets.parse_single_container_expr/3             129 0.00      6    0.05
+Toxic.NormalTokenizer.maybe_warn_too_many_of_same_char/5                                 185 0.00      6    0.03
+:file.check_and_call/2                                                                    20 0.00      7    0.35
+:erlang.atom_to_binary/1                                                                  64 0.00      7    0.11
+ToxicParser.Pratt.led_bracket/6                                                           13 0.00      7    0.54
+ToxicParser.Grammar.DoBlocks.handle_do_identifier/9                                       68 0.00      7    0.10
+Toxic.Driver.Contexts.find_missing_scope_terminator/1                                    158 0.00      7    0.04
+File.read!/1                                                                              20 0.00      7    0.35
+Toxic.Util.multiple/5                                                                    158 0.00      7    0.04
+ToxicParser.Grammar.parse/3                                                               20 0.00      7    0.35
+:file.read_file/1                                                                         20 0.00      8    0.40
+ToxicParser.TokenAdapter.new/2                                                            20 0.00      8    0.40
+ToxicParser.Grammar.Containers.finish_paren_exprs/7                                       46 0.00      8    0.17
+ToxicParser.Grammar.Containers.add_parens_meta/3                                          46 0.00      8    0.17
+anonymous fn/3 in ToxicProfiler.run_profile/2                                             20 0.00      8    0.40
+ToxicParser.Grammar.Blocks.label_from/1                                                  156 0.00      8    0.05
+String.Chars.Atom.to_string/1                                                             64 0.00      8    0.13
+ToxicParser.Grammar.Stabs.parse_remaining_stab_clauses/5                                  44 0.00      8    0.18
+ToxicParser.Grammar.Containers.semicolon_eoe?/1                                          196 0.00      9    0.05
+ToxicParser.Grammar.Strings.count_leading_backslashes/1                                  196 0.00      9    0.05
+:erlang.list_to_integer/2                                                                120 0.00     10    0.08
+ToxicParser.Grammar.Stabs.is_keyword_list/1                                              246 0.00     10    0.04
+ToxicParser.Grammar.Calls.expect_token/2                                                 116 0.00     11    0.09
+ToxicParser.build_result/1                                                                20 0.00     11    0.55
+:erlang.atom_to_binary/2                                                                  64 0.00     11    0.17
+Toxic.Driver.new/1                                                                        20 0.00     11    0.55
+ToxicParser.Grammar.Calls.parse_bracket_arg_no_skip/3                                    116 0.00     12    0.10
+ToxicParser.Grammar.Maps.parse_assoc_expr/3                                               38 0.00     12    0.32
+anonymous fn/2 in ToxicParser.Grammar.Strings.build_interpolated_parts_unescape/2        194 0.00     13    0.07
+:gen_server.call/3                                                                        20 0.00     14    0.70
+ToxicParser.Pratt.syntax_error_before/2                                                   64 0.00     14    0.22
+Toxic.Driver.Contexts.find_missing_interpolation/1                                       316 0.00     14    0.04
+ToxicParser.Grammar.Containers.parse_expr_in_paren_impl/6                                 46 0.00     14    0.30
+Toxic.NormalTokenizer.Sigil.tokenize_upper_sigil_name/6                                  164 0.00     14    0.09
+Toxic.Driver.Contexts.find_missing_context/1                                             316 0.00     15    0.05
+ToxicParser.Grammar.Containers.skip_eoe_not_semicolon/1                                   98 0.00     15    0.15
+Toxic.Driver.Contexts.check_identifier_validity/3                                        144 0.00     16    0.11
+ToxicParser.Grammar.Strings.escaped_by_preceding_backslash?/1                            196 0.00     16    0.08
+ToxicParser.Grammar.Containers.parse_paren_content/5                                      98 0.00     17    0.17
+ToxicParser.Grammar.Stabs.build_stab_block/1                                             446 0.00     17    0.04
+ToxicParser.Grammar.Calls.build_bracket_meta_with_newlines/3                             116 0.00     18    0.16
+Enum.drop_exact/2                                                                        414 0.00     18    0.04
+:gen.do_for_proc/2                                                                        20 0.00     18    0.90
+ToxicParser.Pratt.led_dots_and_calls/4                                                   136 0.00     19    0.14
+ToxicParser.Grammar.Stabs.collect_stab/1                                                 398 0.00     19    0.05
+Toxic.Unescape.unescape_map/1                                                            534 0.00     20    0.04
+:erlang.whereis/1                                                                         20 0.00     20    1.00
+String.to_charlist/1                                                                     164 0.00     20    0.12
+String.Chars.to_string/1                                                                  64 0.00     20    0.31
+ToxicParser.Grammar.Brackets.parse_bracket_arg_no_skip/2                                 129 0.00     20    0.16
+ToxicParser.State.line_index/1                                                            20 0.00     21    1.05
+Toxic.Driver.Contexts.is_unnecessary_quote/4                                             368 0.00     21    0.06
+ToxicParser.Grammar.Maps.parse_map_base_expr/3                                           124 0.00     21    0.17
+ToxicParser.Grammar.Calls.parse_bracket_access_no_led/5                                   54 0.00     22    0.41
+ToxicParser.Pratt.parse_base_with_dots_and_calls/3                                       124 0.00     22    0.18
+File.read/1                                                                               20 0.00     22    1.10
+anonymous fn/5 in Enum.slice_count_and_fun/2                                             414 0.00     22    0.05
+ToxicParser.Grammar.Maps.parse_map_update_rhs/4                                           64 0.00     22    0.34
+ToxicParser.Grammar.Calls.parse_no_parens_args/4                                         425 0.00     24    0.06
+ToxicParser.Grammar.Maps.parse_map_update_with_min_bp/2                                   64 0.00     24    0.38
+ToxicParser.Grammar.Maps.parse_map_args/5                                                124 0.00     25    0.20
+ToxicParser.Grammar.Brackets.parse_single_container_expr/3                               129 0.00     25    0.19
+anonymous fn/4 in ToxicParser.Grammar.Calls.parse_no_parens_call/4                       425 0.00     26    0.06
+ToxicParser.Grammar.Calls.parse_bracket_access/5                                          62 0.00     26    0.42
+:erlang.list_to_tuple/1                                                                   40 0.00     26    0.65
+:erlang.demonitor/2                                                                       20 0.00     26    1.30
+anonymous fn/1 in ToxicParser.Grammar.CallsPrivate.finalize_call_args_parens_items/1     710 0.00     26    0.04
+ToxicParser.Grammar.Stabs.try_parse_stab_or_expr/6                                        90 0.00     26    0.29
+Toxic.new/4                                                                               20 0.00     27    1.35
+:erlang.monitor/2                                                                         20 0.00     28    1.40
+ToxicParser.State.new/2                                                                   20 0.00     29    1.45
+ToxicParser.Pratt.parse_capture_int/3                                                    154 0.00     30    0.19
+:file.call/2                                                                              20 0.00     31    1.55
+anonymous fn/1 in ToxicParser.Grammar.Strings.build_sigil_parts/1                        847 0.00     31    0.04
+ToxicParser.Grammar.Maps.parse_map_update_candidate/3                                    102 0.00     31    0.30
+:unicode_util.cp_no_bin/1                                                                785 0.00     33    0.04
+Toxic.Driver.Contexts.pending_error/1                                                    158 0.00     33    0.21
+ToxicParser.Grammar.Containers.parse_paren/4                                              98 0.00     33    0.34
+ToxicParser.Pratt.led_dot_call/6                                                         230 0.00     34    0.15
+anonymous fn/1 in ToxicParser.Grammar.Strings.merge_fragments_unescape/1                 782 0.00     34    0.04
+ToxicProfiler.process_file/2                                                              20 0.00     35    1.75
+Toxic.NormalTokenizer.Number.tokenize_hex/3                                              480 0.00     35    0.07
+ToxicParser.Grammar.Delimited.parse_comma_separated/5                                    929 0.00     36    0.04
+ToxicParser.parse_string/2                                                                20 0.00     36    1.80
+Enumerable.impl_for/1                                                                    836 0.00     36    0.04
+ToxicParser.Grammar.Strings.get_sigil_indentation/1                                      979 0.00     37    0.04
+ToxicParser.Grammar.Strings.get_heredoc_indentation/1                                    836 0.00     39    0.05
+ToxicParser.Grammar.Maps.build_map_ast/4                                                 983 0.00     40    0.04
+ToxicParser.Grammar.Strings.parse_quoted_atom/6                                           88 0.00     41    0.47
+ToxicParser.Grammar.Strings.build_sigil_parts/1                                          979 0.00     41    0.04
+ToxicParser.Grammar.Strings.build_interpolated_parts/2                                   975 0.00     42    0.04
+Toxic.Util.reset_eol/4                                                                  1093 0.00     44    0.04
+Enum.slice_exact/5                                                                       414 0.00     48    0.12
+Toxic.NormalTokenizer.Comment.preserve_comments/6                                       1137 0.00     49    0.04
+ToxicParser.Grammar.Stabs.do_collect_stab/3                                              844 0.00     55    0.07
+ToxicParser.Builder.Meta.closing_meta/4                                                 1608 0.00     59    0.04
+ToxicParser.Pratt.parse_rhs/5                                                           1474 0.00     62    0.04
+ToxicParser.Grammar.EOE.skip_with_meta/1                                                1499 0.00     66    0.04
+anonymous fn/1 in ToxicParser.Grammar.Containers.finalize_list_items/1                  1781 0.00     67    0.04
+ToxicParser.Grammar.Expressions.finalize_exprs/3                                        1499 0.00     68    0.05
+anonymous fn/2 in ToxicParser.Grammar.Strings.merge_fragments_unescape/1                 782 0.00     69    0.09
+Enum.take_exact/2                                                                       1146 0.00     71    0.06
+Enumerable.impl_for!/1                                                                   836 0.00     72    0.09
+ToxicParser.Context.kw_no_parens_value/0                                                1871 0.00     74    0.04
+:elixir_interpolation.unescape_map/1                                                    1866 0.00     76    0.04
+ToxicParser.Grammar.Maps.parse_map_args_after_brace/6                                    931 0.00     88    0.09
+ToxicParser.Grammar.Dots.parse_dot_call/4                                                230 0.00     92    0.40
+:binary.bin_to_list/1                                                                    928 0.00     93    0.10
+ToxicParser.Grammar.Maps.token_meta/1                                                   2298 0.00     93    0.04
+Enum.reduce_while/3                                                                      836 0.00     96    0.11
+:gen.do_call/4                                                                            20 0.00     97    4.85
+ToxicParser.Grammar.Blocks.build_block/1                                                1849 0.00     99    0.05
+Enum.all?/2                                                                             2309 0.00    100    0.04
+ToxicParser.Grammar.Maps.try_parse_map_update/3                                         1001 0.00    102    0.10
+ToxicParser.Grammar.Calls.parse_no_parens_call/4                                         425 0.00    105    0.25
+ToxicParser.Grammar.Strings.trim_heredoc_parts/3                                         858 0.00    105    0.12
+Enum.slice_count_and_fun/2                                                              1532 0.00    106    0.07
+anonymous fn/1 in ToxicParser.Grammar.Strings.build_interpolated_parts/2                3105 0.00    108    0.03
+Toxic.NormalTokenizer.Sigil.collect_modifiers/1                                         2632 0.00    109    0.04
+Toxic.NormalTokenizer.Sigil.sigil_terminator/1                                          3005 0.00    114    0.04
+ToxicParser.Pratt.is_paren_call_valid/1                                                 2960 0.00    116    0.04
+ToxicParser.Pratt.build_dot_alias/4                                                      753 0.00    116    0.15
+ToxicParser.Grammar.Strings.parse/4                                                     3093 0.00    118    0.04
+Toxic.NormalTokenizer.Sigil.tokenize_sigil_name/6                                       3161 0.00    125    0.04
+ToxicParser.Context.matched_expr/0                                                      3463 0.00    125    0.04
+ToxicParser.Grammar.Maps.parse_map/4                                                    1055 0.00    126    0.12
+:unicode_util.cp/1                                                                      3232 0.00    129    0.04
+ToxicParser.Grammar.Strings.build_interpolation_ast/4                                   1479 0.00    129    0.09
+ToxicParser.Grammar.Bitstrings.parse/4                                                  1268 0.00    134    0.11
+ToxicParser.Grammar.Strings.trim_parts_loop/6                                           1856 0.00    136    0.07
+Toxic.NormalTokenizer.handle_char/1                                                     2951 0.00    136    0.05
+ToxicParser.Grammar.Expressions.maybe_annotate_eoe/2                                    1520 0.00    138    0.09
+anonymous fn/1 in ToxicParser.Grammar.Blocks.build_section_value/1                      3133 0.00    138    0.04
+ToxicParser.Grammar.Blocks.exit_scope/3                                                 2543 0.00    138    0.05
+Enumerable.reduce/3                                                                      836 0.00    138    0.17
+ToxicParser.Builder.Helpers.unary/3                                                     2806 0.00    139    0.05
+ToxicParser.Grammar.Stabs.parse_stab_eoe_until/5                                         446 0.00    140    0.31
+:unicode_util.is_extend/1                                                               3232 0.00    141    0.04
+ToxicParser.Grammar.EOE.skip_with_meta/2                                                1519 0.00    141    0.09
+Enumerable.List.reduce/3                                                                1812 0.00    142    0.08
+ToxicParser.Grammar.Blocks.enter_scope/3                                                2543 0.00    143    0.06
+ToxicParser.Grammar.Strings.build_heredoc_ast/9                                          836 0.00    144    0.17
+ToxicParser.Grammar.Keywords.parse_kw_data/3                                            1465 0.00    144    0.10
+Toxic.NormalTokenizer.String.extract_heredoc_header/1                                   3774 0.00    149    0.04
+Enum.drop/2                                                                             1532 0.00    160    0.10
+anonymous fn/4 in ToxicParser.Grammar.Maps.parse_map_close/3                             945 0.00    161    0.17
+ToxicParser.Grammar.Stabs.unwrap_splice/1                                               4246 0.00    168    0.04
+ToxicParser.Grammar.Expressions.collect_exprs/4                                         1520 0.00    169    0.11
+anonymous fn/4 in ToxicParser.Grammar.Keywords.parse_call_args_no_parens_kw/4           1871 0.00    173    0.09
+ToxicParser.Grammar.DoBlocks.maybe_do_block/4                                           4237 0.00    176    0.04
+ToxicParser.Grammar.Blocks.token_meta/1                                                 4306 0.00    177    0.04
+ToxicParser.Grammar.Stabs.token_meta/1                                                  4254 0.00    181    0.04
+ToxicParser.Grammar.Strings.merge_fragments_unescape/1                                   782 0.00    183    0.23
+ToxicParser.Grammar.Blocks.parse_fn/4                                                    390 0.00    186    0.48
+ToxicParser.Grammar.DoBlocks.clean_meta/2                                               2065 0.00    189    0.09
+ToxicParser.Grammar.Maps.finalize_map_close_items/1                                      929 0.00    189    0.20
+ToxicParser.Grammar.Keywords.parse_call_args_no_parens_kw/4                             1756 0.00    195    0.11
+ToxicParser.Grammar.Containers.parse_list/4                                             1904 0.00    196    0.10
+ToxicParser.Grammar.Keywords.parse_kw_call/3                                            2007 0.00    196    0.10
+anonymous fn/1 in ToxicParser.Grammar.Strings.merge_fragments/1                         5534 0.00    198    0.04
+anonymous fn/1 in ToxicParser.Grammar.Strings.merge_fragments/1                         5534 0.00    205    0.04
+ToxicParser.Grammar.Calls.parse_no_parens_call_no_led/5                                 1305 0.00    209    0.16
+Toxic.NormalTokenizer.Sigil.collect_modifiers/2                                         2636 0.00    209    0.08
+ToxicParser.Grammar.Maps.parse_map_base/3                                               1055 0.00    209    0.20
+ToxicParser.Grammar.Containers.finalize_list_items/1                                    1947 0.00    211    0.11
+ToxicParser.Grammar.Calls.parse_identifier_no_led/6                                     1439 0.00    216    0.15
+ToxicParser.Grammar.Stabs.build_stab_body/3                                             4246 0.00    218    0.05
+Toxic.NormalTokenizer.Sigil.tokenize_lower_sigil_name/6                                 2997 0.00    234    0.08
+ToxicParser.Grammar.Strings.string_delimiter/1                                          6649 0.00    235    0.04
+ToxicParser.Precedence.stab_op_bp/0                                                     4538 0.00    236    0.05
+Enum.entry_to_string/1                                                                  6316 0.00    237    0.04
+:unicode_util.gc_1/1                                                                    3232 0.00    238    0.07
+:unicode_util.gc_extend/3                                                               3212 0.00    239    0.07
+ToxicParser.Grammar.Bitstrings.token_meta/1                                             6176 0.00    243    0.04
+ToxicParser.Grammar.Calls.parse_without_led/4                                           1439 0.00    249    0.17
+ToxicParser.Grammar.Containers.parse_tuple/4                                            2859 0.00    249    0.09
+ToxicParser.Grammar.Blocks.expect_kind_with_meta/3                                      2543 0.00    249    0.10
+ToxicParser.Grammar.Strings.trim_fragment/5                                              928 0.00    250    0.27
+ToxicParser.Grammar.Calls.extract_meta/1                                                6504 0.00    251    0.04
+Toxic.NormalTokenizer.Sigil.tokenize_sigil/5                                            3161 0.00    251    0.08
+Enum.filter/2                                                                           6544 0.00    252    0.04
+ToxicParser.Grammar.Maps.parse_map_close/3                                               929 0.00    253    0.27
+ToxicParser.Grammar.Blocks.build_section_value/1                                        2309 0.00    257    0.11
+anonymous fn/3 in ToxicParser.Grammar.CallsPrivate.parse_call_args_parens/3             5428 0.00    258    0.05
+ToxicParser.Grammar.Strings.string_kind/1                                               7485 0.00    266    0.04
+ToxicParser.Grammar.Bitstrings.finalize_bitstring_items/1                               3088 0.00    282    0.09
+ToxicParser.Grammar.Strings.closing_for/1                                               7485 0.00    286    0.04
+Enum.any?/2                                                                             7573 0.00    291    0.04
+ToxicParser.Grammar.Containers.token_meta/1                                             7630 0.00    293    0.04
+ToxicParser.Pratt.extract_meta/1                                                        7520 0.00    297    0.04
+anonymous fn/4 in ToxicParser.Grammar.Containers.parse_list_base/3                      2018 0.00    297    0.15
+anonymous fn/1 in ToxicParser.Grammar.Strings.has_interpolations?/1                     8250 0.00    303    0.04
+:unicode.characters_to_list/1                                                            164 0.00    303    1.85
+ToxicParser.Pratt.parse_unary/4                                                         2806 0.00    304    0.11
+ToxicParser.Grammar.Containers.parse_container_base/3                                   2747 0.00    305    0.11
+:elixir_interpolation.unescape_string/1                                                 8136 0.00    306    0.04
+ToxicParser.Grammar.Maps.parse_map_args_body/7                                          1055 0.00    314    0.30
+Keyword.delete/2                                                                        4130 0.00    319    0.08
+ToxicParser.Precedence.bp_from_binary/1                                                 4538 0.00    324    0.07
+ToxicParser.EventLog.env/3                                                              5086 0.00    324    0.06
+ToxicParser.Grammar.Containers.finalize_tuple_items/1                                   3743 0.00    325    0.09
+ToxicParser.Grammar.Stabs.apply_parens_meta/3                                           4246 0.00    328    0.08
+ToxicParser.Pratt.parse_when_binary_rhs/8                                               1474 0.00    330    0.22
+Toxic.NormalTokenizer.String.handle_heredocs/6                                          3618 0.00    330    0.09
+ToxicParser.Grammar.Strings.has_interpolations?/1                                       7573 0.00    331    0.04
+ToxicParser.Grammar.DoBlocks.attach_do_block/4                                          2153 0.00    332    0.15
+:binary.matches/2                                                                         20 0.00    339   16.95
+ToxicParser.Grammar.Keywords.try_parse_call_args_no_parens_kw/3                         8008 0.00    339    0.04
+anonymous fn/1 in ToxicParser.Grammar.Containers.finalize_tuple_items/1                 9278 0.00    343    0.04
+:unicode_util.gc/1                                                                      8149 0.00    350    0.04
+anonymous fn/2 in ToxicParser.State.line_index/1                                       10079 0.00    352    0.03
+:erlang.iolist_to_binary/1                                                              6688 0.00    366    0.05
+ToxicParser.Grammar.Strings.parse_heredoc/5                                              836 0.00    367    0.44
+anonymous fn/4 in ToxicParser.Grammar.Calls.maybe_nested_call/4                         9364 0.00    368    0.04
+ToxicParser.Grammar.Strings.parse_sigil/5                                                979 0.00    372    0.38
+Toxic.NormalTokenizer.Keyword.valid_do?/1                                              10128 0.00    378    0.04
+ToxicParser.Grammar.EOE.annotate_eoe/2                                                  8711 0.01    385    0.04
+ToxicParser.Pratt.parse_with_min_bp/4                                                  10577 0.01    403    0.04
+Enum.sum/1                                                                             11526 0.01    404    0.04
+ToxicParser.Grammar.Expressions.expr_list/3                                             1499 0.01    409    0.27
+ToxicParser.Grammar.Blocks.block_label?/1                                              10244 0.01    437    0.04
+ToxicParser.Builder.Helpers.literal/1                                                  11196 0.01    449    0.04
+Enum.split/2                                                                            5202 0.01    467    0.09
+ToxicParser.Grammar.Stabs.check_and_collect_stab_body/5                                 2668 0.01    481    0.18
+anonymous fn/1 in ToxicParser.Grammar.CallsPrivate.finalize_call_args_parens_items/1   13250 0.01    486    0.04
+ToxicParser.Grammar.Containers.parse_list_base/3                                        1947 0.01    499    0.26
+ToxicParser.Grammar.Stabs.annotate_last_expr_eoe/2                                      4328 0.01    505    0.12
+:erlang.binary_to_list/1                                                                 928 0.01    510    0.55
+ToxicParser.Grammar.Stabs.extract_trailing_when_guard/1                                 4246 0.01    528    0.12
+ToxicParser.Grammar.Strings.token_to_meta/1                                            11510 0.01    532    0.05
+Toxic.NormalTokenizer.Sigil.tokenize_sigil_contents/6                                   3161 0.01    571    0.18
+anonymous fn/1 in ToxicParser.Grammar.Bitstrings.finalize_bitstring_items/1            16764 0.01    602    0.04
+ToxicParser.Grammar.Strings.parse_interpolation/3                                       1479 0.01    604    0.41
+ToxicParser.Grammar.CallsPrivate.finalize_call_args_parens_items/1                      5428 0.01    609    0.11
+Process.get/1                                                                          16817 0.01    618    0.04
+ToxicParser.Grammar.Calls.parse_paren_args/4                                           15868 0.01    621    0.04
+ToxicParser.Grammar.Blocks.parse_labeled_sections/5                                     2309 0.01    630    0.27
+Enum.split_reverse_list/3                                                              10404 0.01    638    0.06
+Toxic.InterpolationTokenizer.extract_char/9                                             8149 0.01    643    0.08
+Toxic.rewind_to/2                                                                      16817 0.01    651    0.04
+Toxic.NormalTokenizer.Alias.tokenize_alias/10                                          15720 0.01    654    0.04
+:elixir_interpolation.unescape_string/2                                                 8136 0.01    660    0.08
+ToxicParser.Grammar.Delimited.parse_items_rev/7                                        16398 0.01    663    0.04
+ToxicParser.Grammar.Strings.safe_unescape/1                                             8136 0.01    668    0.08
+ToxicParser.Grammar.Keywords.parse_kw_value/5                                           4013 0.01    669    0.17
+ToxicParser.Grammar.Keywords.try_parse_call_args_no_parens_kw_expr/4                    1871 0.01    679    0.36
+ToxicParser.Grammar.EOE.build_eoe_meta/1                                                8711 0.01    684    0.08
+ToxicParser.Grammar.Strings.merge_fragments/1                                           5762 0.01    688    0.12
+ToxicParser.Grammar.DoBlocks.allow_no_parens?/2                                        15559 0.01    689    0.04
+ToxicParser.Context.expr/0                                                             17382 0.01    704    0.04
+ToxicParser.Pratt.parse_no_parens_call_nud_with_min_bp/5                                2912 0.01    711    0.24
+Toxic.NormalTokenizer.String.handle_strings/6                                          14734 0.01    750    0.05
+Enum.join/2                                                                             6544 0.01    772    0.12
+ToxicParser.Grammar.CallsPrivate.parse_call_args_parens_list/3                          5428 0.01    776    0.14
+ToxicParser.Grammar.Keywords.parse_kw_list/6                                            5219 0.01    782    0.15
+Toxic.Driver.Contexts.delimiter_charlist/1                                             21787 0.01    783    0.04
+:erlang.list_to_binary/1                                                                 928 0.01    784    0.84
+ToxicParser.Grammar.Containers.parse_tuple_base/3                                       3743 0.01    791    0.21
+ToxicParser.Grammar.Dots.parse_member/4                                                 4362 0.01    798    0.18
+ToxicParser.Pratt.nud/4                                                                21683 0.01    809    0.04
+ToxicParser.Grammar.Blocks.stop_token?/2                                               10244 0.01    817    0.08
+List.last/2                                                                            20080 0.01    827    0.04
+ToxicParser.Grammar.Blocks.parse_do_block/3                                             2153 0.01    835    0.39
+ToxicParser.Grammar.Stabs.parse_stab_body/4                                             4246 0.01    837    0.20
+ToxicParser.Grammar.Calls.handle_no_parens_arg/6                                        5240 0.01    859    0.16
+ToxicParser.Grammar.Blocks.maybe_annotate_and_consume_eoe/2                             4342 0.01    887    0.20
+Toxic.NormalTokenizer.Operator.handle_unary_op/8                                       10767 0.01    897    0.08
+ToxicParser.Grammar.Stabs.try_parse_stab_clause/4                                       8830 0.01    939    0.11
+ToxicParser.Grammar.Blocks.try_parse_clause/4                                           5626 0.01    960    0.17
+Enum.filter_list/2                                                                     12860 0.01    982    0.08
+ToxicParser.Grammar.Strings.build_string_ast/10                                         6633 0.01   1019    0.15
+anonymous fn/2 in ToxicParser.Pratt.pushback_eoe_tokens/2                              27379 0.01   1023    0.04
+:lists.max/1                                                                           28357 0.01   1033    0.04
+ToxicParser.Grammar.Keywords.parse_kw_pair/5                                            7090 0.01   1053    0.15
+Enum.max/1                                                                             28357 0.01   1056    0.04
+ToxicParser.Grammar.Keywords.try_parse_kw_data/3                                       29198 0.01   1064    0.04
+ToxicParser.Grammar.DoBlocks.starts_no_parens_arg?/1                                   15245 0.01   1089    0.07
+ToxicParser.Grammar.Containers.parse_tuple_args/3                                       3743 0.01   1093    0.29
+ToxicParser.Builder.Helpers.binary/4                                                   28263 0.01   1104    0.04
+Enum."-sum/1-lists^foldl/2-0-"/2                                                       32262 0.01   1115    0.03
+anonymous fn/4 in ToxicParser.Grammar.Containers.parse_tuple_args/3                     9278 0.01   1116    0.12
+ToxicParser.Grammar.Stabs.parse_stab_patterns/4                                         8830 0.01   1126    0.13
+:maps.remove/2                                                                         16817 0.01   1137    0.07
+Map.get/3                                                                              32667 0.02   1159    0.04
+Toxic.NormalTokenizer.Dot.handle_dot/6                                                 17334 0.02   1183    0.07
+ToxicParser.Pratt.build_meta_with_newlines/2                                           28293 0.02   1196    0.04
+ToxicParser.Builder.Meta.total_newlines/3                                              32076 0.02   1202    0.04
+ToxicParser.Grammar.Dots.parse_paren_call/4                                             2950 0.02   1207    0.41
+ToxicParser.Grammar.Stabs.collect_stab_body_exprs/5                                     4442 0.02   1211    0.27
+ToxicParser.Grammar.DoBlocks.handle_identifier/9                                       15559 0.02   1272    0.08
+ToxicParser.Pratt.led_call/6                                                            2960 0.02   1292    0.44
+Enum.predicate_list/3                                                                  18387 0.02   1292    0.07
+Process.get/2                                                                          16817 0.02   1292    0.08
+ToxicParser.Grammar.Blocks.parse_section_items/5                                       10244 0.02   1346    0.13
+ToxicParser.Grammar.Calls.maybe_nested_call/4                                          15868 0.02   1349    0.09
+ToxicParser.Pratt.parse_unary_after_eoe_skip/4                                          2806 0.02   1352    0.48
+Toxic.NormalTokenizer.Dot.tokenize_dot/6                                               17334 0.02   1365    0.08
+:elixir_interpolation.unescape_chars/2                                                  8136 0.02   1388    0.17
+Toxic.NormalTokenizer.Comment.tokenize_comment/2                                       38082 0.02   1401    0.04
+ToxicParser.Grammar.Bitstrings.parse_base/3                                             3088 0.02   1402    0.45
+ToxicParser.Context.no_parens_expr/0                                                   36472 0.02   1421    0.04
+ToxicParser.Grammar.Blocks.handle_section_item/6                                        7935 0.02   1450    0.18
+ToxicParser.Grammar.Calls.parse_no_parens_args/5                                        5406 0.02   1472    0.27
+ToxicParser.Pratt.restrict_no_parens_extension/1                                       31145 0.02   1475    0.05
+Enum.map/2                                                                             40167 0.02   1497    0.04
+ToxicParser.Builder.Meta.closing_meta/3                                                40352 0.02   1506    0.04
+:unicode.characters_to_list/2                                                            164 0.02   1582    9.65
+ToxicParser.Context.container_expr/0                                                   44685 0.02   1583    0.04
+ToxicParser.Builder.Meta.newlines_kv/1                                                 42006 0.02   1593    0.04
+ToxicParser.Grammar.Keywords.try_parse_kw_call/3                                       45619 0.02   1626    0.04
+ToxicParser.Pratt.led_dot/6                                                             4350 0.02   1639    0.38
+Toxic.Driver.Contexts.delimiter_length/1                                               21787 0.02   1665    0.08
+ToxicParser.Grammar.Stabs.parse_stab_pattern_expr/2                                     8824 0.02   1680    0.19
+anonymous fn/4 in ToxicParser.Grammar.Calls.parse_identifier/5                         42842 0.02   1704    0.04
+Toxic.Driver.Contexts.compute_start_info/4                                             21787 0.02   1745    0.08
+Toxic.InterpolationTokenizer.next/6                                                    49352 0.02   1798    0.04
+anonymous fn/4 in ToxicParser.Grammar.CallsPrivate.parse_call_args_parens_list/3       14362 0.02   1799    0.13
+ToxicParser.Grammar.DoBlocks.maybe_parse_no_parens/7                                   15559 0.02   1823    0.12
+anonymous fn/5 in Toxic.Driver.handle_tokenize_result/2                                48206 0.02   1873    0.04
+:unicode.characters_to_binary/1                                                        23549 0.02   1878    0.08
+ToxicParser.Grammar.Stabs.parse_stab_pattern_exprs/4                                    8824 0.02   1892    0.21
+ToxicParser.Builder.Helpers.identifier/2                                               47675 0.03   1897    0.04
+Toxic.Util.characters_to_binary/1                                                      23549 0.03   1904    0.08
+:erlang.make_ref/0                                                                     45134 0.03   1932    0.04
+List.last/1                                                                            54675 0.03   1991    0.04
+ToxicParser.Pratt.parse_paren_call_base/4                                               5508 0.03   2032    0.37
+ToxicParser.Pratt.maybe_attach_do_block/7                                              46178 0.03   2047    0.04
+ToxicParser.Grammar.Keywords.try_parse_call_args_no_parens_kw/4                         8008 0.03   2117    0.26
+Toxic.NormalTokenizer.Keyword.tokenize_keyword_terminator/5                            40162 0.03   2144    0.05
+anonymous fn/4 in ToxicParser.Grammar.Bitstrings.parse_base/3                          16764 0.03   2157    0.13
+Keyword.delete_key/2                                                                   55159 0.03   2173    0.04
+Toxic.drop_checkpoint/1                                                                28317 0.03   2191    0.08
+Keyword.keyword?/1                                                                     57288 0.03   2196    0.04
+ToxicParser.Grammar.Strings.parse_simple_string/5                                       6649 0.03   2211    0.33
+ToxicParser.Grammar.Calls.parse_nested_paren_call/4                                     6504 0.03   2212    0.34
+Map.pop!/2                                                                             28317 0.03   2266    0.08
+Toxic.Util.increase_eol/4                                                              57006 0.03   2315    0.04
+ToxicProfiler.count_ast_nodes/1                                                        34584 0.03   2328    0.07
+:maps.take/2                                                                           28317 0.03   2332    0.08
+ToxicParser.Grammar.Stabs.parse_stab_clause_after_patterns/6                            8830 0.03   2387    0.27
+ToxicParser.Grammar.CallsPrivate.parse_call_args_parens/3                              31257 0.03   2485    0.08
+Toxic.rewind_to/3                                                                      16817 0.03   2503    0.15
+ToxicParser.Pratt.build_binary_op/4                                                    28275 0.03   2507    0.09
+ToxicParser.Pratt.parse_with_min_bp/5                                                  15817 0.03   2559    0.16
+ToxicParser.Pratt.parse/3                                                              21683 0.04   2734    0.13
+Keyword.take/2                                                                         68510 0.04   2762    0.04
+ToxicParser.Pratt.parse_rhs_identifier/6                                               12471 0.04   2774    0.22
+ToxicParser.Grammar.Strings.parse/3                                                    77213 0.04   2785    0.04
+ToxicParser.Pratt.build_meta/1                                                         63436 0.04   2897    0.05
+ToxicParser.Pratt.maybe_nested_call_or_do_block/6                                      13452 0.04   2990    0.22
+ToxicParser.TokenAdapter.pushback/2                                                    46682 0.04   2994    0.06
+ToxicParser.Grammar.Containers.parse/3                                                 82853 0.04   3081    0.04
+ToxicParser.Pratt.ensure_no_parens_extension_opt/1                                     29245 0.04   3110    0.11
+ToxicParser.Grammar.Strings.collect_parts/5                                            19014 0.04   3237    0.17
+ToxicParser.Pratt.literal_to_ast/1                                                     46332 0.04   3258    0.07
+Process.delete/1                                                                       45134 0.05   3432    0.08
+ToxicParser.Grammar.Calls.parse_paren_call/4                                            9364 0.05   3433    0.37
+Process.put/2                                                                          45134 0.05   3446    0.08
+:lists.max/2                                                                           85071 0.05   3497    0.04
+ToxicParser.TokenAdapter.rewind/2                                                      16817 0.05   3563    0.21
+:erlang.erase/1                                                                        45134 0.05   3609    0.08
+:erts_internal.list_to_integer/2                                                       73816 0.05   3612    0.05
+ToxicParser.Pratt.led/5                                                                97609 0.05   3616    0.04
+ToxicParser.Pratt.is_binary_only_op/1                                                  49090 0.05   3659    0.07
+ToxicParser.Grammar.Expressions.expr/3                                                 82983 0.05   3696    0.04
+:erlang.put/2                                                                          45134 0.05   3711    0.08
+Keyword.merge/2                                                                        32877 0.05   3824    0.12
+ToxicParser.Builder.Helpers.from_token/1                                               52265 0.05   3912    0.07
+Toxic.InterpolationTokenizer.extract_nl/8                                              49127 0.05   3945    0.08
+ToxicParser.TokenAdapter.drop_checkpoint/2                                             28317 0.05   3949    0.14
+ToxicParser.Precedence.unary/1                                                         54702 0.05   3969    0.07
+ToxicParser.Grammar.DoBlocks.maybe_handle/9                                            98097 0.05   4111    0.04
+ToxicParser.Identifiers.classify/1                                                    111182 0.06   4186    0.04
+ToxicParser.Pratt.parse_rhs/6                                                          31145 0.06   4454    0.14
+ToxicParser.Grammar.Delimited.parse_comma_separated/6                                  17020 0.06   4695    0.28
+ToxicParser.Builder.Meta.consume_closing/2                                             32076 0.07   5041    0.16
+ToxicParser.Grammar.Keywords.try_parse_kw_data/4                                       29198 0.07   5483    0.19
+ToxicParser.Grammar.DoBlocks.attach_if_do/6                                            82538 0.07   5591    0.07
+:erlang.list_to_integer/1                                                              73696 0.08   5693    0.08
+Toxic.NormalTokenizer.Number.reverse_number/3                                         151831 0.08   5748    0.04
+ToxicParser.Builder.Helpers.token_meta/1                                              133643 0.08   5850    0.04
+ToxicParser.Context.allow_do_block?/1                                                 150543 0.08   5871    0.04
+Toxic.Util.emit_with_eol/5                                                            151201 0.08   5973    0.04
+Toxic.NormalTokenizer.Terminator.terminator/1                                         167361 0.08   6011    0.04
+ToxicParser.Pratt.pushback_eoe_tokens/2                                               140777 0.08   6257    0.04
+ToxicParser.Pratt.parse_binary_rhs/9                                                   26865 0.08   6282    0.23
+ToxicParser.Pratt.peek_past_eoe/1                                                     176687 0.09   6457    0.04
+ToxicParser.Grammar.EOE.skip_count_newlines/2                                          81282 0.09   6623    0.08
+Keyword.put/3                                                                          73701 0.09   6704    0.09
+ToxicParser.Pratt.nud_literal_or_unary/6                                               51896 0.09   6804    0.13
+ToxicParser.Grammar.Blocks.parse/3                                                     83243 0.09   6856    0.08
+ToxicParser.NoParens.can_start_no_parens_arg?/1                                        98583 0.09   6862    0.07
+ToxicParser.Pratt.led_binary/9                                                         28357 0.09   6999    0.25
+Toxic.fetch_tokens_from_driver/3                                                      168933 0.09   7015    0.04
+ToxicParser.Grammar.Strings.parse/5                                                    82788 0.09   7054    0.09
+ToxicParser.Grammar.EOE.skip/1                                                         89849 0.09   7069    0.08
+anonymous fn/2 in Keyword.take/2                                                       96113 0.09   7089    0.07
+Toxic.checkpoint/1                                                                     45134 0.09   7138    0.16
+ToxicParser.Grammar.Containers.parse/4                                                 84295 0.10   7262    0.09
+ToxicParser.Builder.Meta.closing_meta/5                                                42006 0.10   7342    0.17
+:unicode.characters_to_binary/2                                                        23549 0.10   7410    0.31
+Toxic.NormalTokenizer.eol/4                                                           180862 0.10   7461    0.04
+Toxic.InterpolationTokenizer.strip_horizontal_space/3                                 212019 0.11   7995    0.04
+Toxic.NormalTokenizer.Number.tokenize_number/4                                         77475 0.11   8348    0.11
+ToxicParser.Grammar.CallsPrivate.try_single_no_parens_arg/3                            31232 0.11   8431    0.27
+ToxicParser.Grammar.CallsPrivate.parse_paren_args/4                                    32076 0.11   8441    0.26
+ToxicParser.Pratt.bp/1                                                                118406 0.11   8628    0.07
+ToxicParser.Grammar.Keywords.try_parse_kw_call/4                                       45619 0.12   8795    0.19
+Enum.reduce/3                                                                         239930 0.12   8994    0.04
+ToxicParser.TokenAdapter.checkpoint/1                                                  45134 0.12   9279    0.21
+Toxic.NormalTokenizer.Keyword.tokenize_keyword/8                                       74532 0.12   9408    0.13
+:erlang.setelement/3                                                                  188953 0.12   9449    0.05
+Toxic.NormalTokenizer.handle_space_sensitive_tokens/5                                 252183 0.12   9480    0.04
+Toxic.Util.no_token/4                                                                 252227 0.13   9945    0.04
+:lists.keymember/3                                                                    228370 0.13  10147    0.04
+ToxicParser.Pratt.nud/5                                                                54462 0.14  10268    0.19
+Enum."-map/2-lists^map/1-1-"/2                                                        118540 0.14  10449    0.09
+ToxicParser.Grammar.EOE.skip_newlines_only/2                                          129238 0.14  10539    0.08
+anonymous fn/3 in Keyword.merge/2                                                     150539 0.14  10824    0.07
+Keyword.has_key?/2                                                                    150539 0.14  10965    0.07
+ToxicParser.Grammar.Calls.parse/3                                                      74236 0.15  11065    0.15
+Toxic.Util.previous_was_eol/1                                                         299186 0.15  11449    0.04
+ToxicParser.Grammar.Strings.trim_chars/6                                              323354 0.15  11463    0.04
+Toxic.NormalTokenizer.Operator.handle_op/8                                            104001 0.15  11544    0.11
+List.keyfind/3                                                                        357119 0.17  12548    0.04
+ToxicParser.Grammar.Delimited.maybe_skip_eoe/3                                         90130 0.17  12672    0.14
+Keyword."-take/2-lists^filter/1-1-"/2                                                 164623 0.17  13101    0.08
+ToxicParser.Grammar.Calls.parse_identifier/5                                           66373 0.18  13357    0.20
+Toxic.NormalTokenizer.maybe_warn_for_ambiguous_bang_before_equals/6                   364515 0.18  13412    0.04
+ToxicParser.Pratt.nud_identifier_or_literal/6                                          49090 0.18  13423    0.27
+ToxicParser.Grammar.Keywords.starts_kw?/1                                             182832 0.18  13468    0.07
+Toxic.NormalTokenizer.Identifier.check_call_identifier/6                              348995 0.18  13782    0.04
+Keyword.get/2                                                                         392408 0.19  14039    0.04
+Toxic.NormalTokenizer.tokenize_eol/4                                                  180862 0.19  14467    0.08
+Toxic.Scope.track_ascii/2                                                             396851 0.19  14789    0.04
+ToxicParser.TokenAdapter.consume_fuel/1                                               387184 0.22  16400    0.04
+ToxicParser.Grammar.Expressions.parse_with_layers/3                                    82983 0.22  16600    0.20
+ToxicParser.Grammar.Delimited.parse_items_rev/8                                        45367 0.22  16601    0.37
+:elixir_interpolation.unescape_chars/3                                                428145 0.22  16817    0.04
+Keyword."-merge/2-lists^filter/1-0-"/2                                                171910 0.22  16916    0.10
+Toxic.NormalTokenizer.Identifier.maybe_keyword?/1                                     439202 0.23  17092    0.04
+Toxic.Util.previous_was_dot?/1                                                        455863 0.23  17202    0.04
+Toxic.NormalTokenizer.Identifier.keyword_or_unsafe_to_atom/5                          471383 0.26  19553    0.04
+ToxicParser.Pratt.led_dispatch/9                                                      176667 0.27  20445    0.12
+ToxicParser.Pratt.led/6                                                               176687 0.28  21034    0.12
+ToxicParser.Precedence.binary/1                                                       302417 0.29  22061    0.07
+ToxicParser.Pratt.peek_past_eoe/3                                                     204066 0.30  22553    0.11
+Toxic.NormalTokenizer.Terminator.handle_terminator/6                                  360179 0.34  25590    0.07
+List.keyfind/4                                                                        357119 0.34  25937    0.07
+:lists.split/2                                                                        340110 0.35  26356    0.08
+ToxicParser.Grammar.DoBlocks.maybe_do_block/5                                          98097 0.38  28668    0.29
+Toxic.NormalTokenizer.Terminator.check_terminator/3                                   360179 0.38  28790    0.08
+Toxic.refill_buffer/1                                                                 168933 0.42  31586    0.19
+String.Tokenizer.tokenize/1                                                           471527 0.44  33218    0.07
+:lists.reverse/1                                                                      476605 0.45  34345    0.07
+String.Tokenizer.validate/2                                                           471383 0.47  35687    0.08
+ToxicParser.TokenAdapter.next/1                                                       387184 0.48  36738    0.09
+Toxic.Util.unsafe_to_atom/4                                                           400012 0.50  37715    0.09
+Enum.member?/2                                                                        612196 0.59  44776    0.07
+Toxic.Util.emit/5                                                                    1113532 0.62  46883    0.04
+anonymous fn/2 in Toxic.refill_buffer/1                                              1350912 0.63  47488    0.04
+:queue.in/2                                                                          1350912 0.67  51064    0.04
+:lists.split/3                                                                       1017880 0.68  51499    0.05
+Toxic.start_pos/1                                                                    1350912 0.68  51751    0.04
+Enum.with_index/2                                                                    1519957 0.69  52312    0.03
+Enum.flat_map/2                                                                      1519957 0.71  53609    0.04
+Enum.with_index/1                                                                    1519957 0.73  55344    0.04
+ToxicParser.TokenAdapter.delimiter_role/1                                            1419260 0.74  56242    0.04
+:lists.member/2                                                                      1123470 0.74  56332    0.05
+ToxicParser.TokenAdapter.delimiter/1                                                 1419260 0.74  56406    0.04
+ToxicParser.TokenAdapter.synthesized?/1                                              1419260 0.75  57266    0.04
+Access.get/2                                                                         1641767 0.77  58042    0.04
+:queue.peek/1                                                                        1419380 0.77  58403    0.04
+ToxicParser.TokenAdapter.newline_count/1                                             1482203 0.79  59609    0.04
+Toxic.Util.strip_horizontal_space/2                                                  1732041 0.83  62852    0.04
+anonymous fn/2 in Toxic.Driver.current_terminators/1                                 1639381 0.87  66131    0.04
+Toxic.NormalTokenizer.Identifier.tokenize_identifier/5                                471527 0.89  67331    0.14
+List.wrap/1                                                                          1709925 0.89  67642    0.04
+:lists.reverse/2                                                                     1252977 0.91  69001    0.06
+Toxic.InterpolationTokenizer.next/9                                                  1832896 0.92  69515    0.04
+ToxicParser.TokenAdapter.peek/1                                                      1660342 0.93  70257    0.04
+Toxic.Driver.return_token/3                                                          1350840 0.96  72940    0.05
+Toxic.Driver.Deferrals.flush/2                                                        685067 0.97  73967    0.11
+Keyword.get/3                                                                        1040669 1.00  76231    0.07
+Toxic.Driver.Deferrals.append/3                                                       601036 1.11  84176    0.14
+:erlang.list_to_atom/1                                                                902385 1.26  95716    0.11
+String.Tokenizer.continue/6                                                          2575417 1.29  97704    0.04
+:queue.out/1                                                                         1588293 1.35 102669    0.06
+Toxic.current_terminators/1                                                          1419380 1.36 103282    0.07
+ToxicParser.TokenAdapter.normalize_token/3                                           1419260 1.43 108232    0.08
+Enum."-reduce/3-lists^foldl/2-0-"/3                                                  1676526 1.44 109124    0.07
+Toxic.terms_at_current_position/1                                                    1419380 1.49 113394    0.08
+ToxicParser.Position.to_location/3                                                   2838520 1.50 114045    0.04
+Access.get/3                                                                         1641767 1.59 120653    0.07
+Map.update!/3                                                                        1419260 1.59 120689    0.09
+ToxicParser.TokenAdapter.maybe_cache/3                                               1419260 1.59 120847    0.09
+Enum.reverse/1                                                                       3229537 1.66 125829    0.04
+anonymous fn/2 in ToxicParser.TokenAdapter.update_state/6                            1419260 1.98 150475    0.11
+:lists.keyfind/3                                                                     3039555 2.05 155812    0.05
+Toxic.next/1                                                                         1588293 2.16 163654    0.10
+Toxic.Driver.handle_tokenize_result/2                                                1645210 2.22 168277    0.10
+Enum.with_index_list/2                                                               3159338 2.25 170599    0.05
+Enum.flat_map_list/2                                                                 3159338 2.25 171066    0.05
+ToxicParser.TokenAdapter.update_state/6                                              1419260 2.37 179460    0.13
+Toxic.fetch_tokens_from_driver/6                                                     1519845 2.64 200478    0.13
+Toxic.NormalTokenizer.next/5                                                         1597004 2.91 220427    0.14
+ToxicParser.TokenAdapter.fetch_next/2                                                1419360 3.32 251517    0.18
+Toxic.Driver.current_terminators/1                                                   1519957 3.39 257451    0.17
+ToxicParser.TokenAdapter.metadata/4                                                  1419260 4.56 346113    0.24
+:erlang.++/2                                                                         8001428 5.05 382811    0.05
+Toxic.Driver.next/2                                                                  2954001 5.24 397437    0.13
+
+Profile done over 552 matching functions

@@ -1181,7 +1181,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 2_000_000,
               max_shrinking_steps: 50
             ) do
-        capture_io(:standard_error, fn ->run_comparison(context, code) end)
+        run_comparison(context, code)
       end
     end
   end
