@@ -277,16 +277,30 @@ defmodule ToxicParser.Grammar.Expressions do
   # Convert string parts to binary AST parts
   # Each part is either {:fragment, content} or {:interpolation, ast}
   # The interpolation ast already has the full structure with to_string and ::binary
-  defp parts_to_binary(parts, _kind, _start_meta) do
+  defp parts_to_binary(parts, kind, start_meta) do
     Enum.flat_map(parts, fn
       {:fragment, content} ->
         if content == "", do: [], else: [content]
 
       {:interpolation, ast} ->
-        # The interpolation ast already contains the full ::binary structure
-        [ast]
+        # Keyword keys always become binaries. Charlist interpolations need ::binary.
+        [normalize_keyword_interpolation(ast, kind, start_meta)]
     end)
   end
+
+  defp normalize_keyword_interpolation({:"::", _meta, _parts} = ast, _kind, _start_meta), do: ast
+
+  defp normalize_keyword_interpolation(ast, kind, start_meta)
+       when kind in [:charlist, :heredoc_charlist] do
+    meta = interpolation_meta(ast, start_meta)
+    {:"::", meta, [ast, {:binary, meta, nil}]}
+  end
+
+  defp normalize_keyword_interpolation(ast, _kind, _start_meta), do: ast
+
+  defp interpolation_meta({{:., meta, _}, _call_meta, _args}, _fallback), do: meta
+  defp interpolation_meta({_fun, meta, _args}, _fallback), do: meta
+  defp interpolation_meta(_ast, fallback), do: fallback
 
   # Determine keyword value context for quoted keyword keys like "a":
   #

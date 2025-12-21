@@ -578,7 +578,9 @@ defmodule ToxicParser.Pratt do
                        checkpoint_state,
                        operand_ctx,
                        log,
-                       operand_min_bp, unary_operand: true) do
+                       operand_min_bp,
+                       unary_operand: true
+                     ) do
                 operand_result =
                   case TokenAdapter.peek(state_after_base) do
                     # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
@@ -619,7 +621,9 @@ defmodule ToxicParser.Pratt do
                                      state_full,
                                      operand_ctx,
                                      log,
-                                     0, unary_operand: true) do
+                                     0,
+                                     unary_operand: true
+                                   ) do
                               {:ok, operand_full, state_full, log}
                             end
 
@@ -729,7 +733,9 @@ defmodule ToxicParser.Pratt do
                      checkpoint_state,
                      operand_context,
                      log,
-                     operand_min_bp, unary_operand: true) do
+                     operand_min_bp,
+                     unary_operand: true
+                   ) do
               operand_result =
                 case TokenAdapter.peek(state_after_base) do
                   {:ok, next_tok, _} ->
