@@ -151,32 +151,6 @@ defmodule ToxicParser.Pratt do
   end
 
   @doc """
-  Parses a base expression with dot operator support for dotted aliases.
-  Used for struct names like `%Foo.Bar{}` where we need to parse the full
-  alias chain (Foo.Bar) but NOT consume {} as tuple/call arguments.
-
-  Only processes dot_op for alias chaining. Does not handle:
-  - Paren calls: foo.bar()
-  - No-parens calls: foo.bar arg
-  - Bracket access: foo.bar[x]
-  - Do-blocks: foo.bar do...end
-  """
-  @spec parse_base_with_dots(State.t(), context(), EventLog.t()) :: result()
-  def parse_base_with_dots(%State{} = state, %Context{} = context, %EventLog{} = log) do
-    with {:ok, token, state} <- TokenAdapter.next(state),
-         {:ok, ast, state, log} <-
-           nud(token, state, context, log,
-             min_bp: 10000,
-             allow_containers: false
-           ) do
-      led_dot_only(ast, state, log, context)
-    else
-      {:eof, state} -> {:error, :unexpected_eof, state, log}
-      other -> Result.normalize_error(other, log)
-    end
-  end
-
-  @doc """
   Parses an expression base with dots and paren calls, stopping at `{`.
   Used for struct names like `%Foo.Bar{}` and `%unquote(struct){}`.
   """
@@ -2371,59 +2345,6 @@ defmodule ToxicParser.Pratt do
     case Brackets.parse_bracket_arg_no_skip(state, log) do
       {:ok, arg, state, log} -> {:ok, [arg | acc], state, log}
       {:error, reason, state, log} -> {:error, reason, state, log}
-    end
-  end
-
-  # Specialized led that ONLY handles dot operator for alias chaining.
-  # Used by parse_base_with_dots for struct names like %Foo.Bar{}.
-  # Does NOT handle paren calls, no-parens calls, bracket access, or do-blocks.
-  defp led_dot_only(left, state, log, context) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :dot_op} = _dot_tok, _} ->
-        {:ok, dot_tok, state} = TokenAdapter.next(state)
-        dot_meta = build_meta(dot_tok.metadata)
-
-        # Parse the RHS of dot - must be an alias or identifier
-        # Pass dot_meta for curly calls where the call metadata uses the dot's position
-        with {:ok, rhs, state, log} <- Dots.parse_member(state, context, log, dot_meta) do
-          combined_result =
-            case rhs do
-              # Alias on RHS with bracket access (ignored here, just unwrap)
-              {{:__aliases__, rhs_meta, [rhs_alias]}, :allows_bracket} ->
-                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
-
-              # Alias on RHS - build combined __aliases__ (dot_alias rule)
-              {:__aliases__, rhs_meta, [rhs_alias]} ->
-                build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
-
-              # Paren call on RHS (tokenized as dot_paren_identifier)
-              # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
-              {name, meta, args} when is_atom(name) and is_list(args) ->
-                {:ok, {{:., dot_meta, [left, name]}, meta, args}}
-
-              # Simple identifier: {member_atom, member_meta}
-              {member, member_meta} when is_atom(member) ->
-                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
-
-              # Other AST node
-              other ->
-                {:ok, {:., dot_meta, [left, other]}}
-            end
-
-          # Handle error from build_dot_alias (e.g., atom.Alias)
-          case combined_result do
-            {:ok, combined} ->
-              # Continue to handle chained dots: Foo.Bar.Baz
-              led_dot_only(combined, state, log, context)
-
-            {:error, reason} ->
-              {:error, reason, state, log}
-          end
-        end
-
-      _ ->
-        # Not a dot operator - return what we have
-        {:ok, left, state, log}
     end
   end
 

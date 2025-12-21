@@ -715,6 +715,283 @@ defmodule ToxicParser.Property.TokenCompiler do
     {[map_token] ++ pairs_tokens ++ [close_token], layout}
   end
 
+  # Map update with keyword syntax: %{base | key: value}
+  defp do_to_tokens({:map_update, {:kw, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    # Opening %{
+    {map_meta, layout} = TokenLayout.space_before(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    # Base expression (stuck to %{)
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    # Pipe operator with optional newlines
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    # Keyword pairs
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[map_token] ++ base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Map update with arrow syntax: %{base | key => value}
+  defp do_to_tokens({:map_update, {:assoc, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    # Opening %{
+    {map_meta, layout} = TokenLayout.space_before(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    # Base expression (stuck to %{)
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    # Pipe operator with optional newlines
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    # Association pairs
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[map_token] ++ base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Struct Literals
+  # ---------------------------------------------------------------------------
+
+  # Empty struct: %Foo{}
+  defp do_to_tokens({:struct, struct_name, eol_count, []}, layout, opts) do
+    # % token
+    {percent_meta, layout} = TokenLayout.space_before(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    # Struct name (stuck to %)
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    # Optional eol after name
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    # Empty curly braces
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token, close_token], layout}
+  end
+
+  # Struct with keyword syntax: %Foo{key: value}
+  defp do_to_tokens({:struct, struct_name, eol_count, {:kw, pairs}}, layout, opts) do
+    # % token
+    {percent_meta, layout} = TokenLayout.space_before(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    # Struct name (stuck to %)
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    # Optional eol after name
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    # Opening curly
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    # Keyword pairs
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token] ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Struct with arrow syntax: %Foo{key => value}
+  defp do_to_tokens({:struct, struct_name, eol_count, {:assoc, pairs}}, layout, opts) do
+    # % token
+    {percent_meta, layout} = TokenLayout.space_before(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    # Struct name (stuck to %)
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    # Optional eol after name
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    # Opening curly
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    # Association pairs
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token] ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Struct update with keyword: %Foo{s | key: value}
+  defp do_to_tokens({:struct, struct_name, eol_count, {:update_kw, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    # % token
+    {percent_meta, layout} = TokenLayout.space_before(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    # Struct name (stuck to %)
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    # Optional eol after name
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    # Opening curly
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    # Base expression (stuck to {)
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    # Pipe operator with optional newlines
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {pipe_eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    # Keyword pairs
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token] ++ base_tokens ++ [pipe_token] ++ pipe_eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Struct update with arrow: %Foo{s | key => value}
+  defp do_to_tokens({:struct, struct_name, eol_count, {:update_assoc, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    # % token
+    {percent_meta, layout} = TokenLayout.space_before(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    # Struct name (stuck to %)
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    # Optional eol after name
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    # Opening curly
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    # Base expression (stuck to {)
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    # Pipe operator with optional newlines
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {pipe_eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    # Association pairs
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token] ++ base_tokens ++ [pipe_token] ++ pipe_eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Anonymous Struct Maps (expr.%{})
+  # ---------------------------------------------------------------------------
+
+  # Empty anonymous struct: expr.%{}
+  defp do_to_tokens({:anon_struct, base_expr, dot_newlines, []}, layout, opts) do
+    # Base expression
+    {base_tokens, layout} = do_to_tokens(base_expr, layout, opts)
+
+    # Dot (stuck to base)
+    {dot_meta, layout} = TokenLayout.stick_right(layout, ".", nil)
+    dot_token = {:., dot_meta}
+
+    # Optional eol after dot
+    {eol_tokens, layout} = compile_newlines(dot_newlines, layout)
+
+    # %{} (empty map token)
+    {map_meta, layout} =
+      if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{}", nil), else: TokenLayout.stick_right(layout, "%{}", nil)
+    map_token = {:%{}, map_meta}
+
+    {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token], layout}
+  end
+
+  # Anonymous struct with keyword syntax: expr.%{key: value}
+  defp do_to_tokens({:anon_struct, base_expr, dot_newlines, {:kw, pairs}}, layout, opts) do
+    # Base expression
+    {base_tokens, layout} = do_to_tokens(base_expr, layout, opts)
+
+    # Dot (stuck to base)
+    {dot_meta, layout} = TokenLayout.stick_right(layout, ".", nil)
+    dot_token = {:., dot_meta}
+
+    # Optional eol after dot
+    {eol_tokens, layout} = compile_newlines(dot_newlines, layout)
+
+    # %{ (map open)
+    {map_meta, layout} =
+      if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{", nil), else: TokenLayout.stick_right(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    # Keyword pairs
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token] ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Anonymous struct with arrow syntax: expr.%{key => value}
+  defp do_to_tokens({:anon_struct, base_expr, dot_newlines, {:assoc, pairs}}, layout, opts) do
+    # Base expression
+    {base_tokens, layout} = do_to_tokens(base_expr, layout, opts)
+
+    # Dot (stuck to base)
+    {dot_meta, layout} = TokenLayout.stick_right(layout, ".", nil)
+    dot_token = {:., dot_meta}
+
+    # Optional eol after dot
+    {eol_tokens, layout} = compile_newlines(dot_newlines, layout)
+
+    # %{ (map open)
+    {map_meta, layout} =
+      if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{", nil), else: TokenLayout.stick_right(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    # Association pairs
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    # Closing curly
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token] ++ pairs_tokens ++ [close_token], layout}
+  end
+
   # ---------------------------------------------------------------------------
   # Bitstrings
   # ---------------------------------------------------------------------------
@@ -2497,6 +2774,100 @@ defmodule ToxicParser.Property.TokenCompiler do
     {[map_token] ++ pairs_tokens ++ [close_token], layout}
   end
 
+  # Map update stuck to previous token
+  defp compile_arg_with_adhesion({:map_update, {:kw, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    {map_meta, layout} = TokenLayout.stick_right(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[map_token] ++ base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  defp compile_arg_with_adhesion({:map_update, {:assoc, base_expr, pipe_newlines, pairs}}, layout, opts) do
+    {map_meta, layout} = TokenLayout.stick_right(layout, "%{", nil)
+    map_token = {:%{}, map_meta}
+
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[map_token] ++ base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens ++ [close_token], layout}
+  end
+
+  # Struct literals stuck to previous token
+  defp compile_arg_with_adhesion({:struct, struct_name, eol_count, body}, layout, opts) do
+    {percent_meta, layout} = TokenLayout.stick_right(layout, "%", nil)
+    percent_token = {:%, percent_meta}
+
+    {name_tokens, layout} = compile_arg_with_adhesion(struct_name, layout, opts)
+
+    {eol_tokens, layout} = compile_newlines(eol_count, layout)
+
+    {open_meta, layout} =
+      if eol_count > 0, do: TokenLayout.space_before(layout, "{", nil), else: TokenLayout.stick_right(layout, "{", nil)
+    open_token = {:"{", open_meta}
+
+    {body_tokens, layout} = compile_struct_body(body, layout, opts)
+
+    {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+    close_token = {:"}", close_meta}
+
+    {[percent_token] ++ name_tokens ++ eol_tokens ++ [open_token] ++ body_tokens ++ [close_token], layout}
+  end
+
+  # Anonymous struct stuck to previous token
+  defp compile_arg_with_adhesion({:anon_struct, base_expr, dot_newlines, body}, layout, opts) do
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    {dot_meta, layout} = TokenLayout.stick_right(layout, ".", nil)
+    dot_token = {:., dot_meta}
+
+    {eol_tokens, layout} = compile_newlines(dot_newlines, layout)
+
+    case body do
+      [] ->
+        {map_meta, layout} =
+          if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{}", nil), else: TokenLayout.stick_right(layout, "%{}", nil)
+        map_token = {:%{}, map_meta}
+        {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token], layout}
+
+      {:kw, pairs} ->
+        {map_meta, layout} =
+          if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{", nil), else: TokenLayout.stick_right(layout, "%{", nil)
+        map_token = {:%{}, map_meta}
+        {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+        {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+        close_token = {:"}", close_meta}
+        {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token] ++ pairs_tokens ++ [close_token], layout}
+
+      {:assoc, pairs} ->
+        {map_meta, layout} =
+          if dot_newlines > 0, do: TokenLayout.space_before(layout, "%{", nil), else: TokenLayout.stick_right(layout, "%{", nil)
+        map_token = {:%{}, map_meta}
+        {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+        {close_meta, layout} = TokenLayout.stick_right(layout, "}", nil)
+        close_token = {:"}", close_meta}
+        {base_tokens ++ [dot_token] ++ eol_tokens ++ [map_token] ++ pairs_tokens ++ [close_token], layout}
+    end
+  end
+
   # Bitstring stuck to previous token
   defp compile_arg_with_adhesion({:bitstring, []}, layout, _opts) do
     {open_meta, layout} = TokenLayout.stick_right(layout, "<<", nil)
@@ -3685,6 +4056,45 @@ defmodule ToxicParser.Property.TokenCompiler do
     {rest_tokens, layout} = compile_remaining_assoc_pairs(rest, layout, opts)
 
     {[comma_token] ++ key_tokens ++ [assoc_token] ++ value_tokens ++ rest_tokens, layout}
+  end
+
+  # ===========================================================================
+  # Helper: compile_struct_body (for struct literals)
+  # ===========================================================================
+
+  # Compile struct body based on body type
+  defp compile_struct_body([], layout, _opts), do: {[], layout}
+
+  defp compile_struct_body({:kw, pairs}, layout, opts) do
+    compile_kw_pairs(pairs, layout, opts)
+  end
+
+  defp compile_struct_body({:assoc, pairs}, layout, opts) do
+    compile_assoc_pairs(pairs, layout, opts)
+  end
+
+  defp compile_struct_body({:update_kw, base_expr, pipe_newlines, pairs}, layout, opts) do
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    {pairs_tokens, layout} = compile_kw_pairs(pairs, layout, opts)
+
+    {base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens, layout}
+  end
+
+  defp compile_struct_body({:update_assoc, base_expr, pipe_newlines, pairs}, layout, opts) do
+    {base_tokens, layout} = compile_arg_with_adhesion(base_expr, layout, opts)
+
+    {pipe_meta, layout} = TokenLayout.space_before(layout, "|", nil)
+    pipe_token = {:pipe_op, pipe_meta, :|}
+    {eol_tokens, layout} = compile_newlines(pipe_newlines, layout)
+
+    {pairs_tokens, layout} = compile_assoc_pairs(pairs, layout, opts)
+
+    {base_tokens ++ [pipe_token] ++ eol_tokens ++ pairs_tokens, layout}
   end
 
   # ===========================================================================

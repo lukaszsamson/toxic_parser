@@ -12,28 +12,6 @@ defmodule ToxicParser.Grammar.Dots do
           | {:error, term(), State.t(), EventLog.t()}
 
   @doc """
-  Parse a dot chain starting from an existing left-hand AST.
-  Expects the current peek token to be a dot operator.
-  """
-  @spec parse_chain(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_chain(left, %State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    {:ok, dot, state} = TokenAdapter.next(state)
-    dot_meta = Builder.Helpers.token_meta(dot.metadata)
-
-    with {:ok, rhs, state, log} <- parse_member(state, ctx, log, dot_meta) do
-      combined = Builder.Helpers.dot(left, rhs)
-
-      case TokenAdapter.peek(state) do
-        {:ok, %{kind: :dot_op}, _} ->
-          parse_chain(combined, state, ctx, log)
-
-        _ ->
-          {:ok, combined, state, log}
-      end
-    end
-  end
-
-  @doc """
   Parse a dot call `expr.(...)` when the current token is `:dot_call_op`.
   """
   @spec parse_dot_call(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()

@@ -1113,6 +1113,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("fn (a: 1) -> foo() end")
       assert_conforms("fn (a:\n1, b: :ok) -> foo() end")
       assert_conforms("fn ('a': 1) -> foo() end")
+      assert_conforms("fn ('a\#{a}': 1) -> foo() end")
       assert_conforms("fn (a: b c, d) -> foo() end")
       # stab_parens_many -> open_paren call_args_no_parens_many close_paren
       assert_conforms("fn (x, a: 1) -> foo() end")
@@ -1248,6 +1249,7 @@ defmodule ToxicParser.ConformanceTest do
       # stab_parens_many -> open_paren call_args_no_parens_kw close_paren
       assert_conforms("((a: 1) -> foo())")
       assert_conforms("(('a': 1) -> foo())")
+      assert_conforms("(('a\#{s}': 1) -> foo())")
       assert_conforms("((a:\n1, b: :ok) -> foo())")
       assert_conforms("((a: b c, d) -> foo())")
       # stab_parens_many -> open_paren call_args_no_parens_many close_paren
@@ -2641,6 +2643,7 @@ defmodule ToxicParser.ConformanceTest do
     test "stab_parens_many with guards and nesting" do
       assert_conforms("fn (a, b, c: 1) when guard -> body end")
       assert_conforms("fn (a, b, 'c': 1) when guard -> body end")
+      assert_conforms("fn (a, b, 'c\#{p}': 1) when guard -> body end")
       assert_conforms("fn (a, b, c: 1, 'd': 1) when guard -> body end")
       assert_conforms("fn (a, b, 'c': 1, d: 1) when guard -> body end")
       assert_conforms("fn ((nested)) -> body end")

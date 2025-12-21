@@ -244,6 +244,11 @@ defmodule ToxicParser.TokenGrammarGenerators do
     {:pipe_op, :|>}
   ]
 
+  # Operators that can be used as function identifiers (op_identifier) in calls
+  # Excludes `when` because it cannot be used as a call like `when(x: 1)` or `when x: 1`
+  # The `when` keyword only works as a binary operator in guard contexts
+  @call_op_identifiers Enum.filter(@binary_ops, fn {_, op} -> op != :when end)
+
   # Fallback literals when budget is exhausted
   @fallback_literals [nil, 0, :ok]
 
@@ -634,6 +639,50 @@ defmodule ToxicParser.TokenGrammarGenerators do
     end)
   end
 
+  @doc """
+  Generate an anonymous struct map: expr.%{} or expr.%{args}
+
+  Per grammar lines 482-483:
+  - dot_alias -> matched_expr dot_op open_curly '}'
+  - dot_alias -> matched_expr dot_op open_curly container_args close_curly
+
+  This represents dynamic struct construction like: some_module.%{field: value}
+  """
+  def gen_anonymous_struct(state) do
+    child_state = GrammarTree.decr_depth(state)
+
+    StreamData.bind(gen_simple_expr(), fn base_expr ->
+      StreamData.bind(gen_newlines(), fn dot_newlines ->
+        StreamData.frequency([
+          # Empty anonymous struct: expr.%{}
+          {1, StreamData.constant({:anon_struct, base_expr, dot_newlines, []})},
+          # Anonymous struct with keyword args: expr.%{key: value}
+          {3, gen_anon_struct_kw(child_state, base_expr, dot_newlines)},
+          # Anonymous struct with arrow args: expr.%{key => value}
+          {1, gen_anon_struct_assoc(child_state, base_expr, dot_newlines)}
+        ])
+      end)
+    end)
+  end
+
+  defp gen_anon_struct_kw(state, base_expr, dot_newlines) do
+    StreamData.bind(StreamData.integer(1..3), fn count ->
+      gen_kw_pairs(state, count)
+      |> StreamData.map(fn pairs ->
+        {:anon_struct, base_expr, dot_newlines, {:kw, pairs}}
+      end)
+    end)
+  end
+
+  defp gen_anon_struct_assoc(state, base_expr, dot_newlines) do
+    StreamData.bind(StreamData.integer(1..3), fn count ->
+      gen_assoc_pairs(state, count)
+      |> StreamData.map(fn pairs ->
+        {:anon_struct, base_expr, dot_newlines, {:assoc, pairs}}
+      end)
+    end)
+  end
+
   # ===========================================================================
   # Generator: binary operators
   # ===========================================================================
@@ -648,11 +697,13 @@ defmodule ToxicParser.TokenGrammarGenerators do
     end)
   end
 
-  # Generate newline count (0 most of the time, occasionally 1)
+  # Generate newline count (0 most of the time, occasionally 1-3)
+  # Enhanced to better match grammar's next_is_eol() semantics
   defp gen_newlines do
     StreamData.frequency([
-      {8, StreamData.constant(0)},
-      {2, StreamData.constant(1)}
+      {7, StreamData.constant(0)},
+      {2, StreamData.constant(1)},
+      {1, StreamData.integer(2..3)}
     ])
   end
 
@@ -1130,8 +1181,9 @@ defmodule ToxicParser.TokenGrammarGenerators do
         # Dotted operator identifier: Expr.+ bar (rare)
         {1, gen_dot_op_identifier_for_call(child_state)},
         # Operator-as-identifier: +/2, -/2 (op_identifier)
+        # Uses @call_op_identifiers which excludes `when` (can't be a call identifier)
         {1,
-         StreamData.bind(StreamData.member_of(@binary_ops), fn {_, op} ->
+         StreamData.bind(StreamData.member_of(@call_op_identifiers), fn {_, op} ->
            StreamData.constant({:op_identifier, op})
          end)}
       ])
@@ -1203,8 +1255,9 @@ defmodule ToxicParser.TokenGrammarGenerators do
         ])
       end
 
+    # Uses @call_op_identifiers to exclude `when`
     StreamData.bind(left_gen, fn left ->
-      StreamData.bind(StreamData.member_of(@binary_ops), fn {_, op} ->
+      StreamData.bind(StreamData.member_of(@call_op_identifiers), fn {_, op} ->
         StreamData.constant({:dot_op_identifier, left, op})
       end)
     end)
@@ -1982,10 +2035,11 @@ defmodule ToxicParser.TokenGrammarGenerators do
     child_state = GrammarTree.decr_depth(state)
 
     # dot_op_identifier: op_identifier | matched_expr dot_op op_identifier
+    # Uses @call_op_identifiers to exclude `when`
     target_gen =
       StreamData.frequency([
         {2,
-         StreamData.bind(StreamData.member_of(@binary_ops), fn {_, op} ->
+         StreamData.bind(StreamData.member_of(@call_op_identifiers), fn {_, op} ->
            StreamData.constant({:op_identifier, op})
          end)},
         {1, gen_dot_op_identifier_for_call(child_state)}
@@ -2594,11 +2648,13 @@ defmodule ToxicParser.TokenGrammarGenerators do
         # Bracket at access: @foo[bar]
         {1, gen_bracket_at_expr(state)},
         # Bitstring: <<1, 2, 3>>
-        {2, gen_bitstring(state)}
+        {2, gen_bitstring(state)},
+        # Maps: %{key: value}, %{key => value}, %{m | key: value}
+        {2, gen_map(state)},
+        # Anonymous structs: expr.%{key: value}
+        {1, gen_anonymous_struct(state)}
         # NOTE: bin_string disabled - Toxic doesn't support this token format yet
         # {2, gen_bin_string()}
-        # NOTE: map disabled - Toxic doesn't render %{} token correctly
-        # {2, gen_map(state)}
       ])
     end
   end
@@ -2953,12 +3009,13 @@ defmodule ToxicParser.TokenGrammarGenerators do
     child_state = GrammarTree.decr_depth(state)
 
     # Target: identifier, dot_identifier, op_identifier, or dot_op_identifier
+    # Uses @call_op_identifiers to exclude `when`
     target_gen =
       StreamData.frequency([
         {4, StreamData.member_of(@identifiers) |> StreamData.map(&{:identifier, &1})},
         {1, gen_dot_identifier(child_state)},
         {1,
-         StreamData.bind(StreamData.member_of(@binary_ops), fn {_, op} ->
+         StreamData.bind(StreamData.member_of(@call_op_identifiers), fn {_, op} ->
            StreamData.constant({:op_identifier, op})
          end)},
         {1, gen_dot_op_identifier_for_call(child_state)}
@@ -3002,13 +3059,14 @@ defmodule ToxicParser.TokenGrammarGenerators do
     child_state = GrammarTree.decr_depth(state)
 
     # Target: identifier or dot_identifier (also allow operator identifier targets per grammar)
+    # Uses @call_op_identifiers to exclude `when`
     target_gen =
       StreamData.frequency([
         {4, StreamData.member_of(@identifiers) |> StreamData.map(&{:identifier, &1})},
         {1, gen_dot_identifier(child_state)},
         # Operator-as-identifier targets (e.g., +/2) and dotted operator targets (expr.+)
         {1,
-         StreamData.bind(StreamData.member_of(@binary_ops), fn {_, op} ->
+         StreamData.bind(StreamData.member_of(@call_op_identifiers), fn {_, op} ->
            StreamData.constant({:op_identifier, op})
          end)},
         {1, gen_dot_op_identifier_for_call(child_state)}
@@ -3467,8 +3525,17 @@ defmodule ToxicParser.TokenGrammarGenerators do
   @doc """
   Generate a map: %{key => value, ...} or %{key: value, ...}
 
-  Per grammar lines 648-656:
+  Per grammar lines 648-657:
   - map -> map_op map_args
+  - map -> '%' map_base_expr map_args (struct literal)
+
+  map_args includes (lines 648-653):
+  - open_curly '}' (empty)
+  - open_curly map_close (kw or assoc)
+  - open_curly assoc_update close_curly (map update with assoc)
+  - open_curly assoc_update ',' close_curly (with trailing comma)
+  - open_curly assoc_update ',' map_close (update + more pairs)
+  - open_curly assoc_update_kw close_curly (map update with kw)
   """
   def gen_map(state) do
     child_state = GrammarTree.decr_depth(state)
@@ -3479,7 +3546,13 @@ defmodule ToxicParser.TokenGrammarGenerators do
       # Map with keyword syntax (key: value)
       {3, gen_map_keyword(child_state, 1, 3)},
       # Map with arrow syntax (key => value)
-      {2, gen_map_arrow(child_state, 1, 3)}
+      {2, gen_map_arrow(child_state, 1, 3)},
+      # Map update with keyword syntax: %{map | key: value}
+      {2, gen_map_update_kw(child_state)},
+      # Map update with arrow syntax: %{map | key => value}
+      {1, gen_map_update_assoc(child_state)},
+      # Struct literal: %Foo{key: value} or %Foo{key => value}
+      {2, gen_struct_literal(child_state)}
     ])
   end
 
@@ -3497,6 +3570,104 @@ defmodule ToxicParser.TokenGrammarGenerators do
       gen_assoc_pairs(state, count)
     end)
     |> StreamData.map(fn pairs -> {:map, {:assoc, pairs}} end)
+  end
+
+  # Generate map update with keyword syntax: %{map | key: value, key2: value2}
+  # Per grammar line 632-633: assoc_update_kw -> matched_expr pipe_op_eol kw_data
+  defp gen_map_update_kw(state) do
+    StreamData.bind(gen_simple_expr(), fn base_expr ->
+      StreamData.bind(gen_newlines(), fn pipe_newlines ->
+        StreamData.bind(StreamData.integer(1..3), fn count ->
+          gen_kw_pairs(state, count)
+          |> StreamData.map(fn pairs ->
+            {:map_update, {:kw, base_expr, pipe_newlines, pairs}}
+          end)
+        end)
+      end)
+    end)
+  end
+
+  # Generate map update with arrow syntax: %{map | key => value}
+  # Per grammar lines 629-630: assoc_update -> matched_expr pipe_op_eol assoc_expr
+  defp gen_map_update_assoc(state) do
+    StreamData.bind(gen_simple_expr(), fn base_expr ->
+      StreamData.bind(gen_newlines(), fn pipe_newlines ->
+        StreamData.bind(StreamData.integer(1..3), fn count ->
+          gen_assoc_pairs(state, count)
+          |> StreamData.map(fn pairs ->
+            {:map_update, {:assoc, base_expr, pipe_newlines, pairs}}
+          end)
+        end)
+      end)
+    end)
+  end
+
+  # Generate struct literal: %Foo{key: value} or %Foo{key => value}
+  # Per grammar lines 656-657:
+  # - map -> '%' map_base_expr map_args
+  # - map -> '%' map_base_expr eol map_args
+  defp gen_struct_literal(state) do
+    StreamData.bind(gen_alias(), fn struct_name ->
+      StreamData.bind(gen_newlines(), fn eol_count ->
+        StreamData.frequency([
+          # Empty struct: %Foo{}
+          {1, StreamData.constant({:struct, struct_name, eol_count, []})},
+          # Struct with keyword syntax: %Foo{key: value}
+          {3, gen_struct_kw(state, struct_name, eol_count)},
+          # Struct with arrow syntax: %Foo{key => value}
+          {1, gen_struct_assoc(state, struct_name, eol_count)},
+          # Struct update with keyword: %Foo{s | key: value}
+          {2, gen_struct_update_kw(state, struct_name, eol_count)},
+          # Struct update with arrow: %Foo{s | key => value}
+          {1, gen_struct_update_assoc(state, struct_name, eol_count)}
+        ])
+      end)
+    end)
+  end
+
+  defp gen_struct_kw(state, struct_name, eol_count) do
+    StreamData.bind(StreamData.integer(1..3), fn count ->
+      gen_kw_pairs(state, count)
+      |> StreamData.map(fn pairs ->
+        {:struct, struct_name, eol_count, {:kw, pairs}}
+      end)
+    end)
+  end
+
+  defp gen_struct_assoc(state, struct_name, eol_count) do
+    StreamData.bind(StreamData.integer(1..3), fn count ->
+      gen_assoc_pairs(state, count)
+      |> StreamData.map(fn pairs ->
+        {:struct, struct_name, eol_count, {:assoc, pairs}}
+      end)
+    end)
+  end
+
+  # Generate struct update: %Foo{s | key: value}
+  defp gen_struct_update_kw(state, struct_name, eol_count) do
+    StreamData.bind(gen_simple_expr(), fn base_expr ->
+      StreamData.bind(gen_newlines(), fn pipe_newlines ->
+        StreamData.bind(StreamData.integer(1..3), fn count ->
+          gen_kw_pairs(state, count)
+          |> StreamData.map(fn pairs ->
+            {:struct, struct_name, eol_count, {:update_kw, base_expr, pipe_newlines, pairs}}
+          end)
+        end)
+      end)
+    end)
+  end
+
+  defp gen_struct_update_assoc(state, struct_name, eol_count) do
+    StreamData.bind(gen_simple_expr(), fn base_expr ->
+      StreamData.bind(gen_newlines(), fn pipe_newlines ->
+        StreamData.bind(StreamData.integer(1..3), fn count ->
+          gen_assoc_pairs(state, count)
+          |> StreamData.map(fn pairs ->
+            {:struct, struct_name, eol_count, {:update_assoc, base_expr, pipe_newlines, pairs}}
+          end)
+        end)
+      end)
+    end)
   end
 
   # Generate keyword pairs: [{key, value}, ...]
