@@ -1781,21 +1781,21 @@ defmodule ToxicParser.CharPropertyTest do
   end
 
   # ===========================================================================
-  # AST Normalization (from V7 Section 10)
+  # AST Normalization
   # ===========================================================================
 
-  @ignored_meta_keys [
-    # :from_brackets,
-    # :ambiguous_op,
-    # :parens,
-    # :format,
-    # :closing,
-    # :end_of_expression,
-    :range
-    # :newlines
-    # :delimiter,
-    # :indentation
-  ]
+  # @ignored_meta_keys [
+  #   # :from_brackets,
+  #   # :ambiguous_op,
+  #   # :parens,
+  #   # :format,
+  #   # :closing,
+  #   # :end_of_expression,
+  #   :range
+  #   # :newlines
+  #   # :delimiter,
+  #   # :indentation
+  # ]
 
   defp normalize_ast(ast), do: ast
 

@@ -3490,6 +3490,24 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 139" do
       assert_conforms("%{y,!try super,__MODULE__ => 1}")
     end
+
+    test "repro 140" do
+      assert_conforms("%(a do :ok end)%{}")
+      assert_conforms("%{(a do :ok end)}")
+      # assert_conforms("%{(a do :ok end) | a : 1}")
+      assert_conforms("%{a | (a do :ok end)}")
+      assert_conforms("%{a | x => (a do :ok end)}")
+      assert_conforms("%{a | (a do :ok end) => x}")
+    end
+
+    test "repro 141" do
+      assert_conforms("%(a 1, 2){}")
+      assert_conforms("%{(a 1, 2)}")
+      # assert_conforms("%{(a 1, 2) | a : 1}")
+      assert_conforms("%{a | (a 1, 2)}")
+      assert_conforms("%{a | x => (a 1, 2)}")
+      assert_conforms("%{a | (a 1, 2) => x}")
+    end
   end
 
   # =============================================================================

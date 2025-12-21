@@ -62,7 +62,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("1..foo do end//bar bat")
     end
 
-    # @tag :skip
+    @tag :skip
     test "errors" do
       assert_error_conforms("foo..bar baz//bat")
       assert_error_conforms("foo++bar//bat")
@@ -208,7 +208,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       """)
     end
 
-    # @tag :skip
+    @tag :skip
     test "end of expression with literal" do
       assert_conforms_with_literal_encoder("""
       a do
@@ -270,7 +270,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("if true do (x, y) -> x end")
     end
 
-    # @tag :skip
+    @tag :skip
     test "with :literal_encoder" do
       assert_conforms_with_literal_encoder(~s("one"))
       assert_conforms_with_literal_encoder("?é")
@@ -302,7 +302,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("foo.\nBar\n.\nBaz")
     end
 
-    # @tag :skip
+    @tag :skip
     test "adds metadata about assoc operator position in maps" do
       assert_conforms_with_literal_encoder("%{:key => 1, {} => {}}")
     end
@@ -429,7 +429,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       """)
     end
 
-    # @tag :skip
+    @tag :skip
     test "invalid keywords" do
       assert_error_conforms("+.foo")
       assert_error_conforms("after = 1")
@@ -447,12 +447,12 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms("if true do:\n")
     end
 
-    # @tag :skip
+    @tag :skip
     test "invalid parens call" do
       assert_error_conforms("foo (hello, world)")
     end
 
-    # @tag :skip
+    @tag :skip
     test "invalid nested no parens call" do
       assert_error_conforms("[foo 1, 2]")
       assert_error_conforms("[foo bar 1, 2]")
@@ -477,7 +477,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms(":\"+\".Bar")
     end
 
-    # @tag :skip
+    @tag :skip
     test "invalid map/struct" do
       assert_error_conforms("%{foo bar, baz}")
       assert_error_conforms("%{a, b}{a: :b}")
@@ -542,7 +542,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms("max(1, ;2)")
     end
 
-    # @tag :skip
+    @tag :skip
     test "invalid new line" do
       assert_error_conforms("if true do\n  foo = [],\n  baz\nend")
     end
