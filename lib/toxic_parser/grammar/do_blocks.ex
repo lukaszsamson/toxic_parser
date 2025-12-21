@@ -203,5 +203,4 @@ defmodule ToxicParser.Grammar.DoBlocks do
   defp starts_no_parens_arg?(next_tok) do
     NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)
   end
-
 end

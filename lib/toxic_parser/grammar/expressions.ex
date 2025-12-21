@@ -86,21 +86,6 @@ defmodule ToxicParser.Grammar.Expressions do
         # Continue with led() to handle trailing binary operators like `fn -> a end ** b`
         Pratt.led(ast, state, log, 0, ctx)
 
-      {:keyword_key, key_atom, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
-          {:ok, [{key_atom, value_ast}], state, log}
-        end
-
-      {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-        state = EOE.skip(state)
-
-        with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
-          key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-          {:ok, [{key_ast, value_ast}], state, log}
-        end
-
       {:error, reason, state, log} ->
         {:error, reason, state, log}
 
@@ -108,21 +93,6 @@ defmodule ToxicParser.Grammar.Expressions do
         case Containers.parse(state, ctx, log) do
           {:ok, ast, state, log} ->
             {:ok, ast, state, log}
-
-          {:keyword_key, key_atom, state, log} ->
-            state = EOE.skip(state)
-
-            with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
-              {:ok, [{key_atom, value_ast}], state, log}
-            end
-
-          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-            state = EOE.skip(state)
-
-            with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
-              key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-              {:ok, [{key_ast, value_ast}], state, log}
-            end
 
           {:error, reason, state, log} ->
             {:error, reason, state, log}
