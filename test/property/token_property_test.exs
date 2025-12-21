@@ -103,10 +103,21 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:identifier, _meta, :+++}), do: {:concat_op, :+++, 0}
   defp normalize_token({:identifier, _meta, :or}), do: {:or_op, :or, 0}
   defp normalize_token({:identifier, _meta, :||}), do: {:or_op, :||, 0}
+  defp normalize_token({:identifier, _meta, :|}), do: {:pipe_op, :|, 0}
   defp normalize_token({:identifier, _meta, :&&}), do: {:and_op, :&&, 0}
   defp normalize_token({:identifier, _meta, :**}), do: {:power_op, :**, 0}
   defp normalize_token({:identifier, _meta, :=}), do: {:match_op, :=, 0}
   defp normalize_token({:identifier, _meta, :/}), do: {:mult_op, :/, 0}
+  defp normalize_token({:identifier, _meta, :*}), do: {:mult_op, :*, 0}
+  defp normalize_token({:identifier, _meta, :<}), do: {:rel_op, :<, 0}
+  defp normalize_token({:identifier, _meta, :>}), do: {:rel_op, :>, 0}
+  defp normalize_token({:identifier, _meta, :<=}), do: {:rel_op, :<=, 0}
+  defp normalize_token({:identifier, _meta, :>=}), do: {:rel_op, :>=, 0}
+  defp normalize_token({:identifier, _meta, :==}), do: {:comp_op, :==, 0}
+  defp normalize_token({:identifier, _meta, :!=}), do: {:comp_op, :!=, 0}
+  defp normalize_token({:identifier, _meta, :===}), do: {:comp_op, :===, 0}
+  defp normalize_token({:identifier, _meta, :!==}), do: {:comp_op, :!==, 0}
+  defp normalize_token({:identifier, _meta, :=~}), do: {:comp_op, :=~, 0}
   defp normalize_token({:identifier, _meta, atom}), do: {:identifier, atom}
   defp normalize_token({:paren_identifier, _meta, atom}), do: {:paren_identifier, atom}
   defp normalize_token({:op_identifier, _meta, atom}), do: {:identifier, atom}
