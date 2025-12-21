@@ -524,7 +524,6 @@ defmodule ToxicParser.Pratt do
           :")",
           :"]",
           :"}",
-          :"{",
           :">>",
           :end_interpolation,
           :",",
