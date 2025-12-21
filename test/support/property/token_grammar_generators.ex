@@ -286,8 +286,8 @@ defmodule ToxicParser.Property.TokenGrammarGenerators do
     # Set allow_unmatched: true for top-level context
     context = %{
       GrammarTree.new_context()
-      | allow_unmatched: false,
-        allow_no_parens: false
+      | allow_unmatched: true,
+        allow_no_parens: true
     }
 
     state = %{budget: GrammarTree.initial_budget(max_depth, max_nodes), context: context}

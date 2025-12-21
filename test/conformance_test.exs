@@ -3466,6 +3466,14 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("...{879, Config}\n")
       assert_conforms("...{Config, Context, 668}\n65.13 ..\nbeta // 0")
     end
+
+    test "repro 134" do
+      assert_conforms("(;); ... if qux do\n:ok\nend\nwhen delta: Schema\n")
+    end
+
+    test "repro 135" do
+      assert_conforms("receive do (!d) -> :ok after 0 -> :timeout end")
+    end
   end
 
   # =============================================================================

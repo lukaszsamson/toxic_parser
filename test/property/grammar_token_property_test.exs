@@ -11,6 +11,7 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
 
   alias ToxicParser.Property.TokenGrammarGenerators, as: Gen
   alias ToxicParser.Property.TokenCompiler
+  import ExUnit.CaptureIO
 
   # Note: emit_warnings is NOT set to false here because we need
   # Code.with_diagnostics to capture deprecation warnings for workarounds
@@ -39,17 +40,20 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
 
   describe "grammar trees" do
     @tag :property
-    @tag timeout: 120_000
+    @tag timeout: 1_200_000
     property "grammar trees round-trip through Toxic" do
       check all(
-              tree <- Gen.grammar(max_depth: 2, max_forms: 2),
-              max_runs: 5000,
+              tree <- Gen.grammar(max_depth: 2, max_forms: 5),
+              max_runs: 50000,
               max_shrinks: 50
             ) do
+
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-        run_comparison(code)
+        capture_io(:standard_error, fn ->
+          run_comparison(code)
+      end)
       end
     end
   end
