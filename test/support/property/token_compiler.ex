@@ -10,14 +10,9 @@ defmodule ToxicParser.Property.TokenCompiler do
 
   @doc """
   Compile a grammar tree to a list of Toxic tokens.
-
-  ## Options
-
-  - `:phase` - Phase level for compilation (default 1)
   """
   @spec to_tokens(term(), keyword()) :: [Toxic.token()]
   def to_tokens(tree, opts \\ []) do
-    _phase = Keyword.get(opts, :phase, 1)
     layout = TokenLayout.new()
 
     {tokens, _layout} = do_to_tokens(tree, layout, opts)
@@ -1025,10 +1020,6 @@ defmodule ToxicParser.Property.TokenCompiler do
     {[amp_token, int_token], layout}
   end
 
-  # ---------------------------------------------------------------------------
-  # fn expressions (Phase 1: single clause only)
-  # ---------------------------------------------------------------------------
-
   # fn_single with fn_eoe and stab_eoe: fn fn_eoe stab_eoe end
   # Per grammar line 276: access_expr -> fn_eoe stab_eoe 'end'
   defp do_to_tokens({:fn_single, fn_eoe, {:stab_eoe, clauses, trailing_eoe}}, layout, opts) do
@@ -1285,10 +1276,6 @@ defmodule ToxicParser.Property.TokenCompiler do
 
     {[open_token, semi_token, close_token], layout}
   end
-
-  # ---------------------------------------------------------------------------
-  # do_block expressions (Phase 2)
-  # ---------------------------------------------------------------------------
 
   # Backward compatibility: convert old 3-element do_block to new 4-element format
   # Old format: {:do_block, body, extras}

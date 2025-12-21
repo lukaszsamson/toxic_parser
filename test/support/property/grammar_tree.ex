@@ -4,12 +4,6 @@ defmodule ToxicParser.Property.GrammarTree do
 
   Grammar trees are intermediate representations that compile to Toxic tokens.
   Each node type corresponds to a syntactic construct in Elixir.
-
-  ## Phase Coverage
-
-  - **Phase 1**: Literals, identifiers, matched/unary/binary ops, fn_single,
-    parens_call, capture_int, no_parens_one (no keyword args)
-  - **Phase 2+**: Guards, do_blocks, fn_multi, keyword args, etc.
   """
 
   # ===========================================================================
@@ -37,11 +31,11 @@ defmodule ToxicParser.Property.GrammarTree do
   @typedoc "Pattern expression (for fn arguments)"
   @type pattern_t :: :empty | {:single, expr_t()} | {:many, [expr_t()]}
 
-  @typedoc "Guard expression (nil in Phase 1)"
+  @typedoc "Guard expression"
   @type guard_t :: nil | expr_t()
 
   # ===========================================================================
-  # Phase 1: Literals
+  # Literals
   # ===========================================================================
 
   @typedoc """
@@ -83,7 +77,7 @@ defmodule ToxicParser.Property.GrammarTree do
   @type literal_t :: int_t() | float_t() | char_t() | atom_lit_t() | bool_lit_t() | nil_lit_t()
 
   # ===========================================================================
-  # Phase 1: Identifiers and Aliases
+  # Identifiers and Aliases
   # ===========================================================================
 
   @typedoc "Simple identifier (e.g., `foo`)"
@@ -114,7 +108,7 @@ defmodule ToxicParser.Property.GrammarTree do
           | op_identifier_t()
 
   # ===========================================================================
-  # Phase 1: Operators
+  # Operators
   # ===========================================================================
 
   @typedoc """
@@ -283,7 +277,7 @@ defmodule ToxicParser.Property.GrammarTree do
   @type empty_paren_t :: {:empty_paren, nil}
 
   # ===========================================================================
-  # Phase 1: Calls and Captures
+  # Calls and Captures
   # ===========================================================================
 
   @typedoc "Target of a call (identifier, paren_identifier, or dot expression)"
@@ -303,8 +297,6 @@ defmodule ToxicParser.Property.GrammarTree do
 
   @typedoc """
   No-parens call with one argument (e.g., `foo bar`).
-
-  Phase 1 restriction: no keyword arguments allowed.
   """
   @type call_no_parens_one_t :: {:call_no_parens_one, target_t(), expr_t()}
 
@@ -323,14 +315,14 @@ defmodule ToxicParser.Property.GrammarTree do
   @type capture_int_t :: {:capture_int, pos_integer()}
 
   # ===========================================================================
-  # Phase 1: Functions (fn_single)
+  # Functions (fn_single)
   # ===========================================================================
 
   @typedoc """
   Stab clause for fn expressions.
 
   - `pattern`: the pattern (`:empty`, `{:single, expr}`, or `{:many, [expr]}`)
-  - `guard`: guard expression (must be nil in Phase 1)
+  - `guard`: guard expression
   - `body`: the body expression
   """
   @type stab_clause_t :: {:stab_clause, pattern_t(), guard_t(), expr_t()}
@@ -338,7 +330,7 @@ defmodule ToxicParser.Property.GrammarTree do
   @typedoc """
   Single-clause fn expression.
 
-  Phase 1: only one clause, no guards, simple patterns (`:empty` or `{:single, expr}`).
+  only one clause, no guards, simple patterns (`:empty` or `{:single, expr}`).
   """
   @type fn_single_t :: {:fn_single, [stab_clause_t()]}
 
@@ -346,10 +338,10 @@ defmodule ToxicParser.Property.GrammarTree do
   # Later Phases (placeholders)
   # ===========================================================================
 
-  @typedoc "Multi-clause fn expression (Phase 2+)"
+  @typedoc "Multi-clause fn expression"
   @type fn_multi_t :: {:fn_multi, [stab_clause_t()]}
 
-  @typedoc "Do block (Phase 2+)"
+  @typedoc "Do block"
   @type do_block_t :: {:do_block, [stab_clause_t()] | [expr_t()], [block_item_t()]}
 
   @typedoc """
@@ -361,26 +353,26 @@ defmodule ToxicParser.Property.GrammarTree do
   """
   @type call_do_t :: {:call_do, identifier_t(), [expr_t()], do_block_t()}
 
-  @typedoc "Block item (else, rescue, catch, after) (Phase 2+)"
+  @typedoc "Block item (else, rescue, catch, after)"
   @type block_item_t ::
           {:block_item, :after | :else | :catch | :rescue, [stab_clause_t()] | [expr_t()]}
 
-  @typedoc "List container (Phase 4)"
+  @typedoc "List container"
   @type list_t :: {:list, [expr_t()]}
 
-  @typedoc "Tuple container (Phase 4)"
+  @typedoc "Tuple container"
   @type tuple_t :: {:tuple, [expr_t()]}
 
-  @typedoc "Map container (Phase 4)"
+  @typedoc "Map container"
   @type map_t :: {:map, [assoc_t()]}
 
-  @typedoc "Association (key => value or key: value) (Phase 4)"
+  @typedoc "Association (key => value or key: value)"
   @type assoc_t :: {:assoc, expr_t(), expr_t()} | {:kw, atom(), expr_t()}
 
-  @typedoc "String (Phase 5)"
+  @typedoc "String"
   @type string_t :: {:bin_string, [string_part_t()]}
 
-  @typedoc "String part (fragment or interpolation) (Phase 5)"
+  @typedoc "String part (fragment or interpolation)"
   @type string_part_t :: {:fragment, binary()} | {:interpolation, [expr_t()]}
 
   # ===========================================================================
@@ -393,7 +385,6 @@ defmodule ToxicParser.Property.GrammarTree do
   Controls what constructs are allowed during generation.
   """
   @type context :: %{
-          phase: 1..5,
           in_do_block: boolean(),
           in_no_parens_many: boolean(),
           in_keyword_value: boolean(),
@@ -426,11 +417,10 @@ defmodule ToxicParser.Property.GrammarTree do
   # Helpers
   # ===========================================================================
 
-  @doc "Create initial generation context for Phase 1"
-  @spec phase1_context() :: context()
-  def phase1_context do
+  @doc "Create initial generation context for"
+  @spec new_context() :: context()
+  def new_context do
     %{
-      phase: 1,
       in_do_block: false,
       in_no_parens_many: false,
       in_keyword_value: false,
@@ -455,7 +445,7 @@ defmodule ToxicParser.Property.GrammarTree do
   def initial_state(depth \\ 4, nodes_left \\ 100) do
     %{
       budget: initial_budget(depth, nodes_left),
-      context: phase1_context()
+      context: new_context()
     }
   end
 

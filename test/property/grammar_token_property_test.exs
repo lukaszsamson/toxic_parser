@@ -38,18 +38,17 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
   end
 
   describe "grammar trees" do
-    @tag :skip
     @tag :property
     @tag timeout: 120_000
-    property "grammar trees round-trip through Spitfire" do
+    property "grammar trees round-trip through Toxic" do
       check all(
-              tree <- Gen.grammar(phase: 1, max_depth: 1, max_forms: 2),
+              tree <- Gen.grammar(max_depth: 2, max_forms: 2),
               max_runs: 5000,
               max_shrinks: 50
             ) do
-        tokens = TokenCompiler.to_tokens(tree, phase: 1)
+        tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
-        IO.puts(">>>>>\n" <> code <> "\n<<<<<")
+        # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
         run_comparison(code)
       end
     end

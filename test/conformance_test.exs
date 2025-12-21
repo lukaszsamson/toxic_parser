@@ -3461,6 +3461,11 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 132" do
       assert_conforms("%...{}")
     end
+
+    test "repro 133" do
+      assert_conforms("...{879, Config}\n")
+      assert_conforms("...{Config, Context, 668}\n65.13 ..\nbeta // 0")
+    end
   end
 
   # =============================================================================
