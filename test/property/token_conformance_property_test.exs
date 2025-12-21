@@ -7,6 +7,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
   use ExUnitProperties
 
   alias ToxicParser.Generator
+  import ExUnit.CaptureIO
 
   # Options used by both oracle and Toxic for consistency
   @oracle_opts [
@@ -26,7 +27,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
     property "generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -57,7 +58,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
     property "deep generated tokens produce conformant ASTs" do
       check all(
               tokens <- Generator.tokens_gen(max_forms: 4, depth: 5),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -73,7 +74,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
       check all(
               flags <- Generator.flags_gen(),
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -105,7 +106,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -137,7 +138,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -169,7 +170,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -201,7 +202,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -233,7 +234,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -263,7 +264,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -295,7 +296,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 1, depth: 5),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -325,7 +326,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -357,7 +358,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -389,7 +390,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
 
       check all(
               tokens <- Generator.tokens_gen(flags: flags, max_forms: 3, depth: 3),
-              max_runs: 1_000,
+              max_runs: 5_000,
               max_shrinking_steps: 50
             ) do
         code = Toxic.to_string(tokens)
@@ -403,6 +404,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
   # ===========================================================================
 
   defp run_comparison(code) do
+    capture_io(:standard_error, fn ->
     # Use Code.with_diagnostics to capture warnings
     result = try do
         Code.string_to_quoted(code, @oracle_opts)
@@ -456,6 +458,7 @@ defmodule ToxicParser.TokenConformancePropertyTest do
         # Oracle rejected, skip this sample
         :ok
     end
+  end)
   end
 
   defp toxic_parse(code) do

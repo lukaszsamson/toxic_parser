@@ -3474,6 +3474,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 135" do
       assert_conforms("receive do (!d) -> :ok after 0 -> :timeout end")
     end
+
+    test "repro 136" do
+      assert_conforms("%not().e{}")
+    end
   end
 
   # =============================================================================

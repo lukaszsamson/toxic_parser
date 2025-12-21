@@ -4,6 +4,7 @@ defmodule ToxicParser.CharPropertyTest do
   """
   use ExUnit.Case, async: false
   use ExUnitProperties
+  import ExUnit.CaptureIO
 
   # Options used by both oracle and Toxic for consistency
   @oracle_opts [
@@ -1719,6 +1720,7 @@ defmodule ToxicParser.CharPropertyTest do
   # ===========================================================================
 
   defp run_comparison(context, code) do
+    capture_io(:standard_error, fn ->
     # Use Code.with_diagnostics to capture warnings
     {result, _diagnostics} =
       Code.with_diagnostics(fn ->
@@ -1757,6 +1759,7 @@ defmodule ToxicParser.CharPropertyTest do
         # Oracle rejected, skip this sample
         :ok
     end
+    end)
   end
 
   defp toxic_parse(code) do

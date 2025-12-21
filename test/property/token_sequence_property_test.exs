@@ -5,6 +5,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
   """
   use ExUnit.Case, async: true
   use ExUnitProperties
+  import ExUnit.CaptureIO
 
   # Options used by both oracle and Toxic for consistency
   @oracle_opts [
@@ -1036,6 +1037,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
   end
 
   defp run_comparison_with_context(context, code) do
+    capture_io(:standard_error, fn ->
     result =
       try do
         Code.string_to_quoted(code, @oracle_opts)
@@ -1080,6 +1082,7 @@ defmodule ToxicParser.TokenSequencePropertyTest do
         # Oracle rejected, skip this sample
         :ok
     end
+  end)
   end
 
   defp toxic_parse(code) do

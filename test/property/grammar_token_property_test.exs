@@ -41,9 +41,9 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
   describe "grammar trees" do
     @tag :property
     @tag timeout: 1_200_000
-    property "grammar trees round-trip through Toxic" do
+    property "shallow" do
       check all(
-              tree <- Gen.grammar(max_depth: 2, max_forms: 5),
+              tree <- Gen.grammar(max_depth: 1, max_forms: 10),
               max_runs: 50000,
               max_shrinks: 50
             ) do
@@ -51,9 +51,71 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
         tokens = TokenCompiler.to_tokens(tree)
         code = Toxic.ToString.to_string(tokens)
         # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
-        capture_io(:standard_error, fn ->
           run_comparison(code)
-      end)
+      end
+    end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "deep" do
+      check all(
+              tree <- Gen.grammar(max_depth: 4, max_forms: 1),
+              max_runs: 1000,
+              max_shrinks: 50
+            ) do
+
+        tokens = TokenCompiler.to_tokens(tree)
+        code = Toxic.ToString.to_string(tokens)
+        # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
+          run_comparison(code)
+      end
+    end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "matched only" do
+      check all(
+              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: false, allow_no_parens: false),
+              max_runs: 100000,
+              max_shrinks: 50
+            ) do
+
+        tokens = TokenCompiler.to_tokens(tree)
+        code = Toxic.ToString.to_string(tokens)
+        # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
+          run_comparison(code)
+      end
+    end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "no parens" do
+      check all(
+              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: false, allow_no_parens: true),
+              max_runs: 50000,
+              max_shrinks: 50
+            ) do
+
+        tokens = TokenCompiler.to_tokens(tree)
+        code = Toxic.ToString.to_string(tokens)
+        # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
+          run_comparison(code)
+      end
+    end
+
+    @tag :property
+    @tag timeout: 1_200_000
+    property "unmatched" do
+      check all(
+              tree <- Gen.grammar(max_depth: 2, max_forms: 5, allow_unmatched: true, allow_no_parens: false),
+              max_runs: 50000,
+              max_shrinks: 50
+            ) do
+
+        tokens = TokenCompiler.to_tokens(tree)
+        code = Toxic.ToString.to_string(tokens)
+        # IO.puts(">>>>>\n" <> code <> "\n<<<<<")
+          run_comparison(code)
       end
     end
   end
@@ -63,6 +125,7 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
   # ===========================================================================
 
   defp run_comparison(code) do
+    capture_io(:standard_error, fn ->
     # Use Code.with_diagnostics to capture warnings
     result = try do
         Code.string_to_quoted(code, @oracle_opts)
@@ -116,6 +179,7 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
         # Oracle rejected, skip this sample
         :ok
     end
+  end)
   end
 
   defp toxic_parse(code) do
