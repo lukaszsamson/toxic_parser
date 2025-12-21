@@ -143,9 +143,7 @@ defmodule ToxicParser.Grammar.Blocks do
   defp block_label?(%{kind: :block_identifier, value: value}),
     do: value in [:else, :catch, :rescue, :after]
 
-  defp block_label?(%{kind: kind}) when kind in [:else, :catch, :rescue, :after], do: true
   defp block_label?(_), do: false
 
   defp label_from(%{kind: :block_identifier, value: value}), do: value
-  defp label_from(%{kind: kind}) when kind in [:else, :catch, :rescue, :after], do: kind
 end

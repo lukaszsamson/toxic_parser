@@ -5,16 +5,6 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
-  @spec expect(State.t(), atom()) :: {:ok, atom(), State.t()} | {:error, term(), State.t()}
-  def expect(%State{} = state, kind) do
-    case TokenAdapter.next(state) do
-      {:ok, %{kind: ^kind}, state} -> {:ok, kind, state}
-      {:ok, token, state} -> {:error, {:expected, kind, got: token.kind}, state}
-      {:eof, state} -> {:error, :unexpected_eof, state}
-      {:error, diag, state} -> {:error, diag, state}
-    end
-  end
-
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
   def parse_paren_args(acc, %State{} = state, %Context{}, log) do

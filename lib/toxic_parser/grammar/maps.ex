@@ -191,6 +191,7 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state) do
       # For nested @ operator, continue without dots since @ (320) > dot (310)
       {:ok, %{kind: :at_op} = _tok, _} ->
+        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -215,6 +216,7 @@ defmodule ToxicParser.Grammar.Maps do
 
       # ternary_op :"//" used as unary prefix (precedence < dot 310)
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
+        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -260,6 +262,7 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state) do
       # Nested @ - special handling since @ binds tighter than dot
       {:ok, %{kind: :at_op} = _tok, _} ->
+        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -283,6 +286,7 @@ defmodule ToxicParser.Grammar.Maps do
 
       # ternary_op :"//" used as unary prefix
       {:ok, %{kind: :ternary_op, value: :"//"} = _tok, _} ->
+        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -483,11 +487,13 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, update_ast, close_meta, state, log}
 
           {:ok, %{kind: :","}, _} ->
+            raise "dead code"
             {:ok, _comma, state} = TokenAdapter.next(state)
             state = EOE.skip(state)
             parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, log)
 
           _ ->
+            raise "dead code"
             {:not_update, state}
         end
 
@@ -496,6 +502,7 @@ defmodule ToxicParser.Grammar.Maps do
 
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :pipe_op, metadata: pipe_meta}, _} ->
+            raise "dead code"
             {:ok, _pipe, state} = TokenAdapter.next(state)
             {state, newlines_after_pipe} = EOE.skip_newlines_only(state, 0)
             pipe_meta_kw = token_meta_with_newlines(pipe_meta, max(newlines, newlines_after_pipe))
@@ -517,7 +524,9 @@ defmodule ToxicParser.Grammar.Maps do
     else
       case classify_pipe_rhs_for_map_update(rhs) do
         {:valid, entries} -> {:update, base, pipe_meta, entries}
-        :invalid -> :not_update
+        :invalid ->
+          raise "dead code"
+          :not_update
       end
     end
   end
@@ -528,6 +537,7 @@ defmodule ToxicParser.Grammar.Maps do
   # Valid: single assoc {:"=>", _, [k, v]} or keyword list
   # Annotates keys with :assoc metadata indicating the position of =>
   defp classify_pipe_rhs_for_map_update({:"=>", assoc_meta, [key, value]} = _assoc) do
+    raise "dead code"
     annotated_key = annotate_assoc(key, assoc_meta)
     {:valid, [{annotated_key, value}]}
   end
@@ -541,6 +551,7 @@ defmodule ToxicParser.Grammar.Maps do
     if Keyword.has_key?(rhs_meta, :parens) do
       {:valid, [expr]}
     else
+      raise "dead code"
       case extract_assoc(expr) do
         {:assoc, key, value, assoc_meta} ->
           annotated_key = annotate_assoc(key, assoc_meta)
@@ -559,11 +570,13 @@ defmodule ToxicParser.Grammar.Maps do
         {:valid, [list]}
 
       Enum.all?(list, &is_keyword_or_assoc_entry?/1) ->
+        raise "dead code"
         # Annotate keys in assoc entries with :assoc metadata
         annotated = Enum.map(list, &annotate_assoc_entry/1)
         {:valid, annotated}
 
       true ->
+        raise "dead code"
         # A non-keyword list literal is a valid map_base_expr on the RHS.
         {:valid, [list]}
     end
@@ -574,6 +587,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp classify_pipe_rhs_for_map_update(rhs) do
     case extract_assoc(rhs) do
       {:assoc, key, value, assoc_meta} ->
+        raise "dead code"
         {:valid, [{annotate_assoc(key, assoc_meta), value}]}
 
       :not_assoc ->
@@ -588,6 +602,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp extract_assoc({callee, meta, args}) when is_list(meta) and is_list(args) do
     case extract_assoc_in_args(args) do
       {:assoc, new_args, value, assoc_meta} ->
+        raise "dead code"
         {:assoc, {callee, meta, new_args}, value, assoc_meta}
 
       :not_assoc ->
@@ -604,6 +619,7 @@ defmodule ToxicParser.Grammar.Maps do
     |> Enum.reduce_while(:not_assoc, fn {arg, idx}, _acc ->
       case extract_assoc(arg) do
         {:assoc, key, value, assoc_meta} ->
+          raise "dead code"
           {:halt, {:assoc, List.replace_at(args, idx, key), value, assoc_meta}}
 
         :not_assoc ->
@@ -614,6 +630,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Annotate a single assoc entry with :assoc metadata
   defp annotate_assoc_entry({:"=>", assoc_meta, [key, value]}) do
+    raise "dead code"
     {annotate_assoc(key, assoc_meta), value}
   end
 
@@ -626,6 +643,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Parse trailing entries after map update: %{base | k => v, more...}
   defp parse_map_update_trailing_entries(base, pipe_meta, initial_entries, state, log) do
+    raise "dead code"
     case TokenAdapter.peek(state) do
       # Trailing comma case: %{base | k => v,}
       {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -671,13 +689,16 @@ defmodule ToxicParser.Grammar.Maps do
             parse_map_update_rhs(base_expr, pipe_meta_kw, state, log)
 
           _ ->
+            raise "dead code"
             {:not_update, state}
         end
 
       {:keyword_key, _, state, _} ->
+        raise "dead code"
         {:not_update, state}
 
       {:keyword_key_interpolated, _, _, _, _, state, _} ->
+        raise "dead code"
         {:not_update, state}
 
       {:error, diag, state, log} ->
@@ -704,6 +725,7 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, update_ast, close_meta, state, log}
 
           _ ->
+            raise "dead code"
             {:not_update, state}
         end
 
@@ -767,6 +789,7 @@ defmodule ToxicParser.Grammar.Maps do
           end
 
         map_base_expr ->
+          raise "dead code"
           # It's a map_base_expr without => (like unquote_splicing)
           # Valid only as a single entry at the end, wrap in a list
           # Grammar: assoc_update -> matched_expr pipe_op_eol assoc_expr : {'$2', '$1', ['$3']}.

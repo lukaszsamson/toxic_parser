@@ -294,28 +294,6 @@ defmodule ToxicParser.Grammar.Keywords do
 
   @doc """
   Tries to parse `call_args_no_parens_kw` without consuming tokens if it is not present.
-
-  This is used for:
-
-  - `no_parens_op_expr -> when_op_eol call_args_no_parens_kw`
-  - no-parens call args (`foo a: 1`)
-  - stab parens args (`fn (a: 1) -> ... end`)
-  """
-  @spec try_parse_kw_no_parens_call(State.t(), Pratt.context(), EventLog.t(), keyword()) ::
-          try_result()
-  def try_parse_kw_no_parens_call(
-        %State{} = state,
-        %Context{} = ctx,
-        %EventLog{} = log,
-        opts \\ []
-      ) do
-    try_parse_call_args_no_parens_kw(state, ctx, log, opts)
-  end
-
-  @doc """
-  Tries to parse `call_args_no_parens_kw` without consuming tokens if it is not present.
-
-  This is the underlying parser for `try_parse_kw_no_parens_call/4`.
   """
   @spec try_parse_call_args_no_parens_kw(State.t(), Pratt.context(), EventLog.t(), keyword()) ::
           try_result()
@@ -523,6 +501,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
     result =
       if min_bp > 0 do
+        raise "dead code"
         Pratt.parse_with_min_bp(state, value_ctx, log, min_bp)
       else
         Pratt.parse_with_min_bp(state, value_ctx, log, 0, stop_at_assoc: true)

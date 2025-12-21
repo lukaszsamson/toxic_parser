@@ -262,17 +262,6 @@ defmodule ToxicParser.TokenAdapter do
     {token, []}
   end
 
-  defp normalize_token({:dot_call_op, meta} = raw, state, terminators) do
-    token = %{
-      kind: :dot_call_op,
-      value: :.,
-      metadata: metadata(meta, raw, terminators, state),
-      raw: raw
-    }
-
-    {token, []}
-  end
-
   defp normalize_token({kind, meta, v1, v2} = raw, state, terminators) do
     token = %{
       kind: kind,
@@ -326,27 +315,10 @@ defmodule ToxicParser.TokenAdapter do
   defp delimiter({token, _meta}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
   defp delimiter({token, _meta}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
   defp delimiter({token, _meta}) when token in [:"<<", :">>"], do: {:bitstring, {"<<", ">>"}}
-  defp delimiter({token, _meta, _}) when token in [:"(", :")"], do: {:paren, {"(", ")"}}
-  defp delimiter({token, _meta, _}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
-  defp delimiter({token, _meta, _}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
-  defp delimiter({token, _meta, _}) when token in [:"<<", :">>"], do: {:bitstring, {"<<", ">>"}}
-  defp delimiter({token, _meta, _, _}) when token in [:"(", :")"], do: {:paren, {"(", ")"}}
-  defp delimiter({token, _meta, _, _}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
-  defp delimiter({token, _meta, _, _}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
-
-  defp delimiter({token, _meta, _, _}) when token in [:"<<", :">>"],
-    do: {:bitstring, {"<<", ">>"}}
-
-  defp delimiter({:sigil_start, _meta, {_, close}}), do: {:sigil, {nil, close}}
-  defp delimiter({:sigil_end, _meta, {_, close}}), do: {:sigil, {nil, close}}
   defp delimiter(_), do: nil
 
   defp delimiter_role({token, _meta}) when token in [:"(", :"[", :"{", :"<<"], do: :open
   defp delimiter_role({token, _meta}) when token in [:")", :"]", :"}", :">>"], do: :close
-  defp delimiter_role({token, _meta, _}) when token in [:"(", :"[", :"{", :"<<"], do: :open
-  defp delimiter_role({token, _meta, _}) when token in [:")", :"]", :"}", :">>"], do: :close
-  defp delimiter_role({token, _meta, _, _}) when token in [:"(", :"[", :"{", :"<<"], do: :open
-  defp delimiter_role({token, _meta, _, _}) when token in [:")", :"]", :"}", :">>"], do: :close
   defp delimiter_role(_), do: :none
 
   # Extract newline count from various token formats

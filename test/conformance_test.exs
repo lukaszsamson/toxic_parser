@@ -706,6 +706,7 @@ defmodule ToxicParser.ConformanceTest do
 
     test "in_match_op_eol (<-, \\\\)" do
       assert_conforms("a <- b")
+      assert_conforms("-a <- -b")
       assert_conforms("a \\\\ b")
       assert_conforms("a <- b <- c")
       assert_conforms("a <-\nb")
@@ -1339,6 +1340,7 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{\n}")
       assert_conforms("%{a: 1}")
       assert_conforms("%{'a': 1}")
+      assert_conforms("%{'a\#{foo}': 1}")
       assert_conforms("%{a: 1,}")
       assert_conforms("%{a: 1,\n}")
 
@@ -2578,6 +2580,7 @@ defmodule ToxicParser.ConformanceTest do
     test "anonymous function call" do
       # dot_call_identifier -> matched_expr dot_call_op
       assert_conforms("foo.()")
+      assert_conforms("-foo.()")
       assert_conforms("foo.(1)")
       assert_conforms("foo.(1, 2)")
     end
@@ -2966,6 +2969,12 @@ defmodule ToxicParser.ConformanceTest do
 
     test "repro 18" do
       assert_conforms("%n.{}{}")
+      assert_conforms("%n.{x}{}")
+      assert_conforms("%n.{x, f: 1}{}")
+      assert_conforms("%n.{x, 'f': 1}{}")
+      assert_conforms("%n.{x, 'f\#{e}': 1}{}")
+      assert_conforms("%n.{x, \"f\#{e}\": 1}{}")
+      assert_conforms("%n.{}{x}")
     end
 
     test "repro 19" do
@@ -3114,6 +3123,7 @@ defmodule ToxicParser.ConformanceTest do
 
     test "repro 54" do
       assert_conforms("%fn a -> 1 end{}")
+      assert_conforms("%fn -a -> 1 end{}")
       assert_conforms("%(a -> 1){}")
     end
 
@@ -3167,6 +3177,10 @@ defmodule ToxicParser.ConformanceTest do
 
     test "repro 64" do
       assert_conforms("^ ! eggs -62\n\n..\n^ delta[foo]")
+    end
+
+    test "repro 64a" do
+      assert_conforms("^ ! eggs -62\n\n..\n^ delta(foo)")
     end
 
     test "repro 65" do

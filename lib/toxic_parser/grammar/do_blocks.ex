@@ -69,6 +69,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
         )
 
       :op_identifier ->
+        raise "dead code"
         maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens)
 
       :identifier ->
@@ -109,6 +110,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
         end
 
       _ ->
+        raise "dead code"
         maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens)
     end
   end
@@ -126,6 +128,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
        ) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :do}, _} ->
+        raise "dead code"
         attach_if_do(ast, state, ctx, log, allow_do_block?, clean_meta?)
 
       _ ->
@@ -160,6 +163,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
         {name, block_meta ++ meta, [sections]}
 
       other ->
+        raise "dead code"
         Builder.Helpers.call(other, [sections], block_meta)
     end
   end
@@ -171,6 +175,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   defp maybe_parse_no_parens(ast, _token, state, _ctx, log, _min_bp, parse_no_parens)
        when not is_function(parse_no_parens, 5) do
+    raise "dead code"
     {:ok, ast, state, log}
   end
 
@@ -181,6 +186,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
           # For op_identifier calls, use min_bp=0 to include all operators
           # in the argument per lexer disambiguation.
           # Example: %{c!s|n => 1} should parse c!(s|n) not c!(s)
+          raise "dead code"
           effective_min_bp = if token.kind == :op_identifier, do: 0, else: min_bp
           parse_no_parens.(token, state, ctx, log, effective_min_bp)
         else
@@ -197,6 +203,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
   end
 
   defp allow_no_parens?(%{kind: kind}, next_tok) when kind in [:do_identifier, :op_identifier] do
+    raise "dead code"
     starts_no_parens_arg?(next_tok)
   end
 

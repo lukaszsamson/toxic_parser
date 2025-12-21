@@ -56,6 +56,7 @@ defmodule ToxicParser.Grammar.EOE do
   end
 
   def build_eoe_meta(%{kind: :eoe, metadata: meta}) do
+    raise "dead code"
     Helpers.token_meta(meta)
   end
 
@@ -75,6 +76,7 @@ defmodule ToxicParser.Grammar.EOE do
   @spec annotate_eoe(Macro.t(), keyword()) :: Macro.t()
   def annotate_eoe({:->, stab_meta, [stab_args, {left, meta, right}]}, eoe_meta)
       when is_list(meta) do
+        raise "dead code"
     {:->, stab_meta, [stab_args, {left, [{:end_of_expression, eoe_meta} | meta], right}]}
   end
 

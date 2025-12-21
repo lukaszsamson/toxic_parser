@@ -139,6 +139,11 @@ defmodule ToxicParser.OperatorsTest do
       code = "^foo[0]"
       assert toxic_parse(code) == s2q(code)
     end
+
+    test "pin with parens" do
+      code = "^foo(0)"
+      assert toxic_parse(code) == s2q(code)
+    end
   end
 
   describe "unary not operator" do
@@ -2366,6 +2371,11 @@ defmodule ToxicParser.OperatorsTest do
 
     test "access in operator expression" do
       code = "a[b] + c[d]"
+      assert toxic_parse(code) == s2q(code)
+    end
+
+    test "parens in operator expression" do
+      code = "a(b) + c(d)"
       assert toxic_parse(code) == s2q(code)
     end
 

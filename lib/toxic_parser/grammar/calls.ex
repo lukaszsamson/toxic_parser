@@ -454,6 +454,7 @@ defmodule ToxicParser.Grammar.Calls do
   defp parse_identifier_no_led(kind, tok, state, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: :"("}, _} when kind == :paren_identifier ->
+        raise "dead code"
         parse_paren_call_no_led(tok, state, ctx, log)
 
       {:ok, %{kind: :"["} = open_tok, _} when kind == :bracket_identifier ->
@@ -475,11 +476,13 @@ defmodule ToxicParser.Grammar.Calls do
             parse_no_parens_call_no_led(tok, state, ctx, log, min_bp, opts)
 
           Pratt.bp(next_tok.kind) != nil or next_tok.kind in [:dot_op, :dot_call_op] ->
+            raise "dead code"
             # Binary operator follows - return as bare identifier, caller will handle
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
           kind == :do_identifier and not Context.allow_do_block?(ctx) ->
+            raise "dead code"
             ast = Builder.Helpers.from_token(tok)
             {:ok, ast, state, log}
 
@@ -489,6 +492,7 @@ defmodule ToxicParser.Grammar.Calls do
         end
 
       _ ->
+        raise "dead code"
         ast = Builder.Helpers.from_token(tok)
         DoBlocks.maybe_do_block(ast, state, ctx, log)
     end
@@ -541,6 +545,7 @@ defmodule ToxicParser.Grammar.Calls do
            Pratt.parse_with_min_bp(state, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
+          raise "dead code"
           {:ok, _comma, state} = TokenAdapter.next(state)
 
           with {:ok, args, state, log} <-

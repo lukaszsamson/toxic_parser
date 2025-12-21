@@ -72,6 +72,29 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       '''
 
       assert_conforms(code)
+
+      code = ~S'''
+        """
+        #{x} does not work
+
+        first. \\
+        second
+        """
+      '''
+
+      assert_conforms(code)
+
+      code = ~s'''
+        """\r\n  \#{x} does not work\r\n  first. \\\r\n  second\r\n  """
+      '''
+
+      assert_conforms(code)
+
+      code = ~s'''
+        """\r\n  \#{x} does not work\r\n  first. \\\\\r\n  second\r\n  """
+      '''
+
+      assert_conforms(code)
     end
 
     test "escaped backslash at EOL in heredoc is preserved" do

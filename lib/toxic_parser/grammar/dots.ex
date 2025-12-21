@@ -377,5 +377,4 @@ defmodule ToxicParser.Grammar.Dots do
 
   defp delimiter_from_value(?"), do: "\""
   defp delimiter_from_value(?'), do: "'"
-  defp delimiter_from_value(_), do: "\""
 end

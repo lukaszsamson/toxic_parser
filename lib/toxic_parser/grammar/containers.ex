@@ -153,8 +153,6 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp semicolon_eoe?(%{kind: :eoe, value: %{source: :semicolon}}), do: true
-  defp semicolon_eoe?(%{kind: :eoe, raw: {:";", _, _}}), do: true
-  defp semicolon_eoe?(%{kind: :eoe, raw: {:";", _}}), do: true
   defp semicolon_eoe?(_), do: false
 
   defp parse_list(state, ctx, log, min_bp, opts) do
