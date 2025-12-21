@@ -85,31 +85,7 @@ defmodule ToxicParser.Grammar.Dots do
                  :dot_identifier,
                  :dot_do_identifier
                ] ->
-            # Check if next token can start a no-parens argument AND is adjacent
-            # This handles cases like `d.*r` where `*` is an identifier and `r` is adjacent
-            case TokenAdapter.peek(state) do
-              {:ok, next_tok, _} ->
-                tok_end_col = tok.metadata.range.end.column
-                next_start_col = next_tok.metadata.range.start.column
-                is_adjacent = next_start_col == tok_end_col
-
-                # Adjacent no-parens argument - return with :no_parens_call flag
-                # BUT: exclude dual_op (+/-) because `a.b-c` should be `(a.b) - c` (binary)
-                # not `a.b(-c)` (unary arg). dual_op can be unary, but without explicit
-                # space it should be treated as binary operator in this context.
-                if is_adjacent and ToxicParser.NoParens.can_start_no_parens_arg?(next_tok) and
-                     next_tok.kind != :dual_op do
-                  {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :no_parens_call},
-                   state, log}
-                else
-                  # Regular identifier - bracket access NOT allowed (whitespace before [)
-                  {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
-                end
-
-              _ ->
-                # No next token - regular identifier
-                {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
-            end
+            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
 
           :bracket_identifier ->
             # Bracket identifier - bracket access IS allowed (no whitespace before [)
@@ -124,22 +100,11 @@ defmodule ToxicParser.Grammar.Dots do
 
           :alias ->
             # Alias needs to be wrapped as __aliases__
-            # Check if [ follows immediately (no whitespace) - if so, allow bracket access
             alias_ast = Builder.Helpers.from_token(tok)
 
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"["} = bracket_tok, _} ->
-                # Check if bracket is adjacent (no whitespace between alias and [)
-                alias_end_col = tok.metadata.range.end.column
-                bracket_start_col = bracket_tok.metadata.range.start.column
-
-                if bracket_start_col == alias_end_col do
-                  # No whitespace - bracket access is allowed
-                  {:ok, {alias_ast, :allows_bracket}, state, log}
-                else
-                  # Whitespace - no bracket access
-                  {:ok, alias_ast, state, log}
-                end
+              {:ok, %{kind: :"["}, _} ->
+                {:ok, {alias_ast, :allows_bracket}, state, log}
 
               _ ->
                 {:ok, alias_ast, state, log}
