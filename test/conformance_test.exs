@@ -3624,6 +3624,22 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 153" do
       assert_conforms("fn 'c',\"hello\" -> :ok end")
     end
+
+    test "repro 154" do
+      assert_conforms("receive do 'c',\"hello\" -> :ok after 0 -> :timeout end")
+    end
+
+    test "repro 155" do
+      assert_conforms("fn \#{\n;\ncond1 -> :ok end")
+    end
+
+    test "repro 156" do
+      assert_conforms("nil .. 0 // beta\n^0\n^ if false do\n:ok\nend\n..\nnil when spam: Context, gamma: Context, alpha: bar\n-\n:ok\n")
+    end
+
+    test "repro 157" do
+      assert_conforms("fn \#{\n;\ncond1 -> :ok end")
+    end
   end
 
   # =============================================================================
