@@ -20,7 +20,28 @@ defmodule ToxicParser.ConformanceCorpusTest do
         IO.puts("Failed: #{file}")
       end
 
-      # assert res
+      assert res
+    end
+  end
+
+  @tag timeout: :infinity
+  test "elixir sources with literal_encoder" do
+    # files = @regressions
+    files = collect_files(nil)
+    encoder = parity_encoder()
+
+    for file <- files do
+      code = file |> File.read!()
+      # lines = String.split(source, "\n")
+      # assert toxic_parse(code) == s2q(code)
+      # IO.puts("Parsing: #{file}")
+      res = toxic_parse(code, literal_encoder: encoder) == s2q(code, literal_encoder: encoder)
+
+      if not res do
+        IO.puts("Failed: #{file}")
+      end
+
+      assert res
     end
   end
 
@@ -115,6 +136,13 @@ defmodule ToxicParser.ConformanceCorpusTest do
     path_parts = Path.split(file_path)
     phoenix_templates = String.contains?(file_path, "projects/phoenix/installer/templates")
     phoenix_templates or Enum.any?(@ignored_dirs, &(&1 in path_parts))
+  end
+
+  def parity_encoder do
+    fn literal, meta ->
+      meta = Keyword.delete(meta, :range)
+      {:ok, {:__literal__, meta, [literal]}}
+    end
   end
 
   defp s2q(code, opts \\ []) do

@@ -76,7 +76,9 @@ defmodule ToxicParser.Grammar.Strings do
             {:error, {:atom_too_long, content, start_tok.metadata}, state, log}
           else
             atom = String.to_atom(content)
-            {:keyword_key, atom, start_meta, state, log}
+            # Include delimiter and format: :keyword for quoted keyword keys
+            key_meta = [{:delimiter, delimiter}, {:format, :keyword} | start_meta]
+            {:keyword_key, atom, key_meta, state, log}
           end
         end
       else

@@ -176,6 +176,9 @@ defmodule ToxicParser.Grammar.Containers do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
+    # Count leading newlines after [ for literal_encoder metadata
+    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+
     # In elixir_parser.yrl, list elements use container_expr (not the surrounding ctx).
     container_ctx = Context.container_expr()
 
@@ -212,13 +215,15 @@ defmodule ToxicParser.Grammar.Containers do
 
     with {:ok, tagged_items, state, log} <-
            Delimited.parse_comma_separated(state, container_ctx, log, :"]", item_fun,
-             allow_empty?: true
+             allow_empty?: true,
+             skip_eoe_initial?: false
            ) do
       case TokenAdapter.next(state) do
         {:ok, %{kind: :"]"} = close_tok, state} ->
           close_meta = token_meta(close_tok.metadata)
-          # Build list metadata with closing location (for token_metadata compatibility)
-          list_meta = [{:closing, close_meta} | open_meta]
+
+          # Build list metadata with closing location and newlines (for token_metadata compatibility)
+          list_meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
           list_ast = finalize_list_items(tagged_items)
           # Pass list through literal_encoder if present
           encoded_list = Builder.Helpers.literal(list_ast, list_meta, state)
