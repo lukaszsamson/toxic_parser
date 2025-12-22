@@ -539,7 +539,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms("max(1, ;2)")
     end
 
-    @tag :skip
     test "invalid new line" do
       assert_error_conforms("if true do\n  foo = [],\n  baz\nend")
     end

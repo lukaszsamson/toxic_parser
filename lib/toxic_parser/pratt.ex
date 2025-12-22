@@ -327,6 +327,12 @@ defmodule ToxicParser.Pratt do
             meta = build_meta(token.metadata)
             {:error, syntax_error_before(meta, "';'"), state, log}
 
+          # Comma cannot start an expression
+          # e.g., "if true do\n  foo = [],\n  baz\nend" - comma after [] is invalid
+          token.kind == :"," ->
+            meta = build_meta(token.metadata)
+            {:error, syntax_error_before(meta, "','"), state, log}
+
           true ->
             nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts)
         end
