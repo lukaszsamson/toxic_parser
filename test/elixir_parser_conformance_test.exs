@@ -208,7 +208,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       """)
     end
 
-    @tag :skip
     test "end of expression with literal" do
       assert_conforms_with_literal_encoder("""
       a do
@@ -270,7 +269,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("if true do (x, y) -> x end")
     end
 
-    @tag :skip
     test "with :literal_encoder" do
       assert_conforms_with_literal_encoder(~s("one"))
       assert_conforms_with_literal_encoder("?é")
@@ -302,7 +300,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("foo.\nBar\n.\nBaz")
     end
 
-    @tag :skip
     test "adds metadata about assoc operator position in maps" do
       assert_conforms_with_literal_encoder("%{:key => 1, {} => {}}")
     end

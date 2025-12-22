@@ -2978,7 +2978,6 @@ defmodule ToxicParser.ConformanceLargeTest do
       assert toxic_parse(code) == s2q(code)
     end
 
-    @tag :skip
     test "literal encoder" do
       codes = [
         ~S'''

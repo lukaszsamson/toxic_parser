@@ -21,7 +21,7 @@ defmodule ToxicParser do
           | {:emit_events, boolean()}
           | {:emit_env, boolean()}
           | {:token_metadata, boolean()}
-          | {:literal_encoder, (term() -> term())}
+          | {:literal_encoder, (term(), Macro.metadata() -> term())}
           | {:existing_atoms_only, boolean()}
           | {:fuel_limit, pos_integer() | :infinity}
           | {:terminators, [atom()]}
