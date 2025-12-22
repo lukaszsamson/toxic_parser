@@ -864,6 +864,11 @@ defmodule ToxicParser.Grammar.Maps do
 
         {:no_kw, state, log} ->
           with {:ok, entry, state, log} <- parse_assoc_expr(state, ctx, log) do
+            # Note: We don't validate no_parens for map entries here.
+            # For association entries (key => value), the grammar uses matched_expr/unmatched_expr
+            # which have different rules than container_expr. The context already controls
+            # what can be parsed, and if parsing succeeded, the expression is valid.
+            # For single expressions (map_base_expr), these are also valid as parsed.
             {:ok, {:entry, entry}, state, log}
           end
 

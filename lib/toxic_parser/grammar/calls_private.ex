@@ -2,7 +2,17 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   @moduledoc false
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    EventLog,
+    ExprClass,
+    NoParensErrors,
+    Pratt,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
@@ -104,7 +114,14 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
         {:no_kw, state, log} ->
           with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
-            {:ok, {:expr, expr}, state, log}
+            # Validate no_parens expressions are not allowed inside paren calls
+            case ExprClass.classify(expr) do
+              :no_parens ->
+                {:error, NoParensErrors.error_no_parens_many_strict(expr), state, log}
+
+              _ ->
+                {:ok, {:expr, expr}, state, log}
+            end
           end
 
         {:error, reason, state, log} ->

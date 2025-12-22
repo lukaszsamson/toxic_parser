@@ -447,7 +447,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms("foo (hello, world)")
     end
 
-    @tag :skip
     test "invalid nested no parens call" do
       assert_error_conforms("[foo 1, 2]")
       assert_error_conforms("[foo bar 1, 2]")

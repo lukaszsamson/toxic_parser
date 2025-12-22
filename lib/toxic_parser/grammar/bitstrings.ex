@@ -3,7 +3,17 @@ defmodule ToxicParser.Grammar.Bitstrings do
   Parsing for bitstring literals (<<>>).
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    EventLog,
+    ExprClass,
+    NoParensErrors,
+    Pratt,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
@@ -55,7 +65,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
         {:no_kw, state, log} ->
           with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
-            {:ok, {:expr, expr}, state, log}
+            # Validate no_parens expressions are not allowed in containers
+            case ExprClass.classify(expr) do
+              :no_parens ->
+                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, log}
+
+              _ ->
+                {:ok, {:expr, expr}, state, log}
+            end
           end
 
         {:error, reason, state, log} ->

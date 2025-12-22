@@ -11,8 +11,10 @@ defmodule ToxicParser.Grammar.Calls do
     Builder,
     Context,
     EventLog,
+    ExprClass,
     Identifiers,
     NoParens,
+    NoParensErrors,
     Pratt,
     Result,
     State,
@@ -372,47 +374,53 @@ defmodule ToxicParser.Grammar.Calls do
 
   # Helper to handle a parsed argument in no-parens context
   defp handle_no_parens_arg(arg, acc, state, ctx, log, min_bp, opts) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, _} ->
-        if Keyword.get(opts, :stop_at_comma, false) do
-          {:ok, Enum.reverse([arg | acc]), state, log}
-        else
-          {:ok, comma_tok, state} = TokenAdapter.next(state)
-          state = EOE.skip(state)
+    # Validate no_parens expressions after a comma (grammar: call_args_no_parens_expr -> no_parens_expr : error)
+    # The first arg is allowed to be no_parens (call_args_no_parens_ambig), but subsequent args must not be
+    if acc != [] and ExprClass.classify(arg) == :no_parens do
+      {:error, NoParensErrors.error_no_parens_many_strict(arg), state, log}
+    else
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :","}, _} ->
+          if Keyword.get(opts, :stop_at_comma, false) do
+            {:ok, Enum.reverse([arg | acc]), state, log}
+          else
+            {:ok, comma_tok, state} = TokenAdapter.next(state)
+            state = EOE.skip(state)
 
-          case TokenAdapter.peek(state) do
-            {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
-              meta =
-                comma_tok.metadata
-                |> Builder.Helpers.token_meta()
-                |> Keyword.take([:line, :column])
+            case TokenAdapter.peek(state) do
+              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :do] ->
+                meta =
+                  comma_tok.metadata
+                  |> Builder.Helpers.token_meta()
+                  |> Keyword.take([:line, :column])
 
-              {:error, {meta, "syntax error before: ", ""}, state, log}
+                {:error, {meta, "syntax error before: ", ""}, state, log}
 
-            {:eof, state} ->
-              meta =
-                comma_tok.metadata
-                |> Builder.Helpers.token_meta()
-                |> Keyword.take([:line, :column])
+              {:eof, state} ->
+                meta =
+                  comma_tok.metadata
+                  |> Builder.Helpers.token_meta()
+                  |> Keyword.take([:line, :column])
 
-              {:error, {meta, "syntax error before: ", ""}, state, log}
+                {:error, {meta, "syntax error before: ", ""}, state, log}
 
-            _ ->
-              case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
-                {:ok, kw_list, state, log} ->
-                  {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
+              _ ->
+                case Keywords.try_parse_call_args_no_parens_kw(state, ctx, log) do
+                  {:ok, kw_list, state, log} ->
+                    {:ok, Enum.reverse([kw_list, arg | acc]), state, log}
 
-                {:no_kw, state, log} ->
-                  parse_no_parens_args([arg | acc], state, ctx, log, min_bp, opts)
+                  {:no_kw, state, log} ->
+                    parse_no_parens_args([arg | acc], state, ctx, log, min_bp, opts)
 
-                {:error, reason, state, log} ->
-                  {:error, reason, state, log}
-              end
+                  {:error, reason, state, log} ->
+                    {:error, reason, state, log}
+                end
+            end
           end
-        end
 
-      _ ->
-        {:ok, Enum.reverse([arg | acc]), state, log}
+        _ ->
+          {:ok, Enum.reverse([arg | acc]), state, log}
+      end
     end
   end
 

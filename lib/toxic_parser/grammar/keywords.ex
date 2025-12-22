@@ -3,7 +3,17 @@ defmodule ToxicParser.Grammar.Keywords do
   Recursive-descent helpers for keyword lists in call and data contexts.
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    EventLog,
+    ExprClass,
+    NoParensErrors,
+    Pratt,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Grammar.{EOE, Expressions, Strings}
 
   @type result ::
@@ -109,17 +119,33 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   @doc "Parses a keyword list usable in call argument position."
-  @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_kw_call(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
+  @spec parse_kw_call(State.t(), Pratt.context(), EventLog.t(), keyword()) :: result()
+  def parse_kw_call(%State{} = state, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     # elixir_parser.yrl: kw_base -> kw_eol container_expr
-    parse_kw_list([], state, ctx, log, 0, Context.container_expr())
+    # For stab patterns, allow no_parens values (error_kind = nil skips validation)
+    error_kind = if Keyword.get(opts, :allow_no_parens, false), do: nil, else: :many
+    parse_kw_list([], state, ctx, log, 0, Context.container_expr(), error_kind)
   end
 
   @doc "Parses a keyword list with a minimum binding power constraint."
-  @spec parse_kw_call_with_min_bp(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
+  @spec parse_kw_call_with_min_bp(
+          State.t(),
+          Pratt.context(),
+          EventLog.t(),
+          non_neg_integer(),
+          keyword()
+        ) ::
           result()
-  def parse_kw_call_with_min_bp(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
-    parse_kw_list([], state, ctx, log, min_bp, Context.container_expr())
+  def parse_kw_call_with_min_bp(
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp,
+        opts \\ []
+      ) do
+    # For stab patterns, allow no_parens values (error_kind = nil skips validation)
+    error_kind = if Keyword.get(opts, :allow_no_parens, false), do: nil, else: :many
+    parse_kw_list([], state, ctx, log, min_bp, Context.container_expr(), error_kind)
   end
 
   @doc "Parses a keyword list usable in no-parens call argument position (call_args_no_parens_kw)."
@@ -149,7 +175,7 @@ defmodule ToxicParser.Grammar.Keywords do
   @spec parse_kw_data(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_kw_data(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     # elixir_parser.yrl: kw_base -> kw_eol container_expr
-    parse_kw_list([], state, ctx, log, 0, Context.container_expr())
+    parse_kw_list([], state, ctx, log, 0, Context.container_expr(), :container)
   end
 
   @doc """
@@ -258,12 +284,14 @@ defmodule ToxicParser.Grammar.Keywords do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
     min_bp = Keyword.get(opts, :min_bp, 0)
     value_ctx = Context.kw_no_parens_value()
+    # no-parens keyword values allow no_parens_expr, so no validation (error_kind = nil)
+    error_kind = nil
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
         cond do
           starts_kw?(tok) ->
-            case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+            case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
               {:ok, pair, state, log} -> {:ok, pair, state, log}
               {:error, reason, state, log} -> {:error, reason, state, log}
             end
@@ -271,7 +299,7 @@ defmodule ToxicParser.Grammar.Keywords do
           allow_quoted_keys? and tok.kind in @quoted_kw_start ->
             case quoted_string_is_keyword?(state) do
               {:keyword, state} ->
-                case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+                case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
                   {:ok, pair, state, log} -> {:ok, pair, state, log}
                   {:error, reason, state, log} -> {:error, reason, state, log}
                 end
@@ -397,8 +425,8 @@ defmodule ToxicParser.Grammar.Keywords do
       "Syntax error after: "
   end
 
-  defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx) do
-    case parse_kw_pair(state, ctx, log, min_bp, value_ctx) do
+  defp parse_kw_list(acc, state, ctx, log, min_bp, value_ctx, error_kind) do
+    case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
       {:ok, pair, state, log} ->
         case TokenAdapter.peek(state) do
           {:ok, %{kind: :","}, _} ->
@@ -409,7 +437,7 @@ defmodule ToxicParser.Grammar.Keywords do
                 {:ok, Enum.reverse([pair | acc]), state, log}
 
               _ ->
-                parse_kw_list([pair | acc], state, ctx, log, min_bp, value_ctx)
+                parse_kw_list([pair | acc], state, ctx, log, min_bp, value_ctx, error_kind)
             end
 
           _ ->
@@ -421,21 +449,21 @@ defmodule ToxicParser.Grammar.Keywords do
     end
   end
 
-  defp parse_kw_pair(state, _ctx, log, min_bp, value_ctx) do
+  defp parse_kw_pair(state, _ctx, log, min_bp, value_ctx, error_kind) do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in @kw_kinds ->
         # Standard keyword like foo:
         # Add format: :keyword for token_metadata compatibility
         {:ok, %{value: key, metadata: key_meta}, state} = TokenAdapter.next(state)
         key_meta_kw = [{:format, :keyword} | Builder.Helpers.token_meta(key_meta)]
-        parse_kw_value(key, key_meta_kw, state, log, min_bp, value_ctx)
+        parse_kw_value(key, key_meta_kw, state, log, min_bp, value_ctx, error_kind)
 
       {:ok, %{kind: kind}, _} when kind in @quoted_kw_start ->
         # Potentially a quoted keyword like "foo": or 'bar':
         # Try parsing as string - if it returns keyword_key, it's a keyword
         case Strings.parse(state, Context.matched_expr(), log, 10000) do
           {:keyword_key, key_atom, key_meta, state, log} ->
-            parse_kw_value(key_atom, key_meta, state, log, min_bp, value_ctx)
+            parse_kw_value(key_atom, key_meta, state, log, min_bp, value_ctx, error_kind)
 
           {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
             parse_kw_value_interpolated(
@@ -446,7 +474,8 @@ defmodule ToxicParser.Grammar.Keywords do
               state,
               log,
               min_bp,
-              value_ctx
+              value_ctx,
+              error_kind
             )
 
           {:ok, _ast, state, _log} ->
@@ -470,7 +499,7 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   # Parse keyword value after the key has been determined
-  defp parse_kw_value(key, key_meta, state, log, min_bp, value_ctx) do
+  defp parse_kw_value(key, key_meta, state, log, min_bp, value_ctx, error_kind) do
     state = EOE.skip(state)
 
     # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
@@ -483,8 +512,20 @@ defmodule ToxicParser.Grammar.Keywords do
       end
 
     with {:ok, value_ast, state, log} <- result do
-      key_ast = Builder.Helpers.literal(key, key_meta, state)
-      {:ok, {key_ast, value_ast}, state, log}
+      # Validate no_parens expressions are not allowed in container/call contexts
+      # (error_kind = nil means skip validation, e.g., for no-parens keyword values)
+      if error_kind != nil and ExprClass.classify(value_ast) == :no_parens do
+        error =
+          case error_kind do
+            :container -> NoParensErrors.error_no_parens_container_strict(value_ast)
+            :many -> NoParensErrors.error_no_parens_many_strict(value_ast)
+          end
+
+        {:error, error, state, log}
+      else
+        key_ast = Builder.Helpers.literal(key, key_meta, state)
+        {:ok, {key_ast, value_ast}, state, log}
+      end
     end
   end
 
@@ -497,7 +538,8 @@ defmodule ToxicParser.Grammar.Keywords do
          state,
          log,
          min_bp,
-         value_ctx
+         value_ctx,
+         error_kind
        ) do
     state = EOE.skip(state)
 
@@ -510,9 +552,21 @@ defmodule ToxicParser.Grammar.Keywords do
       end
 
     with {:ok, value_ast, state, log} <- result do
-      # Build interpolated key AST
-      key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-      {:ok, {key_ast, value_ast}, state, log}
+      # Validate no_parens expressions are not allowed in container/call contexts
+      # (error_kind = nil means skip validation, e.g., for no-parens keyword values)
+      if error_kind != nil and ExprClass.classify(value_ast) == :no_parens do
+        error =
+          case error_kind do
+            :container -> NoParensErrors.error_no_parens_container_strict(value_ast)
+            :many -> NoParensErrors.error_no_parens_many_strict(value_ast)
+          end
+
+        {:error, error, state, log}
+      else
+        # Build interpolated key AST
+        key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+        {:ok, {key_ast, value_ast}, state, log}
+      end
     end
   end
 end

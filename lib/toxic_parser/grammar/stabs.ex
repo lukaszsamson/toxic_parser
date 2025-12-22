@@ -455,12 +455,14 @@ defmodule ToxicParser.Grammar.Stabs do
             # call_args_no_parens_kw: (x: 1 -> body)
             # Use min_bp > stab_op (10) to stop keyword values before ->
             # The kw_list is already [x: 1], and we need to wrap it in a list to get [[x: 1]]
+            # allow_no_parens: true because stab patterns use call_args_no_parens_kw grammar
             with {:ok, kw_list, state, log} <-
                    Keywords.parse_kw_call_with_min_bp(
                      state,
                      ctx,
                      log,
-                     Precedence.stab_op_bp() + 1
+                     Precedence.stab_op_bp() + 1,
+                     allow_no_parens: true
                    ) do
               {:ok, [kw_list], state, log}
             end
@@ -658,7 +660,9 @@ defmodule ToxicParser.Grammar.Stabs do
               {:ok, tok, _} ->
                 cond do
                   Keywords.starts_kw?(tok) ->
-                    with {:ok, more_kw, state, log} <- Keywords.parse_kw_call(state, ctx, log) do
+                    # allow_no_parens: true because stab patterns use call_args_no_parens_kw grammar
+                    with {:ok, more_kw, state, log} <-
+                           Keywords.parse_kw_call(state, ctx, log, allow_no_parens: true) do
                       {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, log}
                     end
 

@@ -791,6 +791,38 @@ defmodule ToxicParser.ElixirSourceReprosTest do
     end
   end
 
+  describe "interpolated atoms in with clauses" do
+    test "interpolated atom should not trigger no_parens error" do
+      # From: livebook/lib/livebook/runtime/fly.ex line 133
+      # Interpolated atoms generate remote calls like :erlang.binary_to_atom/2
+      # which should be classified as matched, not no_parens.
+      # The AST is: {{:., _, [:erlang, :binary_to_atom]}, meta, [binary, :utf8]}
+      # which has 2 args but no :closing metadata (compiler-generated call).
+      code = ~S'with a <- :"foo#{bar}", do: a'
+
+      assert_conforms(code)
+    end
+
+    test "interpolated atom in complex with pattern" do
+      # More realistic case from livebook
+      code = ~S'''
+      with child_node <- :"child@#{host}",
+           :pong <- Node.ping(child_node) do
+        {:ok, child_node}
+      end
+      '''
+
+      assert_conforms(code)
+    end
+
+    test "interpolated atom assignment" do
+      # Simpler case - just the interpolated atom
+      code = ~S'x = :"foo#{bar}baz"'
+
+      assert_conforms(code)
+    end
+  end
+
   describe "map update with do-block keyword value" do
     test "map update with if-do keyword value should parse full do-block" do
       # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/livebook/lib/livebook/session/data.ex line 1812
