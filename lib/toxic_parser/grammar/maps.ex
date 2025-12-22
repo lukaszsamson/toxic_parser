@@ -191,7 +191,6 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state) do
       # For nested @ operator, continue without dots since @ (320) > dot (310)
       {:ok, %{kind: :at_op} = _tok, _} ->
-        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -262,7 +261,6 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state) do
       # Nested @ - special handling since @ binds tighter than dot
       {:ok, %{kind: :at_op} = _tok, _} ->
-        raise "dead code"
         {:ok, op_tok, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -487,7 +485,6 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, update_ast, close_meta, state, log}
 
           {:ok, %{kind: :","}, _} ->
-            raise "dead code"
             {:ok, _comma, state} = TokenAdapter.next(state)
             state = EOE.skip(state)
             parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, log)
@@ -576,7 +573,6 @@ defmodule ToxicParser.Grammar.Maps do
         {:valid, annotated}
 
       true ->
-        raise "dead code"
         # A non-keyword list literal is a valid map_base_expr on the RHS.
         {:valid, [list]}
     end
@@ -643,7 +639,6 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Parse trailing entries after map update: %{base | k => v, more...}
   defp parse_map_update_trailing_entries(base, pipe_meta, initial_entries, state, log) do
-    raise "dead code"
     case TokenAdapter.peek(state) do
       # Trailing comma case: %{base | k => v,}
       {:ok, %{kind: :"}"} = close_tok, _} ->
@@ -652,9 +647,7 @@ defmodule ToxicParser.Grammar.Maps do
         update_ast = {:|, pipe_meta, [base, initial_entries]}
         {:ok, update_ast, close_meta, state, log}
 
-      {:ok, tok, _} ->
-        _tok = tok
-
+      {:ok, _tok, _} ->
         # map_close already handles:
         # - kw_data close_curly
         # - assoc close_curly

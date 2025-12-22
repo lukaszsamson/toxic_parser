@@ -545,7 +545,7 @@ defmodule ToxicParser.Grammar.Calls do
            Pratt.parse_with_min_bp(state, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state) do
         {:ok, %{kind: :","}, _} ->
-          raise "dead code"
+          # raise "dead code"
           {:ok, _comma, state} = TokenAdapter.next(state)
 
           with {:ok, args, state, log} <-

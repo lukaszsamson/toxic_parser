@@ -3579,6 +3579,51 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{a | x => (a 1, 2)}")
       assert_conforms("%{a | (a 1, 2) => x}")
     end
+
+    test "repro 142" do
+      assert_conforms("receive do 'c',\"\",with -> :ok after 0 -> :timeout end")
+    end
+
+    test "repro 143" do
+      assert_conforms("%{x | 'c',..}")
+    end
+
+    test "repro 144" do
+      assert_conforms("not & spam alpha: &\nspam &&& spam.eggs, bar: foo.baz, delta: // alpha if\n\n;spam.spam + 48 ^^^ & eggs spam, gamma: qux.alpha alpha foo.eggs, eggs, gamma, eggs: (bar.\n\nunless.\n\ndelta -baz;gamma\n;).\ngamma, baz: alpha.if, delta: \n\nalpha.receive do end +++ gamma\n..\n!\n\nbeta not in .. :: alpha.alpha not gamma +93\n")
+    end
+
+    test "repro 145" do
+      assert_conforms("%+@s{}")
+      assert_conforms("%!@c{}")
+    end
+
+    test "repro 147" do
+      assert_conforms("%{x | a,}")
+    end
+
+    test "repro 148" do
+      assert_conforms("%@@0{}")
+    end
+
+    test "repro 149" do
+      assert_conforms("fn 'c','c',...~~~defdelegate<<~ false -> :ok end")
+    end
+
+    test "repro 150" do
+      assert_conforms("case x do 'c','c',...~~~defdelegate<<~ false -> :ok end")
+    end
+
+    test "repro 151" do
+      assert_conforms("@ foo;baz.qux\n@ (delta.() do after (delta.\nalpha, if, delta: gamma, qux: with) ->\n\nspam.\n\nqux;-> eggs.bar\ndelta.gamma after\n\n (\n\n(\n\neggs.bar).baz, (eggs).alpha, eggs, delta: \nunless\n) -> gamma\nfoo.alpha qux gamma, qux: gamma, foo: cond, eggs: baz\n\n;for end).bar beta -foo")
+    end
+
+    test "repro 152" do
+      assert_conforms("... qux\n@ (delta.() do after (delta.\nalpha, if, delta: gamma, qux: with) ->\n\nspam.\n\nqux;-> eggs.bar\ndelta.gamma after\n\n (\n\n(\n\ngamma.\n\nbar;(;bar -37;baz).baz\n\nbar).baz, (beta\n\nbar.\n\nbaz\n\nbar).alpha, eggs, delta: \nunless\n) -> gamma\nfoo.alpha qux gamma, qux: gamma, foo: cond, eggs: baz\n\n;for end).bar gamma delta, gamma: bar.beta +43, foo: gamma, beta: bar qux, delta.gamma, qux: foo")
+    end
+
+    test "repro 153" do
+      assert_conforms("fn 'c',\"hello\" -> :ok end")
+    end
   end
 
   # =============================================================================
