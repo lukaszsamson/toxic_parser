@@ -612,6 +612,11 @@ defmodule ToxicParser.Pratt do
                             {:ok, operand_base,
                              TokenAdapter.drop_checkpoint(state_after_base, ref), log}
 
+                          {kind, next_bp}
+                          when kind in [:dot_op, :dot_call_op] and next_bp < at_bp ->
+                            {:ok, operand_base,
+                             TokenAdapter.drop_checkpoint(state_after_base, ref), log}
+
                           {_, next_bp} when next_bp < at_bp ->
                             state_full = TokenAdapter.rewind(state_after_base, ref)
 
@@ -763,21 +768,11 @@ defmodule ToxicParser.Pratt do
                       end
                     else
                       if op_token.kind == :capture_op do
-                        complex_operand? =
-                          case operand_base do
-                            {op, _meta, args}
-                            when is_atom(op) and is_list(args) and length(args) == 2 ->
-                              true
-
-                            _ ->
-                              false
-                          end
-
                         function_capture? = function_capture_operand?(operand_base)
 
-                        case {complex_operand?, function_capture?,
-                              contains_do_block?(operand_base), bp(next_tok.kind)} do
-                          {true, false, true, next_bp}
+                        case {function_capture?, contains_do_block?(operand_base),
+                              bp(next_tok.kind)} do
+                          {false, true, next_bp}
                           when is_integer(next_bp) and next_bp < operand_min_bp ->
                             state_full = TokenAdapter.rewind(state_after_base, ref)
 
@@ -1590,6 +1585,19 @@ defmodule ToxicParser.Pratt do
             {:error, reason, state, log}
         end
 
+      # Special case: when operator in contexts without no-parens extension
+      {:ok, _rhs_tok, _} when op_token.kind == :when_op ->
+        parse_when_binary_rhs(
+          state,
+          left,
+          op_token,
+          rhs_min_bp,
+          min_bp,
+          effective_newlines,
+          context,
+          log
+        )
+
       # Special case: assoc_op (=>) in map context needs to parse full expression as value
       # Grammar rule: assoc_expr -> container_expr assoc_op_eol container_expr
       # The value of => should be a container_expr which includes pipe_op
@@ -1979,56 +1987,66 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state) do
       {:ok, rhs_token, state} ->
-        case parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp) do
-          {:ok, right, state, log} ->
-            combined = build_binary_op(op_token, left, right, newlines)
-            # Continuation uses original context
+        if Keywords.starts_kw?(rhs_token) do
+          state = TokenAdapter.pushback(state, rhs_token)
+
+          with {:ok, kw_list, state, log} <-
+                 Keywords.parse_kw_no_parens_call(state, rhs_context, log) do
+            combined = build_binary_op(op_token, left, kw_list, newlines)
             led(combined, state, log, min_bp, context)
+          end
+        else
+          case parse_rhs(rhs_token, state, rhs_context, log, rhs_min_bp) do
+            {:ok, right, state, log} ->
+              combined = build_binary_op(op_token, left, right, newlines)
+              # Continuation uses original context
+              led(combined, state, log, min_bp, context)
 
-          # String was a quoted keyword key - parse value and handle as keyword list RHS
-          {:keyword_key, key_atom, state, log} ->
-            state = EOE.skip(state)
+            # String was a quoted keyword key - parse value and handle as keyword list RHS
+            {:keyword_key, key_atom, state, log} ->
+              state = EOE.skip(state)
 
-            with {:ok, value_ast, state, log} <-
-                   parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
-              kw_list = [{key_atom, value_ast}]
-              # Check for more keywords after comma
-              handle_when_keyword_continuation(
-                kw_list,
-                left,
-                op_token,
-                min_bp,
-                newlines,
-                state,
-                context,
-                log
-              )
-            end
+              with {:ok, value_ast, state, log} <-
+                     parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
+                kw_list = [{key_atom, value_ast}]
+                # Check for more keywords after comma
+                handle_when_keyword_continuation(
+                  kw_list,
+                  left,
+                  op_token,
+                  min_bp,
+                  newlines,
+                  state,
+                  context,
+                  log
+                )
+              end
 
-          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
-            state = EOE.skip(state)
+            {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
+              state = EOE.skip(state)
 
-            with {:ok, value_ast, state, log} <-
-                   parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
-              key_ast =
-                Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+              with {:ok, value_ast, state, log} <-
+                     parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
+                key_ast =
+                  Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
 
-              kw_list = [{key_ast, value_ast}]
+                kw_list = [{key_ast, value_ast}]
 
-              handle_when_keyword_continuation(
-                kw_list,
-                left,
-                op_token,
-                min_bp,
-                newlines,
-                state,
-                context,
-                log
-              )
-            end
+                handle_when_keyword_continuation(
+                  kw_list,
+                  left,
+                  op_token,
+                  min_bp,
+                  newlines,
+                  state,
+                  context,
+                  log
+                )
+              end
 
-          {:error, reason, state, log} ->
-            {:error, reason, state, log}
+            {:error, reason, state, log} ->
+              {:error, reason, state, log}
+          end
         end
 
       {:eof, state} ->

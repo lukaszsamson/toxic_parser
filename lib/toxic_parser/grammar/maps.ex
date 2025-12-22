@@ -520,7 +520,9 @@ defmodule ToxicParser.Grammar.Maps do
       :not_update
     else
       case classify_pipe_rhs_for_map_update(rhs) do
-        {:valid, entries} -> {:update, base, pipe_meta, entries}
+        {:valid, entries} ->
+          {:update, base, pipe_meta, entries}
+
         :invalid ->
           raise "dead code"
           :not_update
@@ -549,6 +551,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:valid, [expr]}
     else
       raise "dead code"
+
       case extract_assoc(expr) do
         {:assoc, key, value, assoc_meta} ->
           annotated_key = annotate_assoc(key, assoc_meta)

@@ -591,8 +591,20 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Check if result is a keyword list (from quoted keyword parsing)
-  defp is_keyword_list(list) when is_list(list) and length(list) > 0, do: true
+  defp is_keyword_list(list) when is_list(list) and length(list) > 0 do
+    Enum.all?(list, &keyword_pair?/1)
+  end
+
   defp is_keyword_list(_), do: false
+
+  defp keyword_pair?({key, _value}) when is_atom(key), do: true
+  defp keyword_pair?({key, _value}) when is_tuple(key), do: interpolated_keyword_key?(key)
+  defp keyword_pair?(_), do: false
+
+  defp interpolated_keyword_key?({{:., _, [:erlang, :binary_to_atom]}, _, [_binary_ast, :utf8]}),
+    do: true
+
+  defp interpolated_keyword_key?(_), do: false
 
   # Parse continuation of keyword list in paren call context
   defp parse_call_args_parens_quoted_kw_continuation(acc_kw, acc, state, ctx, log) do

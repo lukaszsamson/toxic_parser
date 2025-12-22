@@ -47,8 +47,8 @@ defmodule ToxicParser.Grammar.Blocks do
     fn_meta = Builder.Helpers.token_meta(fn_tok.metadata)
     log = enter_scope(log, :fn, fn_tok.metadata)
 
-    # Skip optional EOE after fn and count newlines
-    {state, newlines} = EOE.skip_count_newlines(state, 0)
+    # Skip optional EOE after fn and count newlines (not semicolons)
+    {state, newlines} = EOE.skip_newlines_only(state, 0)
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
     with {:ok, clauses, state, log} <- Stabs.parse_stab_eoe_until([], state, ctx, log, :end),
