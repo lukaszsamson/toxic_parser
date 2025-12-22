@@ -426,7 +426,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       """)
     end
 
-    @tag :skip
     test "invalid keywords" do
       assert_error_conforms("+.foo")
       assert_error_conforms("after = 1")
@@ -444,7 +443,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms("if true do:\n")
     end
 
-    @tag :skip
     test "invalid parens call" do
       assert_error_conforms("foo (hello, world)")
     end

@@ -333,6 +333,13 @@ defmodule ToxicParser.Pratt do
             meta = build_meta(token.metadata)
             {:error, syntax_error_before(meta, "','"), state, log}
 
+          # Block identifiers (after, else, catch, rescue) are only valid as block labels
+          # They cannot be used as variables or expressions outside block context
+          # e.g., "after = 1" is invalid
+          token.kind == :block_identifier ->
+            meta = build_meta(token.metadata)
+            {:error, syntax_error_before(meta, "'#{token.value}'"), state, log}
+
           true ->
             nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts)
         end
