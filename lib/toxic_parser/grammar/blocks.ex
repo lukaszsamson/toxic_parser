@@ -78,7 +78,7 @@ defmodule ToxicParser.Grammar.Blocks do
         do_location = token_meta(do_meta)
 
         with {:ok, sections, state, log} <-
-               parse_labeled_sections([], :do, state, ctx, log),
+               parse_labeled_sections([], :do, do_location, state, ctx, log),
              {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
           log = exit_scope(log, :do_block, do_meta)
           end_location = token_meta(end_meta)
@@ -109,19 +109,22 @@ defmodule ToxicParser.Grammar.Blocks do
     end
   end
 
-  defp parse_labeled_sections(acc, label, state, ctx, log) do
+  defp parse_labeled_sections(acc, label, label_meta, state, ctx, log) do
     stop_kinds = [:end, :block_identifier, :else, :catch, :rescue, :after]
 
     with {:ok, items_rev, state, log} <-
            Stabs.parse_stab_items_until([], state, ctx, log, :end, stop_kinds) do
       section_value = Stabs.build_section_value(items_rev)
-      acc = [{label, section_value} | acc]
+      # Encode label through literal_encoder if present
+      encoded_label = Builder.Helpers.literal(label, label_meta, state)
+      acc = [{encoded_label, section_value} | acc]
 
       case TokenAdapter.peek(state) do
         {:ok, tok, _} ->
           if block_label?(tok) do
-            {:ok, _tok, state} = TokenAdapter.next(state)
-            parse_labeled_sections(acc, label_from(tok), state, ctx, log)
+            {:ok, label_tok, state} = TokenAdapter.next(state)
+            next_label_meta = token_meta(label_tok.metadata)
+            parse_labeled_sections(acc, label_from(tok), next_label_meta, state, ctx, log)
           else
             {:ok, Enum.reverse(acc), state, log}
           end

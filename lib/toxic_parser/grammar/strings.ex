@@ -20,7 +20,7 @@ defmodule ToxicParser.Grammar.Strings do
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
           | {:no_string, State.t()}
-          | {:keyword_key, atom(), State.t(), EventLog.t()}
+          | {:keyword_key, atom(), keyword(), State.t(), EventLog.t()}
           | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
              EventLog.t()}
 
@@ -76,7 +76,7 @@ defmodule ToxicParser.Grammar.Strings do
             {:error, {:atom_too_long, content, start_tok.metadata}, state, log}
           else
             atom = String.to_atom(content)
-            {:keyword_key, atom, state, log}
+            {:keyword_key, atom, start_meta, state, log}
           end
         end
       else
@@ -182,6 +182,9 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_quoted_atom(state, ctx, kind, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = token_to_meta(start_tok.metadata)
+    # Use delimiter from token value (39 = ', 34 = ")
+    delimiter = if start_tok.value == 39, do: "'", else: "\""
+    meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
 
     end_token_kind =
       if kind == :atom_unsafe_start do
@@ -197,9 +200,6 @@ defmodule ToxicParser.Grammar.Strings do
       if has_interpolations?(parts) do
         # Build interpolated atom AST with delimiter metadata
         args = build_interpolated_parts(parts, :atom)
-        # Use delimiter from token value (39 = ', 34 = ")
-        delimiter = if start_tok.value == 39, do: "'", else: "\""
-        meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
 
         ast =
           {{:., start_meta, [:erlang, :binary_to_atom]}, meta_with_delimiter,
@@ -213,7 +213,8 @@ defmodule ToxicParser.Grammar.Strings do
           {:error, {:atom_too_long, content, start_tok.metadata}, state, log}
         else
           atom = String.to_atom(content)
-          ast = Builder.Helpers.literal(atom)
+          # Include delimiter in metadata for literal_encoder
+          ast = Builder.Helpers.literal(atom, meta_with_delimiter, state)
           Pratt.led(ast, state, log, min_bp, ctx, opts)
         end
       end
@@ -423,7 +424,9 @@ defmodule ToxicParser.Grammar.Strings do
           :charlist -> String.to_charlist(content)
         end
 
-      ast = Builder.Helpers.literal(value)
+      # Include delimiter in metadata for literal_encoder (token_metadata compatibility)
+      meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
+      ast = Builder.Helpers.literal(value, meta_with_delimiter, state)
       Pratt.led(ast, state, log, min_bp, ctx, opts)
     end
   end
@@ -468,7 +471,8 @@ defmodule ToxicParser.Grammar.Strings do
               :heredoc_charlist -> String.to_charlist(content)
             end
 
-          ast = Builder.Helpers.literal(value)
+          # Include delimiter and indentation in metadata for literal_encoder
+          ast = Builder.Helpers.literal(value, meta_with_indent, state)
           Pratt.led(ast, state, log, min_bp, ctx, opts)
 
         {:error, reason} ->

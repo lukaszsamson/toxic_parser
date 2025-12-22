@@ -425,15 +425,17 @@ defmodule ToxicParser.Grammar.Keywords do
     case TokenAdapter.peek(state) do
       {:ok, %{kind: kind}, _} when kind in @kw_kinds ->
         # Standard keyword like foo:
-        {:ok, %{value: key}, state} = TokenAdapter.next(state)
-        parse_kw_value(key, state, log, min_bp, value_ctx)
+        # Add format: :keyword for token_metadata compatibility
+        {:ok, %{value: key, metadata: key_meta}, state} = TokenAdapter.next(state)
+        key_meta_kw = [{:format, :keyword} | Builder.Helpers.token_meta(key_meta)]
+        parse_kw_value(key, key_meta_kw, state, log, min_bp, value_ctx)
 
       {:ok, %{kind: kind}, _} when kind in @quoted_kw_start ->
         # Potentially a quoted keyword like "foo": or 'bar':
         # Try parsing as string - if it returns keyword_key, it's a keyword
         case Strings.parse(state, Context.matched_expr(), log, 10000) do
-          {:keyword_key, key_atom, state, log} ->
-            parse_kw_value(key_atom, state, log, min_bp, value_ctx)
+          {:keyword_key, key_atom, key_meta, state, log} ->
+            parse_kw_value(key_atom, key_meta, state, log, min_bp, value_ctx)
 
           {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
             parse_kw_value_interpolated(
@@ -468,7 +470,7 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   # Parse keyword value after the key has been determined
-  defp parse_kw_value(key, state, log, min_bp, value_ctx) do
+  defp parse_kw_value(key, key_meta, state, log, min_bp, value_ctx) do
     state = EOE.skip(state)
 
     # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
@@ -481,7 +483,7 @@ defmodule ToxicParser.Grammar.Keywords do
       end
 
     with {:ok, value_ast, state, log} <- result do
-      key_ast = Builder.Helpers.literal(key)
+      key_ast = Builder.Helpers.literal(key, key_meta, state)
       {:ok, {key_ast, value_ast}, state, log}
     end
   end

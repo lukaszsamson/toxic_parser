@@ -81,8 +81,8 @@ defmodule ToxicParser.Grammar.Containers do
     {:ok, open_tok, state} = TokenAdapter.next(state)
     open_meta = token_meta(open_tok.metadata)
 
-    # Skip leading newlines (but not semicolons)
-    state = skip_eoe_not_semicolon(state)
+    # Skip leading newlines (but not semicolons) and count them
+    {state, newlines} = skip_eoe_not_semicolon_with_count(state, 0)
 
     # Check for leading semicolon (forces stab interpretation)
     case TokenAdapter.peek(state) do
@@ -90,26 +90,35 @@ defmodule ToxicParser.Grammar.Containers do
         if semicolon_eoe?(tok) do
           # Leading semicolon - parse as stab or empty
           {:ok, _semi, state} = TokenAdapter.next(state)
-          # Skip any additional EOE
-          state = EOE.skip(state)
-          Stabs.parse_paren_stab_or_empty(open_meta, state, ctx, log, min_bp)
+          # Skip any additional EOE and count newlines
+          {state, more_newlines} = EOE.skip_count_newlines(state, 0)
+
+          Stabs.parse_paren_stab_or_empty(
+            open_meta,
+            newlines + more_newlines,
+            state,
+            ctx,
+            log,
+            min_bp
+          )
         else
-          # Skip any remaining EOE tokens
-          state = EOE.skip(state)
-          parse_paren_content(open_meta, state, ctx, log, min_bp, opts)
+          # Skip any remaining EOE tokens and count newlines
+          {state, more_newlines} = EOE.skip_count_newlines(state, 0)
+          parse_paren_content(open_meta, newlines + more_newlines, state, ctx, log, min_bp, opts)
         end
 
       _ ->
-        # Skip any remaining EOE tokens
-        state = EOE.skip(state)
-        parse_paren_content(open_meta, state, ctx, log, min_bp, opts)
+        # Skip any remaining EOE tokens and count newlines
+        {state, more_newlines} = EOE.skip_count_newlines(state, 0)
+        parse_paren_content(open_meta, newlines + more_newlines, state, ctx, log, min_bp, opts)
     end
   end
 
   # Parse content after open paren (no leading semicolon)
-  defp parse_paren_content(open_meta, state, ctx, log, min_bp, opts) do
+  defp parse_paren_content(open_meta, newlines, state, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
       # Empty parens: () -> {:__block__, [parens: ...], []}
+      # NOTE: parens: metadata doesn't include newlines (only line, column, closing)
       {:ok, %{kind: :")"} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
@@ -119,7 +128,7 @@ defmodule ToxicParser.Grammar.Containers do
 
       # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
       {:ok, _, _} ->
-        Stabs.parse_paren_stab(open_meta, state, ctx, log, min_bp)
+        Stabs.parse_paren_stab(open_meta, newlines, state, ctx, log, min_bp)
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}
@@ -131,24 +140,24 @@ defmodule ToxicParser.Grammar.Containers do
 
   defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
-  defp skip_eoe_not_semicolon(state) do
+  defp skip_eoe_not_semicolon_with_count(state, count) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         if semicolon_eoe?(tok) do
-          state
+          {state, count}
         else
-          case tok.kind do
-            :eoe ->
+          case tok do
+            %{kind: :eoe, value: %{newlines: n}} ->
               {:ok, _eoe, state} = TokenAdapter.next(state)
-              skip_eoe_not_semicolon(state)
+              skip_eoe_not_semicolon_with_count(state, count + n)
 
             _ ->
-              state
+              {state, count}
           end
         end
 
       _ ->
-        state
+        {state, count}
     end
   end
 
@@ -164,7 +173,8 @@ defmodule ToxicParser.Grammar.Containers do
 
   # Parse list without calling Pratt.led - used when caller controls led binding
   defp parse_list_base(state, _ctx, log) do
-    {:ok, _open, state} = TokenAdapter.next(state)
+    {:ok, open_tok, state} = TokenAdapter.next(state)
+    open_meta = token_meta(open_tok.metadata)
 
     # In elixir_parser.yrl, list elements use container_expr (not the surrounding ctx).
     container_ctx = Context.container_expr()
@@ -205,8 +215,14 @@ defmodule ToxicParser.Grammar.Containers do
              allow_empty?: true
            ) do
       case TokenAdapter.next(state) do
-        {:ok, %{kind: :"]"}, state} ->
-          {:ok, finalize_list_items(tagged_items), state, log}
+        {:ok, %{kind: :"]"} = close_tok, state} ->
+          close_meta = token_meta(close_tok.metadata)
+          # Build list metadata with closing location (for token_metadata compatibility)
+          list_meta = [{:closing, close_meta} | open_meta]
+          list_ast = finalize_list_items(tagged_items)
+          # Pass list through literal_encoder if present
+          encoded_list = Builder.Helpers.literal(list_ast, list_meta, state)
+          {:ok, encoded_list, state, log}
 
         {:ok, tok, state} ->
           {:error, {:expected, :"]", got: tok.kind}, state, log}
@@ -252,12 +268,18 @@ defmodule ToxicParser.Grammar.Containers do
     with {:ok, elements, newlines, close_meta, state, log} <- parse_tuple_args(state, ctx, log) do
       meta = Meta.closing_meta(open_meta, close_meta, newlines)
 
-      # 2-element tuples are represented as literal {a, b}
-      # Other sizes use {:{}, meta, elements}
+      # 2-element tuples are represented as literal {a, b} and are encodable
+      # Other sizes use {:{}, meta, elements} which is NOT a primitive literal
       ast =
         case elements do
-          [a, b] -> {a, b}
-          _ -> {:{}, meta, elements}
+          [a, b] ->
+            # 2-element tuples are primitive literals - pass through literal_encoder
+            tuple = {a, b}
+            Builder.Helpers.literal(tuple, meta, state)
+
+          _ ->
+            # Other tuples are AST nodes, not primitives - don't encode
+            {:{}, meta, elements}
         end
 
       {:ok, ast, state, log}

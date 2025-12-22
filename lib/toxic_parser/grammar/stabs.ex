@@ -15,6 +15,7 @@ defmodule ToxicParser.Grammar.Stabs do
   # After leading semicolon: either close paren (empty) or stab content
   def parse_paren_stab_or_empty(
         open_meta,
+        newlines,
         %State{} = state,
         %Context{} = ctx,
         %EventLog{} = log,
@@ -24,22 +25,31 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, %{kind: :")"} = close_tok, _} ->
         # (;) -> empty stab with semicolon
         # Output: {:__block__, [closing: [...], line: L, column: C], []}
+        # NOTE: Empty (;) parens don't include newlines in metadata
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta = token_meta(close_tok.metadata)
-        meta = Meta.closing_meta(open_meta, close_meta)
+        meta = Meta.closing_meta(open_meta, close_meta, 0)
         ast = {:__block__, meta, []}
         # Continue with Pratt.led to handle trailing operators
         Pratt.led(ast, state, log, min_bp, ctx)
 
       _ ->
         # Parse stab expression(s) after leading semicolon
-        parse_paren_stab(open_meta, state, ctx, log, min_bp)
+        parse_paren_stab(open_meta, newlines, state, ctx, log, min_bp)
     end
   end
 
   # Parse stab expressions inside parens
   # min_bp controls whether to continue with led() for trailing operators
-  def parse_paren_stab(open_meta, %State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp) do
+  # newlines is the count of newlines after the opening paren
+  def parse_paren_stab(
+        open_meta,
+        newlines,
+        %State{} = state,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp
+      ) do
     with {:ok, items, state, log} <- parse_stab_items_until([], state, ctx, log, :")") do
       state = EOE.skip(state)
 
@@ -50,10 +60,20 @@ defmodule ToxicParser.Grammar.Stabs do
           result =
             case check_stab(items) do
               :stab ->
-                collect_stab(items)
+                # For stab clauses in parens, encode the stab list through literal_encoder
+                # This matches Elixir's behavior where parenthesized stabs get wrapped
+                stab_list = collect_stab(items)
+                # Include newlines in paren_meta if > 0
+                paren_meta = Meta.closing_meta(open_meta, close_meta, newlines)
+                ToxicParser.Builder.Helpers.literal(stab_list, paren_meta, state)
 
               _ ->
-                unwrap_single_non_stab_with_parens(Enum.reverse(items), open_meta, close_meta)
+                unwrap_single_non_stab_with_parens(
+                  Enum.reverse(items),
+                  open_meta,
+                  close_meta,
+                  newlines
+                )
             end
 
           Pratt.led(result, state, log, min_bp, ctx)
@@ -73,7 +93,12 @@ defmodule ToxicParser.Grammar.Stabs do
   # Unwrap a single non-stab expression from a list with parens metadata
   # Stab clauses are kept as lists: [{:->, ...}]
   # Plain expressions are unwrapped and get parens metadata added (matching Elixir's build_block)
-  defp unwrap_single_non_stab_with_parens([{:->, _, _} | _] = stabs, _open_meta, _close_meta) do
+  defp unwrap_single_non_stab_with_parens(
+         [{:->, _, _} | _] = stabs,
+         _open_meta,
+         _close_meta,
+         _newlines
+       ) do
     stabs
   end
 
@@ -83,7 +108,8 @@ defmodule ToxicParser.Grammar.Stabs do
   defp unwrap_single_non_stab_with_parens(
          [{op, _meta, [_single_arg]} = expr],
          _open_meta,
-         _close_meta
+         _close_meta,
+         _newlines
        )
        when op in [:!, :not] do
     {:__block__, [], [expr]}
@@ -92,23 +118,29 @@ defmodule ToxicParser.Grammar.Stabs do
   defp unwrap_single_non_stab_with_parens(
          [{:unquote_splicing, _meta, [_]} = single],
          open_meta,
-         close_meta
+         close_meta,
+         newlines
        ) do
-    {:__block__, Meta.closing_meta(open_meta, close_meta), [single]}
+    {:__block__, Meta.closing_meta(open_meta, close_meta, newlines), [single]}
   end
 
-  defp unwrap_single_non_stab_with_parens([{name, meta, args}], open_meta, close_meta)
+  defp unwrap_single_non_stab_with_parens([{name, meta, args}], open_meta, close_meta, _newlines)
        when is_list(meta) do
     # Single 3-tuple expression - add parens metadata like Elixir's build_block does
+    # For parens metadata, Elixir uses: [line: L, column: C, closing: [...]]
+    # (base_meta first, no newlines for single-expression parens)
     parens_meta = open_meta ++ [closing: close_meta]
     {name, [parens: parens_meta] ++ meta, args}
   end
 
-  defp unwrap_single_non_stab_with_parens([single], _open_meta, _close_meta), do: single
+  defp unwrap_single_non_stab_with_parens([single], _open_meta, _close_meta, _newlines),
+    do: single
 
   # Multiple non-stab expressions - wrap in __block__ with closing metadata
-  defp unwrap_single_non_stab_with_parens(exprs, open_meta, close_meta) when is_list(exprs) do
-    meta = [closing: close_meta] ++ open_meta
+  # NOTE: Non-stab expressions in parens don't get newlines in metadata (only stab lists do)
+  defp unwrap_single_non_stab_with_parens(exprs, open_meta, close_meta, _newlines)
+       when is_list(exprs) do
+    meta = Meta.closing_meta(open_meta, close_meta, 0)
     {:__block__, meta, exprs}
   end
 
@@ -804,7 +836,7 @@ defmodule ToxicParser.Grammar.Stabs do
             {:ok, ast, state, log}
 
           # Handle quoted keyword key - parse value and return as keyword pair
-          {:keyword_key, key_atom, state, log} ->
+          {:keyword_key, key_atom, key_meta, state, log} ->
             state = EOE.skip(state)
 
             with {:ok, value_ast, state, log} <-
@@ -814,7 +846,8 @@ defmodule ToxicParser.Grammar.Stabs do
                      log,
                      @stab_pattern_min_bp
                    ) do
-              {:ok, [{key_atom, value_ast}], state, log}
+              key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
+              {:ok, [{key_ast, value_ast}], state, log}
             end
 
           {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->

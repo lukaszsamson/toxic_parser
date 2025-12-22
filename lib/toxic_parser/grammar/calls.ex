@@ -25,7 +25,7 @@ defmodule ToxicParser.Grammar.Calls do
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
-          | {:keyword_key, term(), term(), term()}
+          | {:keyword_key, term(), term(), term(), term()}
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
 
   @doc """

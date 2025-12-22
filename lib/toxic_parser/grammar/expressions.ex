@@ -102,11 +102,12 @@ defmodule ToxicParser.Grammar.Expressions do
               {:ok, ast, state, log} ->
                 {:ok, ast, state, log}
 
-              {:keyword_key, key_atom, state, log} ->
+              {:keyword_key, key_atom, key_meta, state, log} ->
                 state = EOE.skip(state)
 
                 with {:ok, value_ast, state, log} <- expr(state, keyword_value_context(ctx), log) do
-                  {:ok, [{key_atom, value_ast}], state, log}
+                  key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
+                  {:ok, [{key_ast, value_ast}], state, log}
                 end
 
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->
@@ -122,12 +123,13 @@ defmodule ToxicParser.Grammar.Expressions do
                   {:ok, ast, state, log} ->
                     {:ok, ast, state, log}
 
-                  {:keyword_key, key_atom, state, log} ->
+                  {:keyword_key, key_atom, key_meta, state, log} ->
                     state = EOE.skip(state)
 
                     with {:ok, value_ast, state, log} <-
                            expr(state, keyword_value_context(ctx), log) do
-                      {:ok, [{key_atom, value_ast}], state, log}
+                      key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
+                      {:ok, [{key_ast, value_ast}], state, log}
                     end
 
                   {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log} ->

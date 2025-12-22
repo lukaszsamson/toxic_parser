@@ -6,9 +6,24 @@ defmodule ToxicParser.Builder.Helpers do
   parses without a post-pass.
   """
 
-  @doc "Returns a literal AST (unchanged)."
-  @spec literal(term()) :: term()
-  def literal(value), do: value
+  @doc "Returns a literal AST, optionally encoded using literal_encoder."
+  @spec literal(term(), keyword(), ToxicParser.State.t() | nil) :: term()
+  def literal(value, meta \\ [], state \\ nil)
+
+  def literal(value, meta, %{opts: opts} = _state) do
+    case Keyword.get(opts, :literal_encoder) do
+      nil ->
+        value
+
+      encoder when is_function(encoder, 2) ->
+        case encoder.(value, meta) do
+          {:ok, encoded} -> encoded
+          {:error, _reason} -> value
+        end
+    end
+  end
+
+  def literal(value, _meta, nil), do: value
 
   @doc "Builds a unary op AST node."
   @spec unary(atom(), Macro.t(), keyword()) :: Macro.t()

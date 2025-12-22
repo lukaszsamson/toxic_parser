@@ -451,7 +451,7 @@ defmodule ToxicParser.Grammar.Maps do
             handle_map_update_after_base_expr(base_expr, state, log)
         end
 
-      {:keyword_key, _, _state, _} ->
+      {:keyword_key, _, _, _state, _} ->
         if starts_with_quoted_kw_key? do
           {:not_update, state}
         else
@@ -689,7 +689,7 @@ defmodule ToxicParser.Grammar.Maps do
             {:not_update, state}
         end
 
-      {:keyword_key, _, state, _} ->
+      {:keyword_key, _, _, state, _} ->
         raise "dead code"
         {:not_update, state}
 

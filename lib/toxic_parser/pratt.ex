@@ -95,7 +95,7 @@ defmodule ToxicParser.Pratt do
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
           | {:error, term(), State.t(), EventLog.t()}
-          | {:keyword_key, term(), term(), term()}
+          | {:keyword_key, term(), term(), term(), term()}
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term()}
 
   defp ensure_no_parens_extension_opt(opts) do
@@ -124,7 +124,7 @@ defmodule ToxicParser.Pratt do
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
-      {:keyword_key, _, _, _} = keyword_key -> keyword_key
+      {:keyword_key, _, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
       other -> Result.normalize_error(other, log)
     end
@@ -192,7 +192,7 @@ defmodule ToxicParser.Pratt do
     else
       {:eof, state} -> {:error, :unexpected_eof, state, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
-      {:keyword_key, _, _, _} = keyword_key -> keyword_key
+      {:keyword_key, _, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _} = keyword_key -> keyword_key
       other -> Result.normalize_error(other, log)
     end
@@ -372,12 +372,12 @@ defmodule ToxicParser.Pratt do
           call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
           parse_no_parens_call_nud_with_min_bp(token, state, context, log, call_min_bp, opts)
         else
-          ast = literal_to_ast(token)
+          ast = literal_to_ast(token, state)
           maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks, opts)
         end
 
       _ ->
-        ast = literal_to_ast(token)
+        ast = literal_to_ast(token, state)
         maybe_attach_do_block(ast, token, state, context, log, min_bp, allow_do_blocks, opts)
     end
   end
@@ -398,13 +398,15 @@ defmodule ToxicParser.Pratt do
 
   # Parse capture_int followed by int (e.g., &1, &2)
   # Rule: access_expr -> capture_int int : build_unary_op('$1', number_value('$2'))
+  # NOTE: For capture arguments without whitespace (&1, &2, etc.), the integer
+  # is NOT passed through literal_encoder. Only `& 1` (with space) gets encoded.
   defp parse_capture_int(capture_token, state, log) do
     case TokenAdapter.next(state) do
-      {:ok, %{kind: :int} = int_token, state} ->
+      {:ok, %{kind: :int, raw: {:int, {_, _, parsed_value}, _raw_string}}, state} ->
         meta = build_meta(capture_token.metadata)
-        # Extract the integer value from the int token
-        int_value = literal_to_ast(int_token)
-        ast = {:&, meta, [int_value]}
+        # For capture arguments (&1, &2, etc.), DON'T encode the integer
+        # This matches Elixir's behavior where &1 is NOT encoded but & 1 IS
+        ast = {:&, meta, [parsed_value]}
         {:ok, ast, state, log}
 
       {:ok, other_token, state} ->
@@ -2003,12 +2005,13 @@ defmodule ToxicParser.Pratt do
               led(combined, state, log, min_bp, context)
 
             # String was a quoted keyword key - parse value and handle as keyword list RHS
-            {:keyword_key, key_atom, state, log} ->
+            {:keyword_key, key_atom, key_meta, state, log} ->
               state = EOE.skip(state)
 
               with {:ok, value_ast, state, log} <-
                      parse_with_min_bp(state, rhs_context, log, rhs_min_bp) do
-                kw_list = [{key_atom, value_ast}]
+                key_ast = Builder.Helpers.literal(key_atom, key_meta, state)
+                kw_list = [{key_ast, value_ast}]
                 # Check for more keywords after comma
                 handle_when_keyword_continuation(
                   kw_list,
@@ -2221,80 +2224,135 @@ defmodule ToxicParser.Pratt do
 
   defp build_meta_from_location(_), do: []
 
+  # Encode a literal value using the literal_encoder if provided
+  # The encoder receives (literal, metadata) and returns {:ok, encoded} or {:error, reason}
+  @doc false
+  def encode_literal(value, meta, state) do
+    case Keyword.get(state.opts, :literal_encoder) do
+      nil ->
+        value
+
+      encoder when is_function(encoder, 2) ->
+        case encoder.(value, meta) do
+          {:ok, encoded} -> encoded
+          # For error case, we just return the value unchanged
+          # The error should be handled by the caller in strict mode
+          {:error, _reason} -> value
+        end
+    end
+  end
+
   # Integer: extract parsed value from raw token metadata
-  defp literal_to_ast(%{kind: :int, raw: {:int, {_, _, parsed_value}, _}}) do
-    parsed_value
+  # Include token: raw_string for token_metadata compatibility
+  defp literal_to_ast(
+         %{kind: :int, raw: {:int, {_, _, parsed_value}, raw_string}, metadata: meta},
+         state
+       ) do
+    # Add token metadata for literal_encoder (original string representation)
+    token_meta = [{:token, to_string(raw_string)} | build_meta(meta)]
+    encode_literal(parsed_value, token_meta, state)
   end
 
   # Float: extract parsed value from raw token metadata
-  defp literal_to_ast(%{kind: :flt, raw: {:flt, {_, _, parsed_value}, _}}) do
-    parsed_value
+  # Include token: raw_string for token_metadata compatibility
+  defp literal_to_ast(
+         %{kind: :flt, raw: {:flt, {_, _, parsed_value}, raw_string}, metadata: meta},
+         state
+       ) do
+    # Add token metadata for literal_encoder (original string representation)
+    token_meta = [{:token, to_string(raw_string)} | build_meta(meta)]
+    encode_literal(parsed_value, token_meta, state)
   end
 
   # Character literal: value is already the codepoint
-  defp literal_to_ast(%{kind: :char, value: codepoint}) do
-    codepoint
+  # Include token: raw_string for token_metadata compatibility
+  defp literal_to_ast(
+         %{kind: :char, raw: {:char, {_, _, raw_charlist}, _}, value: codepoint, metadata: meta},
+         state
+       ) do
+    # Add token metadata for literal_encoder (original string representation)
+    token_meta = [{:token, to_string(raw_charlist)} | build_meta(meta)]
+    encode_literal(codepoint, token_meta, state)
   end
 
   # Boolean literals: kind is the literal value itself
-  defp literal_to_ast(%{kind: true}), do: true
-  defp literal_to_ast(%{kind: false}), do: false
-  defp literal_to_ast(%{kind: nil}), do: nil
+  defp literal_to_ast(%{kind: true, metadata: meta}, state) do
+    encode_literal(true, build_meta(meta), state)
+  end
+
+  defp literal_to_ast(%{kind: false, metadata: meta}, state) do
+    encode_literal(false, build_meta(meta), state)
+  end
+
+  defp literal_to_ast(%{kind: nil, metadata: meta}, state) do
+    encode_literal(nil, build_meta(meta), state)
+  end
 
   # Atom: value is already the atom
-  defp literal_to_ast(%{kind: :atom, value: atom}) do
-    atom
+  # Include format: :atom for special atoms :true/:false/:nil (distinguishes :true from true)
+  defp literal_to_ast(%{kind: :atom, value: atom, metadata: meta}, state)
+       when atom in [true, false, nil] do
+    atom_meta = [{:format, :atom} | build_meta(meta)]
+    encode_literal(atom, atom_meta, state)
+  end
+
+  defp literal_to_ast(%{kind: :atom, value: atom, metadata: meta}, state) do
+    encode_literal(atom, build_meta(meta), state)
   end
 
   # Alias: wrap in __aliases__ tuple with :last metadata
-  defp literal_to_ast(%{kind: :alias, value: atom, metadata: meta}) do
+  # NOT encoded - aliases are AST nodes, not primitive literals
+  defp literal_to_ast(%{kind: :alias, value: atom, metadata: meta}, _state) do
     m = build_meta(meta)
     {:__aliases__, [last: m] ++ m, [atom]}
   end
 
   # Identifier: wrap in tuple with nil context (variable reference)
-  defp literal_to_ast(%{kind: :identifier, value: atom, metadata: meta}) do
+  # NOT encoded - identifiers are AST nodes, not primitive literals
+  defp literal_to_ast(%{kind: :identifier, value: atom, metadata: meta}, _state) do
     {atom, build_meta(meta), nil}
   end
 
   # Paren identifier: same as identifier, but mark it so led() knows to handle (
   # Add paren_call: true marker so led() can distinguish if(a) from if (a)
-  defp literal_to_ast(%{kind: :paren_identifier, value: atom, metadata: meta}) do
+  defp literal_to_ast(%{kind: :paren_identifier, value: atom, metadata: meta}, _state) do
     {atom, [paren_call: true] ++ build_meta(meta), nil}
   end
 
   # Do identifier: same as identifier
-  defp literal_to_ast(%{kind: :do_identifier, value: atom, metadata: meta}) do
+  defp literal_to_ast(%{kind: :do_identifier, value: atom, metadata: meta}, _state) do
     {atom, build_meta(meta), nil}
   end
 
   # Bracket identifier: same as identifier, [ will be handled by led
-  defp literal_to_ast(%{kind: :bracket_identifier, value: atom, metadata: meta}) do
+  defp literal_to_ast(%{kind: :bracket_identifier, value: atom, metadata: meta}, _state) do
     {atom, build_meta(meta), nil}
   end
 
   # Op identifier: same as identifier, for no-parens calls
-  defp literal_to_ast(%{kind: :op_identifier, value: atom, metadata: meta}) do
+  defp literal_to_ast(%{kind: :op_identifier, value: atom, metadata: meta}, _state) do
     {atom, build_meta(meta), nil}
   end
 
   # String (for future use)
-  defp literal_to_ast(%{kind: :string, value: value}) do
-    value
+  defp literal_to_ast(%{kind: :string, value: value, metadata: meta}, state) do
+    encode_literal(value, build_meta(meta), state)
   end
 
   # Range operator (..) as standalone expression
-  defp literal_to_ast(%{kind: :range_op, value: op, metadata: meta}) do
+  # NOT encoded - operators are AST nodes, not primitive literals
+  defp literal_to_ast(%{kind: :range_op, value: op, metadata: meta}, _state) do
     {op, build_meta(meta), []}
   end
 
   # Ellipsis operator (...) as standalone expression
-  defp literal_to_ast(%{kind: :ellipsis_op, value: op, metadata: meta}) do
+  # NOT encoded - operators are AST nodes, not primitive literals
+  defp literal_to_ast(%{kind: :ellipsis_op, value: op, metadata: meta}, _state) do
     {op, build_meta(meta), []}
   end
 
   # Fallback for other tokens
-  defp literal_to_ast(%{value: value}) do
+  defp literal_to_ast(%{value: value}, _state) do
     value
   end
 
