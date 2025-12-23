@@ -3670,7 +3670,9 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "repro 160" do
-      assert_conforms(";[@ eggs,().\ngamma.(bar.\n\nqux beta, beta: (bar;baz;(case\n\n;try\n;).gamma\n).gamma\n\n) do end !== baz foo.\n\nwith,delta: ... delta\n\n];if")
+      assert_conforms(
+        ";[@ eggs,().\ngamma.(bar.\n\nqux beta, beta: (bar;baz;(case\n\n;try\n;).gamma\n).gamma\n\n) do end !== baz foo.\n\nwith,delta: ... delta\n\n];if"
+      )
     end
 
     # test "repro 161" do

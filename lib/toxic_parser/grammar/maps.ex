@@ -238,7 +238,7 @@ defmodule ToxicParser.Grammar.Maps do
       # Container as operand (e.g., %@[]{} where [] is the operand)
       # In struct-base context we must not let the container consume trailing dots/calls,
       # because `{` belongs to the outer `%...{}` body.
-      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
+      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<", :%, :%{}] ->
         alias ToxicParser.Grammar.Containers
         Containers.parse(state, ctx, log, 10000)
 
@@ -305,7 +305,7 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       # Container as operand
-      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<"] ->
+      {:ok, %{kind: kind}, _} when kind in [:"(", :"[", :"{", :"<<", :%, :%{}] ->
         alias ToxicParser.Grammar.Containers
 
         with {:ok, base, state, log} <- Containers.parse(state, ctx, log, 10000) do

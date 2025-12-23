@@ -53,26 +53,20 @@ defmodule ToxicParser.ExprClass do
   end
 
   # AST nodes with non-atom name (e.g., {{:., _, [...]}, _, args} for remote calls)
-  def classify({callee, meta, args}) when is_list(meta) and is_list(args) do
-    # Remote calls (dot-calls) are always matched - they can't be no-parens calls
-    # Examples: Foo.bar(x, y), :erlang.binary_to_atom(x, y), etc.
-    # The callee for dot-calls is {:., _, [module, function]}
-    case callee do
-      {:., _, _} ->
-        # This is a remote/dot call - always matched
-        :matched
-
-      _ ->
-        # Anonymous function calls, etc.
-        # If it has :closing, it's a paren call -> matched
-        # Otherwise check for do-block
-        cond do
-          Keyword.has_key?(meta, :closing) -> :matched
-          Keyword.has_key?(meta, :do) -> :unmatched
-          length(args) > 1 -> :no_parens
-          length(args) == 1 -> classify(hd(args))
-          true -> :matched
-        end
+  def classify({_callee, meta, args}) when is_list(meta) and is_list(args) do
+    # Non-atom callees (remote/dot calls, anonymous function calls, etc.)
+    # can still have do-blocks attached and can still be ambiguous if they have
+    # multiple args without parentheses.
+    #
+    # Interpolation helpers (e.g. :erlang.binary_to_atom/2 in interpolated atoms)
+    # carry `:delimiter` metadata and must be treated as matched.
+    cond do
+      Keyword.has_key?(meta, :do) -> :unmatched
+      Keyword.has_key?(meta, :delimiter) -> :matched
+      Keyword.has_key?(meta, :closing) -> :matched
+      length(args) > 1 -> :no_parens
+      length(args) == 1 -> classify(hd(args))
+      true -> :matched
     end
   end
 

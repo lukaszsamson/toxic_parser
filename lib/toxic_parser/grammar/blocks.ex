@@ -11,7 +11,7 @@ defmodule ToxicParser.Grammar.Blocks do
 
   alias ToxicParser.{Builder, Context, EventLog, Pratt, Result, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{EOE, Stabs}
+  alias ToxicParser.Grammar.Stabs
 
   @type result ::
           {:ok, Macro.t(), State.t(), EventLog.t()}
@@ -47,8 +47,17 @@ defmodule ToxicParser.Grammar.Blocks do
     fn_meta = Builder.Helpers.token_meta(fn_tok.metadata)
     log = enter_scope(log, :fn, fn_tok.metadata)
 
-    # Skip optional EOE after fn and count newlines (not semicolons)
-    {state, newlines} = EOE.skip_newlines_only(state, 0)
+    # In elixir_parser.yrl, fn_eoe consumes at most one `eoe` token and
+    # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
+    {state, newlines} =
+      case TokenAdapter.peek(state) do
+        {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+          {:ok, _eoe, state} = TokenAdapter.next(state)
+          {state, n}
+
+        _ ->
+          {state, 0}
+      end
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
     with {:ok, clauses, state, log} <- Stabs.parse_stab_eoe_until([], state, ctx, log, :end),
