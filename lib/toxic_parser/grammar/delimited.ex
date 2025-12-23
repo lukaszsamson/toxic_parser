@@ -37,9 +37,11 @@ defmodule ToxicParser.Grammar.Delimited do
           allow_empty?: boolean(),
           allow_trailing_comma?: boolean(),
           stop_on_unexpected?: boolean(),
-          on_no_item_after_separator: (map(), State.t(), term(), EventLog.t() ->
+          on_no_item_after_separator: (token(), State.t(), term(), EventLog.t() ->
                                          {:error, term(), State.t(), EventLog.t()})
         ]
+
+  @type token :: tuple()
 
   @default_opts [
     separator: :",",
@@ -90,7 +92,8 @@ defmodule ToxicParser.Grammar.Delimited do
     state = maybe_skip_eoe(state, opts, :initial)
 
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, state} ->
+      {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
         if kind in close_kinds do
           if opts[:allow_empty?] do
             {:ok, [], state, log}
@@ -136,7 +139,8 @@ defmodule ToxicParser.Grammar.Delimited do
         separator = opts[:separator]
 
         case TokenAdapter.peek(state) do
-          {:ok, %{kind: kind}, state} ->
+          {:ok, tok, state} ->
+            kind = TokenAdapter.kind(tok)
             cond do
               kind in close_kinds ->
                 {:ok, Enum.reverse([item | acc_rev]), state, log}
@@ -146,7 +150,8 @@ defmodule ToxicParser.Grammar.Delimited do
                 state = maybe_skip_eoe(state, opts, :after_separator)
 
                 case TokenAdapter.peek(state) do
-                  {:ok, %{kind: kind}, state} ->
+                  {:ok, tok, state} ->
+                    kind = TokenAdapter.kind(tok)
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
                         {:ok, Enum.reverse([item | acc_rev]), state, log}
@@ -202,8 +207,8 @@ defmodule ToxicParser.Grammar.Delimited do
         case after_sep_tok do
           nil ->
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: kind}, state} ->
-                {:error, {:expected, :item, got: kind}, state, log}
+              {:ok, tok, state} ->
+                {:error, {:expected, :item, got: TokenAdapter.kind(tok)}, state, log}
 
               {:eof, state} ->
                 if eof_is_close? do

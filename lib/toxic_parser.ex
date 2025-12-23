@@ -204,7 +204,11 @@ defmodule ToxicParser do
   defp check_remaining_tokens(_state, _mode), do: :ok
 
   # Format a token for error messages
-  defp format_token(%{kind: kind, value: value}) do
+  # Tokens are raw tuples: {kind, meta}, {kind, meta, value}, or {kind, meta, v1, v2}
+  defp format_token(token) when is_tuple(token) do
+    kind = TokenAdapter.kind(token)
+    value = TokenAdapter.value(token)
+
     case kind do
       :bin_string_start -> format_string_token(value)
       :list_string_start -> format_charlist_token(value)

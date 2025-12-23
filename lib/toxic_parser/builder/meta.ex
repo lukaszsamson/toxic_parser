@@ -2,7 +2,6 @@ defmodule ToxicParser.Builder.Meta do
   @moduledoc false
 
   alias ToxicParser.{State, TokenAdapter}
-  alias ToxicParser.Builder.Helpers
   alias ToxicParser.Grammar.EOE
 
   @spec consume_closing(State.t(), atom()) ::
@@ -12,11 +11,12 @@ defmodule ToxicParser.Builder.Meta do
     {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
     case TokenAdapter.next(state) do
-      {:ok, %{kind: ^expected_kind} = tok, state} ->
-        {:ok, Helpers.token_meta(tok.metadata), trailing_newlines, state}
-
       {:ok, tok, state} ->
-        {:error, {:expected, expected_kind, got: tok.kind}, state}
+        if TokenAdapter.kind(tok) == expected_kind do
+          {:ok, TokenAdapter.token_meta(tok), trailing_newlines, state}
+        else
+          {:error, {:expected, expected_kind, got: TokenAdapter.kind(tok)}, state}
+        end
 
       {:eof, state} ->
         {:error, :unexpected_eof, state}

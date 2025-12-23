@@ -51,23 +51,25 @@ defmodule ToxicParser.Grammar.EOE do
     end
   end
 
-  @spec build_eoe_meta(map()) :: keyword()
-  def build_eoe_meta(%{kind: :eoe, value: %{newlines: newlines}, metadata: meta})
-      when is_integer(newlines) do
-    [newlines: newlines] ++ Helpers.token_meta(meta)
+  @doc """
+  Build metadata for an EOE token.
+  EOE tokens are 3-tuples: {:eoe, meta, %{source: :eol | :semicolon, newlines: count}}
+  """
+  @spec build_eoe_meta(tuple()) :: keyword()
+  def build_eoe_meta({:eoe, _meta, %{newlines: newlines}} = token) when is_integer(newlines) do
+    [newlines: newlines] ++ Helpers.token_meta(token)
   end
 
-  def build_eoe_meta(%{kind: :eoe, metadata: meta}) do
-    raise "dead code"
-    Helpers.token_meta(meta)
+  def build_eoe_meta({:eoe, _meta, _value} = token) do
+    Helpers.token_meta(token)
   end
 
   @spec skip_with_meta(State.t(), keyword() | nil) :: {State.t(), keyword()}
   def skip_with_meta(%State{} = state, first_meta \\ nil) do
     case Layout.peek_sep(state) do
-      {:ok, {:eoe, meta, _value}, state} ->
+      {:ok, {:eoe, _meta, _value} = eoe_tok, state} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
-        new_meta = first_meta || Helpers.token_meta(meta)
+        new_meta = first_meta || Helpers.token_meta(eoe_tok)
         skip_with_meta(state, new_meta)
 
       :none ->

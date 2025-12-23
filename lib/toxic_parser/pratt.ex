@@ -37,6 +37,7 @@ defmodule ToxicParser.Pratt do
   }
 
   import Keywords, only: [{:is_keyword_list_result, 1}]
+  import TokenAdapter, only: [{:is_kind, 2}]
 
   # Binary-only operators that cannot start an expression
   # These have binary precedence but no unary form
@@ -228,10 +229,10 @@ defmodule ToxicParser.Pratt do
     # Pass through options like stop_at_assoc to string parsing
     led_opts = Keyword.take(opts, [:stop_at_assoc])
 
-    case token.kind do
+    case TokenAdapter.kind(token) do
       :error_token ->
-        meta = build_meta(token.metadata)
-        ast = Builder.Helpers.error(token.value, meta)
+        meta = TokenAdapter.token_meta(token)
+        ast = Builder.Helpers.error(TokenAdapter.value(token), meta)
         {:ok, ast, state, log}
 
       :capture_int ->
@@ -288,7 +289,7 @@ defmodule ToxicParser.Pratt do
 
       # kw_identifier at expression position is a syntax error
       :kw_identifier ->
-        {:error, syntax_error_before(build_meta(token.metadata), token.value), state, log}
+        {:error, syntax_error_before(TokenAdapter.token_meta(token), TokenAdapter.value(token)), state, log}
 
       _ ->
         nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts)
@@ -298,7 +299,7 @@ defmodule ToxicParser.Pratt do
   # allow_containers: when false (e.g., struct base parsing), don't parse no-parens calls
   # The grammar's map_base_expr only produces bare identifiers via sub_matched_expr
   defp nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts) do
-    case Precedence.unary(token.kind) do
+    case Precedence.unary(TokenAdapter.kind(token)) do
       {_bp, _assoc} ->
         # Pass outer min_bp for trailing led(), not the unary's own precedence.
         # The operand_min_bp is computed inside parse_unary from the operator's precedence.
@@ -306,39 +307,39 @@ defmodule ToxicParser.Pratt do
 
       nil ->
         cond do
-          token.kind == :dual_op ->
+          TokenAdapter.kind(token) == :dual_op ->
             # Pass outer min_bp for trailing led()
             parse_unary(token, state, context, log)
 
           # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
-          token.kind == :ternary_op and token.value == :"//" ->
+          TokenAdapter.kind(token) == :ternary_op and TokenAdapter.value(token) == :"//" ->
             parse_ternary_unary(token, state, context, log)
 
           # Binary-only operators cannot start an expression
           # e.g., "1 + * 3" should error because * cannot follow +
-          is_binary_only_op(token.kind) ->
-            meta = build_meta(token.metadata)
-            {:error, syntax_error_before(meta, token.value), state, log}
+          is_binary_only_op(TokenAdapter.kind(token)) ->
+            meta = TokenAdapter.token_meta(token)
+            {:error, syntax_error_before(meta, TokenAdapter.value(token)), state, log}
 
           # EOE tokens (semicolons) cannot start an expression
           # e.g., "1+;\n2" should error because ; cannot follow +
           # Note: newlines are handled separately by EOE.skip_newlines_only
-          token.kind == :eoe and token.value.source == :semicolon ->
-            meta = build_meta(token.metadata)
+          TokenAdapter.kind(token) == :eoe and TokenAdapter.value(token).source == :semicolon ->
+            meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "';'"), state, log}
 
           # Comma cannot start an expression
           # e.g., "if true do\n  foo = [],\n  baz\nend" - comma after [] is invalid
-          token.kind == :"," ->
-            meta = build_meta(token.metadata)
+          TokenAdapter.kind(token) == :"," ->
+            meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "','"), state, log}
 
           # Block identifiers (after, else, catch, rescue) are only valid as block labels
           # They cannot be used as variables or expressions outside block context
           # e.g., "after = 1" is invalid
-          token.kind == :block_identifier ->
-            meta = build_meta(token.metadata)
-            {:error, syntax_error_before(meta, "'#{token.value}'"), state, log}
+          TokenAdapter.kind(token) == :block_identifier ->
+            meta = TokenAdapter.token_meta(token)
+            {:error, syntax_error_before(meta, "'#{TokenAdapter.value(token)}'"), state, log}
 
           true ->
             nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts)
@@ -351,10 +352,10 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.peek(state) do
       {:ok, next_tok, _} ->
-        binary_bp = bp(next_tok.kind)
+        binary_bp = bp(TokenAdapter.kind(next_tok))
 
         allow_no_parens =
-          token.kind == :op_identifier or
+          TokenAdapter.kind(token) == :op_identifier or
             (is_nil(binary_bp) and
                (NoParens.can_start_no_parens_arg?(next_tok) or
                   Keywords.starts_kw?(next_tok)))
@@ -379,7 +380,7 @@ defmodule ToxicParser.Pratt do
           false | literal_kinds
         ]
 
-        if token.kind not in excluded_kinds and
+        if TokenAdapter.kind(token) not in excluded_kinds and
              allow_no_parens and
              allow_containers do
           call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
@@ -415,15 +416,15 @@ defmodule ToxicParser.Pratt do
   # is NOT passed through literal_encoder. Only `& 1` (with space) gets encoded.
   defp parse_capture_int(capture_token, state, log) do
     case TokenAdapter.next(state) do
-      {:ok, %{kind: :int, raw: {:int, {_, _, parsed_value}, _raw_string}}, state} ->
-        meta = build_meta(capture_token.metadata)
+      {:ok, {:int, {_, _, parsed_value}, _raw_string}, state} ->
+        meta = TokenAdapter.token_meta(capture_token)
         # For capture arguments (&1, &2, etc.), DON'T encode the integer
         # This matches Elixir's behavior where &1 is NOT encoded but & 1 IS
         ast = {:&, meta, [parsed_value]}
         {:ok, ast, state, log}
 
       {:ok, other_token, state} ->
-        {:error, {:expected, :int, got: other_token.kind}, state, log}
+        {:error, {:expected, :int, got: TokenAdapter.kind(other_token)}, state, log}
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}
@@ -439,21 +440,21 @@ defmodule ToxicParser.Pratt do
   defp parse_no_parens_call_nud_with_min_bp(callee_tok, state, context, log, min_bp, opts) do
     with {:ok, args, state, log} <-
            Calls.parse_no_parens_args([], state, context, log, min_bp, opts) do
-      callee = callee_tok.value
-      base_meta = Builder.Helpers.token_meta(callee_tok.metadata)
+      callee = TokenAdapter.value(callee_tok)
+      base_meta = TokenAdapter.token_meta(callee_tok)
 
       # Check if there's a do-block following that will attach to this call.
       # Only counts as "has do-block" if context allows do-block attachment.
       # When context has allow_do_block: false, the do-block belongs to an outer call.
       has_do_block =
         Context.allow_do_block?(context) and
-          match?({:ok, %{kind: :do}, _}, TokenAdapter.peek(state))
+          match?({:ok, {:do, _}, _}, TokenAdapter.peek(state))
 
       # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
       # Don't add it when there's a do-block because then there's no ambiguity
       meta =
-        if callee_tok.kind == :op_identifier and length(args) == 1 and not has_do_block do
+        if TokenAdapter.kind(callee_tok) == :op_identifier and length(args) == 1 and not has_do_block do
           [ambiguous_op: nil] ++ base_meta
         else
           base_meta
@@ -470,11 +471,11 @@ defmodule ToxicParser.Pratt do
     # For ellipsis/range operators, check for EOE terminator BEFORE skipping
     # This ensures "x...;" correctly sees the ; as a terminator
     # and doesn't skip it, allowing `led` to see the EOE separation
-    if op_token.kind in [:ellipsis_op, :range_op] do
+    if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] do
       case TokenAdapter.peek(state) do
-        {:ok, %{kind: :eoe}, _} ->
+        {:ok, tok, _} when is_kind(tok, :eoe) ->
           # EOE is a terminator for ellipsis/range - return standalone
-          ast = {op_token.value, build_meta(op_token.metadata), []}
+          ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, log}
 
         _ ->
@@ -523,33 +524,34 @@ defmodule ToxicParser.Pratt do
         # dual_op can be unary (+/-), ternary_op can be unary (//)
         # so they should NOT trigger standalone ellipsis
         is_pure_binary_op =
-          operand_token.kind not in [:dual_op, :ternary_op] and
-            Precedence.binary(operand_token.kind) != nil
+          TokenAdapter.kind(operand_token) not in [:dual_op, :ternary_op] and
+            Precedence.binary(TokenAdapter.kind(operand_token)) != nil
 
-        if op_token.kind in [:ellipsis_op, :range_op] and
-             (is_pure_binary_op or operand_token.kind in ellipsis_terminators) do
-          ast = {op_token.value, build_meta(op_token.metadata), []}
+        if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] and
+             (is_pure_binary_op or TokenAdapter.kind(operand_token) in ellipsis_terminators) do
+          ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           state = TokenAdapter.pushback(state, operand_token)
           {:ok, ast, state, log}
           # Special case: at_op + bracket_identifier (e.g., @foo[1])
           # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
           # The @foo becomes the subject, bracket access is handled at outer level
         else
-          if op_token.kind == :at_op do
+          if TokenAdapter.kind(op_token) == :at_op do
             at_bp =
               case Precedence.unary(:at_op) do
                 {bp, _assoc} -> bp
                 _ -> 320
               end
 
-            if operand_token.kind == :bracket_identifier do
-              op = op_token.value
-              meta = build_meta(op_token.metadata)
-              operand = Builder.Helpers.from_token(%{operand_token | kind: :identifier})
+            if TokenAdapter.kind(operand_token) == :bracket_identifier do
+              op = TokenAdapter.value(op_token)
+              meta = TokenAdapter.token_meta(op_token)
+              # Use raw meta tuple (not keyword list) for from_token compatibility
+              operand = Builder.Helpers.from_token({:identifier, TokenAdapter.meta(operand_token), TokenAdapter.value(operand_token)})
               ast = Builder.Helpers.unary(op, operand, meta)
 
               case TokenAdapter.peek(state) do
-                {:ok, %{kind: :"["}, _} ->
+                {:ok, tok, _} when is_kind(tok, :"[") ->
                   led_bracket(ast, state, log, at_bp, context, [])
 
                 _ ->
@@ -601,7 +603,7 @@ defmodule ToxicParser.Pratt do
                     # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
                     # This matches cases like `@ @ (case ... end)[x]` where the bracket applies to the inner @,
                     # and the outer @ wraps the whole access_expr.
-                    {:ok, %{kind: :"["}, _} ->
+                    {:ok, tok, _} when is_kind(tok, :"[") ->
                       if match?({:@, _, [_]}, operand_base) do
                         with {:ok, operand_with_bracket, state_after_bracket, log} <-
                                led_bracket(
@@ -622,7 +624,7 @@ defmodule ToxicParser.Pratt do
 
                     {:ok, next_tok, _} ->
                       if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
-                        case {next_tok.kind, bp(next_tok.kind)} do
+                        case {TokenAdapter.kind(next_tok), bp(TokenAdapter.kind(next_tok))} do
                           {_, nil} ->
                             {:ok, operand_base,
                              TokenAdapter.drop_checkpoint(state_after_base, ref), log}
@@ -662,8 +664,8 @@ defmodule ToxicParser.Pratt do
                   end
 
                 with {:ok, operand, state, log} <- operand_result do
-                  op = op_token.value
-                  meta = build_meta(op_token.metadata)
+                  op = TokenAdapter.value(op_token)
+                  meta = TokenAdapter.token_meta(op_token)
                   ast = Builder.Helpers.unary(op, operand, meta)
                   {:ok, ast, state, log}
                 end
@@ -695,28 +697,28 @@ defmodule ToxicParser.Pratt do
             # Bracket access for @ is handled separately in led_bracket.
             {_next_token, next_token_kind, next_token_value} =
               case TokenAdapter.peek(state) do
-                {:ok, tok, _} -> {tok, tok.kind, tok.value}
+                {:ok, tok, _} -> {tok, TokenAdapter.kind(tok), TokenAdapter.value(tok)}
                 _ -> {nil, nil, nil}
               end
 
             operand_min_bp =
               cond do
-                operand_token.kind == :do_identifier and Context.allow_do_block?(context) ->
+                TokenAdapter.kind(operand_token) == :do_identifier and Context.allow_do_block?(context) ->
                   0
 
-                operand_token.kind == :identifier and next_token_kind == :do_identifier and
+                TokenAdapter.kind(operand_token) == :identifier and next_token_kind == :do_identifier and
                     Context.allow_do_block?(context) ->
                   0
 
-                operand_token.kind == :identifier and next_token_kind == :identifier and
+                TokenAdapter.kind(operand_token) == :identifier and next_token_kind == :identifier and
                   next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
-                op_token.kind in [:ellipsis_op, :range_op] ->
+                TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] ->
                   100
 
                 true ->
-                  case Precedence.unary(op_token.kind) do
+                  case Precedence.unary(TokenAdapter.kind(op_token)) do
                     {bp, _assoc} -> bp
                     nil -> 300
                   end
@@ -727,7 +729,7 @@ defmodule ToxicParser.Pratt do
             # Exception: ellipsis_op follows yecc rules and can take expr/no_parens_expr operands.
             # The outer context is preserved for led() after the unary is built.
             operand_context =
-              if op_token.kind == :ellipsis_op do
+              if TokenAdapter.kind(op_token) == :ellipsis_op do
                 cond do
                   # no_parens_expr -> ellipsis_op no_parens_expr
                   Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
@@ -764,10 +766,10 @@ defmodule ToxicParser.Pratt do
                     # to bind *inside* the unary operand by reparsing with min_bp=0.
                     if operand_context.allow_do_block and
                          (do_block_expr?(operand_base) or
-                            (op_token.kind in [:ellipsis_op, :range_op] and
+                            (TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] and
                                contains_do_block?(operand_base))) and
-                         not (op_token.kind == :dual_op and has_parens_meta?(operand_base)) do
-                      case bp(next_tok.kind) do
+                         not (TokenAdapter.kind(op_token) == :dual_op and has_parens_meta?(operand_base)) do
+                      case bp(TokenAdapter.kind(next_tok)) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           state_full = TokenAdapter.rewind(state_after_base, ref)
 
@@ -783,11 +785,11 @@ defmodule ToxicParser.Pratt do
                            log}
                       end
                     else
-                      if op_token.kind == :capture_op do
+                      if TokenAdapter.kind(op_token) == :capture_op do
                         function_capture? = function_capture_operand?(operand_base)
 
                         case {function_capture?, contains_do_block?(operand_base),
-                              bp(next_tok.kind)} do
+                              bp(TokenAdapter.kind(next_tok))} do
                           {false, true, next_bp}
                           when is_integer(next_bp) and next_bp < operand_min_bp ->
                             state_full = TokenAdapter.rewind(state_after_base, ref)
@@ -814,8 +816,8 @@ defmodule ToxicParser.Pratt do
                 end
 
               with {:ok, operand, state, log} <- operand_result do
-                op = op_token.value
-                meta = build_meta(op_token.metadata)
+                op = TokenAdapter.value(op_token)
+                meta = TokenAdapter.token_meta(op_token)
                 ast = Builder.Helpers.unary(op, operand, meta)
 
                 # After building the unary, continue with led() to handle trailing operators.
@@ -829,8 +831,8 @@ defmodule ToxicParser.Pratt do
 
       {:eof, state} ->
         # Special case: ... and .. can be standalone at EOF
-        if op_token.kind in [:ellipsis_op, :range_op] do
-          ast = {op_token.value, build_meta(op_token.metadata), []}
+        if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] do
+          ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, log}
         else
           {:error, :unexpected_eof, state, log}
@@ -862,8 +864,8 @@ defmodule ToxicParser.Pratt do
 
             # Not a range - this is an error but we still parse it as {:"//", meta, [left, step]}
             _ ->
-              op_meta = build_meta(op_token.metadata)
-              combined = {op_token.value, op_meta, [left, step]}
+              op_meta = TokenAdapter.token_meta(op_token)
+              combined = {TokenAdapter.value(op_token), op_meta, [left, step]}
               led(combined, state, log, min_bp, context)
           end
         end
@@ -880,7 +882,7 @@ defmodule ToxicParser.Pratt do
   # This produces: {:/, outer_meta, [{:/, inner_meta, nil}, rhs]}
   # where outer has column+1 and inner has original column
   defp parse_ternary_unary(op_token, state, context, log) do
-    meta = build_meta(op_token.metadata)
+    meta = TokenAdapter.token_meta(op_token)
 
     # Calculate inner/outer metadata with column adjustment
     {outer_meta, inner_meta} =
@@ -907,7 +909,7 @@ defmodule ToxicParser.Pratt do
             case TokenAdapter.peek(state_after_base) do
               {:ok, next_tok, _} ->
                 if do_block_expr?(operand_base) do
-                  case bp(next_tok.kind) do
+                  case bp(TokenAdapter.kind(next_tok)) do
                     nil ->
                       {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
                        log}
@@ -958,12 +960,12 @@ defmodule ToxicParser.Pratt do
   defp parse_rhs(token, state, context, log, min_bp, opts \\ []) do
     # Check if this is an identifier that could be a call with arguments
     cond do
-      Identifiers.classify(token.kind) != :other ->
+      Identifiers.classify(TokenAdapter.kind(token)) != :other ->
         # Handle identifier specially to preserve min_bp
         parse_rhs_identifier(token, state, context, log, min_bp, opts)
 
       # Container tokens need special handling to preserve min_bp
-      token.kind in [:"[", :"{", :"(", :"<<", :%, :%{}, :%] ->
+      TokenAdapter.kind(token) in [:"[", :"{", :"(", :"<<", :%, :%{}, :%] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Containers
 
@@ -971,7 +973,7 @@ defmodule ToxicParser.Pratt do
         Containers.parse(state, context, log, min_bp, opts)
 
       # String and quoted atom tokens need special handling to preserve min_bp
-      token.kind in [
+      TokenAdapter.kind(token) in [
         :bin_string_start,
         :list_string_start,
         :bin_heredoc_start,
@@ -1000,7 +1002,7 @@ defmodule ToxicParser.Pratt do
   # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
   defp parse_rhs_identifier(token, state, context, log, min_bp, opts) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} when token.kind == :paren_identifier ->
+      {:ok, {:"(", _}, _} when is_kind(token, :paren_identifier) ->
         # Paren call (no space before '(') - parse directly to preserve min_bp.
         # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp.
         # Pass opts through so do-blocks after paren call know the context.
@@ -1009,7 +1011,7 @@ defmodule ToxicParser.Pratt do
           maybe_nested_call_or_do_block(ast, state, log, min_bp, context, opts)
         end
 
-      {:ok, %{kind: :"("}, _} ->
+      {:ok, tok, _} when is_kind(tok, :"(") ->
         # `foo (expr)` is a no-parens call where the `(` begins a parenthesized
         # expression argument (it is NOT a paren-call like `foo(expr)`).
         # This matters because trailing operators (e.g. `foo (1 <<< 7) - 1`)
@@ -1024,7 +1026,7 @@ defmodule ToxicParser.Pratt do
           led(right, state, log, led_min_bp, context, opts)
         end
 
-      {:ok, %{kind: :do}, _} when context.allow_do_block ->
+      {:ok, {:do, _}, _} when context.allow_do_block ->
         # Do-block - delegate to Calls.parse_without_led
         state = TokenAdapter.pushback(state, token)
 
@@ -1036,7 +1038,7 @@ defmodule ToxicParser.Pratt do
           led(right, state, log, led_min_bp, context, opts)
         end
 
-      {:ok, %{kind: :do}, _} ->
+      {:ok, tok, _} when is_kind(tok, :do) ->
         # Do-blocks not allowed in this context (matched_expr); leave `do` for the caller.
         ast = Builder.Helpers.from_token(token)
         opts = ensure_no_parens_extension_opt(opts)
@@ -1047,7 +1049,7 @@ defmodule ToxicParser.Pratt do
           # Alias followed by [ is bracket access, not a no-parens call
           # Grammar: bracket_expr -> access_expr bracket_arg
           # Build alias AST and let led handle the [ as bracket access
-          token.kind == :alias and next_tok.kind == :"[" ->
+          TokenAdapter.kind(token) == :alias and TokenAdapter.kind(next_tok) == :"[" ->
             ast = Builder.Helpers.from_token(token)
             opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
@@ -1056,7 +1058,7 @@ defmodule ToxicParser.Pratt do
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
           # TODO: no coverage? only failing corpus
-          token.kind == :op_identifier and
+          TokenAdapter.kind(token) == :op_identifier and
               (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
 
@@ -1068,7 +1070,7 @@ defmodule ToxicParser.Pratt do
             end
 
           # Binary operator follows - just return identifier, led will handle with min_bp
-          bp(next_tok.kind) ->
+          bp(TokenAdapter.kind(next_tok)) ->
             ast = Builder.Helpers.from_token(token)
             opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
@@ -1109,7 +1111,7 @@ defmodule ToxicParser.Pratt do
   Used by parse_rhs_identifier to preserve min_bp for associativity.
   Also used by Maps.parse_unary_operand for %@i(){} patterns.
   """
-  @spec parse_paren_call_base(map(), State.t(), context(), EventLog.t()) :: result()
+  @spec parse_paren_call_base(tuple(), State.t(), context(), EventLog.t()) :: result()
   def parse_paren_call_base(callee_tok, %State{} = state, %Context{} = context, %EventLog{} = log) do
     {:ok, _open_tok, state} = TokenAdapter.next(state)
 
@@ -1120,10 +1122,10 @@ defmodule ToxicParser.Pratt do
            ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, context, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
-      callee_meta = build_meta(callee_tok.metadata)
+      callee_meta = TokenAdapter.token_meta(callee_tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-      ast = {callee_tok.value, meta, Enum.reverse(args)}
+      ast = {TokenAdapter.value(callee_tok), meta, Enum.reverse(args)}
       {:ok, ast, state, log}
     else
       other -> Result.normalize_error(other, log)
@@ -1139,7 +1141,7 @@ defmodule ToxicParser.Pratt do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
-    {state, eoe_tokens, _newlines_before_op} = peek_past_eoe(state)
+    {state, eoe_tokens, newlines_before_op} = peek_past_eoe(state)
 
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
@@ -1151,7 +1153,8 @@ defmodule ToxicParser.Pratt do
           min_bp,
           context,
           opts,
-          eoe_tokens
+          eoe_tokens,
+          newlines_before_op
         )
 
       {:eof, state} ->
@@ -1172,11 +1175,12 @@ defmodule ToxicParser.Pratt do
          min_bp,
          context,
          opts,
-         eoe_tokens
+         eoe_tokens,
+         newlines_before_op
        ) do
-    precedence = Precedence.binary(next_token.kind)
+    precedence = Precedence.binary(TokenAdapter.kind(next_token))
 
-    case {next_token.kind, precedence} do
+    case {TokenAdapter.kind(next_token), precedence} do
       # Parens call: identifier(args) or expr()(args) (nested call)
       # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
       # NOTE: Only treat as call if there's NO EOE between left and (
@@ -1228,7 +1232,8 @@ defmodule ToxicParser.Pratt do
       # - After newline EOE, it can continue the previous expression (e.g. "a\n..b").
       {kind, {bp, assoc}}
       when kind in [:range_op, :ellipsis_op] and bp >= min_bp and eoe_tokens != [] ->
-        if Enum.any?(eoe_tokens, &(&1.value.source == :semicolon)) do
+        # Check if any EOE token was a semicolon (using tuple pattern for raw tokens)
+        if Enum.any?(eoe_tokens, fn {:eoe, _meta, %{source: src}} -> src == :semicolon end) do
           state = pushback_eoe_tokens(state, eoe_tokens)
           {:ok, left, state, log}
         else
@@ -1249,7 +1254,7 @@ defmodule ToxicParser.Pratt do
         {:ok, left, state, log}
 
       {_, {bp, assoc}} when bp >= min_bp ->
-        led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+        led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
 
       # no_parens_expr extension: when context allows it, operators in @no_parens_op_expr_operators
       # can extend matched_expr to no_parens_expr REGARDLESS of min_bp.
@@ -1261,7 +1266,7 @@ defmodule ToxicParser.Pratt do
 
         if allow_extension? and min_bp == 0 and is_no_parens_op_expr?(kind) and
              Context.allow_no_parens_expr?(context) do
-          led_binary(left, state, log, min_bp, context, opts, bp, assoc)
+          led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
         else
           # No continuation operator found - push back EOE tokens
           state = pushback_eoe_tokens(state, eoe_tokens)
@@ -1323,14 +1328,14 @@ defmodule ToxicParser.Pratt do
 
   defp led_dot(left, state, log, min_bp, context, opts) do
     {:ok, dot_tok, state} = TokenAdapter.next(state)
-    dot_meta = build_meta(dot_tok.metadata)
+    dot_meta = TokenAdapter.token_meta(dot_tok)
 
     # Skip EOE after dot (allows newlines between dot and member: foo.\n bar)
     {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
     # Check for dot_container: expr.{...}
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"{"}, _} ->
+      {:ok, tok, _} when is_kind(tok, :"{") ->
         {:ok, _open, state} = TokenAdapter.next(state)
 
         with {:ok, args, newlines, close_meta, state, log} <-
@@ -1403,7 +1408,7 @@ defmodule ToxicParser.Pratt do
                 # it's a nested paren call: foo.bar()()
                 # When ( follows a simple identifier (allows_bracket = false), it means there's
                 # whitespace before (, so ( starts a no-parens argument: foo.e ()
-                {:ok, %{kind: :"("}, _} when not allows_bracket ->
+                {:ok, {:"(", _}, _} when not allows_bracket ->
                   with {:ok, args, state, log} <-
                          Calls.parse_no_parens_args([], state, context, log) do
                     combined = dot_to_no_parens_call(combined, args)
@@ -1412,7 +1417,7 @@ defmodule ToxicParser.Pratt do
                   end
 
                 # Nested paren call: foo.bar()() - rhs was already a call (allows_bracket = true)
-                {:ok, %{kind: :"("}, _} ->
+                {:ok, tok, _} when is_kind(tok, :"(") ->
                   {:ok, _open, state} = TokenAdapter.next(state)
                   # Skip leading EOE and count newlines
                   {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
@@ -1428,7 +1433,7 @@ defmodule ToxicParser.Pratt do
                     {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
                     case TokenAdapter.next(state) do
-                      {:ok, %{kind: :")"} = close_tok, state} ->
+                      {:ok, {:")", _} = close_tok, state} ->
                         # Only count trailing newlines for empty args
                         # (matches behavior in maybe_nested_call_or_do_block)
                         total_newlines =
@@ -1438,7 +1443,7 @@ defmodule ToxicParser.Pratt do
                             leading_newlines
                           end
 
-                        close_meta = build_meta(close_tok.metadata)
+                        close_meta = TokenAdapter.token_meta(close_tok)
 
                         # When followed by parens, convert to call form with proper metadata
                         combined =
@@ -1448,7 +1453,7 @@ defmodule ToxicParser.Pratt do
                         maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
 
                       {:ok, other, state} ->
-                        {:error, {:expected, :")", got: other.kind}, state, log}
+                        {:error, {:expected, :")", got: TokenAdapter.kind(other)}, state, log}
 
                       {:eof, state} ->
                         {:error, :unexpected_eof, state, log}
@@ -1458,12 +1463,12 @@ defmodule ToxicParser.Pratt do
                     end
                   end
 
-                {:ok, %{kind: :"["}, _} when allows_bracket ->
+                {:ok, {:"[", _}, _} when allows_bracket ->
                   # Bracket access: foo.bar[:key] - only when bracket access is allowed
                   # (no whitespace before [)
                   led(combined, state, log, min_bp, context, opts)
 
-                {:ok, %{kind: :do}, _} ->
+                {:ok, tok, _} when is_kind(tok, :do) ->
                   # Do-block after dot call: foo.bar() do...end
                   # Only handle when rhs was a call (combined has args list)
                   maybe_nested_call_or_do_block(combined, state, log, min_bp, context, opts)
@@ -1476,7 +1481,7 @@ defmodule ToxicParser.Pratt do
                   # 3. OR next token starts a keyword list
                   should_parse_no_parens =
                     expects_no_parens_call or Keywords.starts_kw?(next_tok) or
-                      (NoParens.can_start_no_parens_arg?(next_tok) and next_tok.kind != :dual_op)
+                      (NoParens.can_start_no_parens_arg?(next_tok) and TokenAdapter.kind(next_tok) != :dual_op)
 
                   if should_parse_no_parens do
                     with {:ok, args, state, log} <-
@@ -1525,10 +1530,10 @@ defmodule ToxicParser.Pratt do
         {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
         case TokenAdapter.next(state) do
-          {:ok, %{kind: :"]"} = close_tok, state} ->
+          {:ok, {:"]", _} = close_tok, state} ->
             # Build metadata with from_brackets, newlines, closing, line, column
-            open_meta = build_meta(open_tok.metadata)
-            close_meta = build_meta(close_tok.metadata)
+            open_meta = TokenAdapter.token_meta(open_tok)
+            close_meta = TokenAdapter.token_meta(close_tok)
 
             bracket_meta =
               Meta.closing_meta(open_meta, close_meta, leading_newlines, from_brackets: true)
@@ -1539,7 +1544,7 @@ defmodule ToxicParser.Pratt do
             led(combined, state, log, min_bp, context, opts)
 
           {:ok, other, state} ->
-            {:error, {:expected, :"]", got: other.kind}, state, log}
+            {:error, {:expected, :"]", got: TokenAdapter.kind(other)}, state, log}
 
           {:eof, state} ->
             {:error, :unexpected_eof, state, log}
@@ -1551,7 +1556,7 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc) do
+  defp led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op \\ 0) do
     {:ok, op_token, state} = TokenAdapter.next(state)
     # For right associativity, use same bp to allow chaining at same level
     # For left associativity, use bp+1 to prevent same-level ops from binding to RHS
@@ -1562,25 +1567,31 @@ defmodule ToxicParser.Pratt do
     #
     # IMPORTANT: Elixir's parser attaches `newlines` metadata to many operators based on
     # the EOL *after* the operator (see `*_op_eol` + `next_is_eol/2` in elixir_parser.yrl).
-    # We only incorporate EOE *before* the operator for pipe_op in map update syntax.
+    # For pipe_op specifically, we use newlines *before* the operator (for map update syntax).
     {state, newlines_after_op} = EOE.skip_newlines_only(state, 0)
 
     # Toxic encodes some line breaks as explicit :eoe tokens (after the operator)
     # and others as leading newline counts on the operator token itself.
-    token_leading_newlines = Map.get(op_token.metadata, :newlines, 0)
+    token_leading_newlines = TokenAdapter.newlines(op_token)
 
+    # For pipe_op, prefer newlines before the operator (for map update syntax)
+    # For other operators, use newlines after the operator
     effective_newlines =
-      if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
+      if TokenAdapter.kind(op_token) == :pipe_op and newlines_before_op > 0 do
+        newlines_before_op
+      else
+        if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
+      end
 
     case TokenAdapter.peek(state) do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
       # Only valid when no-parens extension is enabled.
-      {:ok, _rhs_tok, _} when op_token.kind == :when_op and context.allow_no_parens_expr ->
+      {:ok, _rhs_tok, _} when is_kind(op_token, :when_op) and context.allow_no_parens_expr ->
         case Keywords.try_parse_call_args_no_parens_kw(state, context, log) do
           {:ok, kw_list, state, log} ->
-            op = op_token.value
-            meta = build_meta_with_newlines(op_token.metadata, effective_newlines)
+            op = TokenAdapter.value(op_token)
+            meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), effective_newlines)
             combined = Builder.Helpers.binary(op, left, kw_list, meta)
             led(combined, state, log, min_bp, context, opts)
 
@@ -1602,7 +1613,7 @@ defmodule ToxicParser.Pratt do
         end
 
       # Special case: when operator in contexts without no-parens extension
-      {:ok, _rhs_tok, _} when op_token.kind == :when_op ->
+      {:ok, _rhs_tok, _} when is_kind(op_token, :when_op) ->
         parse_when_binary_rhs(
           state,
           left,
@@ -1618,7 +1629,7 @@ defmodule ToxicParser.Pratt do
       # Grammar rule: assoc_expr -> container_expr assoc_op_eol container_expr
       # The value of => should be a container_expr which includes pipe_op
       # So use min_bp=0 to allow | and other low-precedence operators in the value
-      {:ok, _rhs_tok, _} when op_token.kind == :assoc_op ->
+      {:ok, _rhs_tok, _} when is_kind(op_token, :assoc_op) ->
         parse_binary_rhs(
           state,
           left,
@@ -1659,7 +1670,7 @@ defmodule ToxicParser.Pratt do
     unary_operand = Keyword.get(opts, :unary_operand, false)
 
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} ->
+      {:ok, tok, _} when is_kind(tok, :"(") ->
         # Another paren call - parse it
         {:ok, _open_tok, state} = TokenAdapter.next(state)
 
@@ -1681,7 +1692,7 @@ defmodule ToxicParser.Pratt do
           other -> Result.normalize_error(other, log)
         end
 
-      {:ok, %{kind: :do}, _} ->
+      {:ok, tok, _} when is_kind(tok, :do) ->
         # When allow_do_block is false (e.g. parsing no-parens call arguments), do-blocks
         # belong to the outer call (e.g. `foo bar do ... end`) and must NOT attach to
         # the final argument expression (e.g. `bar do ... end`).
@@ -1849,11 +1860,11 @@ defmodule ToxicParser.Pratt do
             {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"}"}, _} ->
+              {:ok, tok, _} when is_kind(tok, :"}") ->
                 {:ok, {:kw_data, kw_list}, state, log}
 
-              {:ok, %{kind: kind}, state} ->
-                {:error, {:expected, :"}", got: kind}, state, log}
+              {:ok, tok, state} ->
+                {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, log}
 
               {:eof, state} ->
                 {:error, :unexpected_eof, state, log}
@@ -1880,14 +1891,14 @@ defmodule ToxicParser.Pratt do
         {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
         case TokenAdapter.next(state) do
-          {:ok, %{kind: :"}"} = close_tok, state} ->
-            close_meta = build_meta(close_tok.metadata)
+          {:ok, {:"}", _} = close_tok, state} ->
+            close_meta = TokenAdapter.token_meta(close_tok)
 
             {:ok, finalize_dot_container_items(tagged_items), leading_newlines, close_meta, state,
              log}
 
           {:ok, other, state} ->
-            {:error, {:expected, :"}", got: other.kind}, state, log}
+            {:error, {:expected, :"}", got: TokenAdapter.kind(other)}, state, log}
 
           {:eof, state} ->
             {:error, :unexpected_eof, state, log}
@@ -1901,7 +1912,7 @@ defmodule ToxicParser.Pratt do
 
   defp reject_initial_kw_data(state, container_ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"}"}, state} ->
+      {:ok, tok, state} when is_kind(tok, :"}") ->
         {:ok, state, log}
 
       {:ok, tok, state} ->
@@ -1910,7 +1921,7 @@ defmodule ToxicParser.Pratt do
         case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
           {:ok, kw_list, state, log} ->
             state = TokenAdapter.rewind(state, ref)
-            meta = build_meta(tok.metadata)
+            meta = TokenAdapter.token_meta(tok)
             token_display = kw_data_first_key_display(kw_list)
             {:error, syntax_error_before(meta, token_display), state, log}
 
@@ -1955,7 +1966,7 @@ defmodule ToxicParser.Pratt do
   # The eoe_tokens_list can be used to push back if we don't find a continuation operator
   defp peek_past_eoe(state, eoe_tokens \\ [], newlines \\ 0) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}} = eoe_tok, _} ->
+      {:ok, {:eoe, _meta, %{newlines: n}} = eoe_tok, _} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
         peek_past_eoe(state, [eoe_tok | eoe_tokens], newlines + n)
 
@@ -2086,7 +2097,7 @@ defmodule ToxicParser.Pratt do
          log
        ) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :","}, _} ->
+      {:ok, tok, _} when is_kind(tok, :",") ->
         {:ok, _comma, state} = TokenAdapter.next(state)
         state = EOE.skip(state)
 
@@ -2100,7 +2111,7 @@ defmodule ToxicParser.Pratt do
                   led(combined, state, log, min_bp, context)
                 end
 
-              tok.kind in [:list_string_start, :bin_string_start] ->
+              TokenAdapter.kind(tok) in [:list_string_start, :bin_string_start] ->
                 # Potentially another quoted keyword - parse via expression
                 with {:ok, expr, state, log} <- Expressions.expr(state, context, log) do
                   if is_keyword_list_result(expr) do
@@ -2186,51 +2197,55 @@ defmodule ToxicParser.Pratt do
 
   # Build binary operation AST, with special handling for "not in" rewrite
   # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
+  # Token format: {:in_op, meta, :"not in", in_location}
   defp build_binary_op(
-         %{kind: :in_op, value: {:"not in", in_location}, metadata: meta},
+         {:in_op, _meta, :"not in", in_location} = op_token,
          left,
          right,
          newlines
        ) do
-    not_meta = build_meta_with_newlines(meta, newlines)
+    not_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     in_meta = build_meta_from_location(in_location)
     {:not, not_meta, [{:in, in_meta, [left, right]}]}
   end
 
   # Deprecated "not expr1 in expr2" rewrite - when in_op follows {:not, _, [operand]} or {:!, _, [operand]}
   # Rewrites to {:not, InMeta, [{:in, InMeta, [operand, right]}]} or {:!, InMeta, [{:in, InMeta, [operand, right]}]}
+  # Token format: {:in_op, meta, :in}
   defp build_binary_op(
-         %{kind: :in_op, value: :in, metadata: meta},
+         {:in_op, _meta, :in} = op_token,
          {op, _op_meta, [operand]},
          right,
          _newlines
        )
        when op in [:not, :!] do
-    in_meta = build_meta(meta)
+    in_meta = TokenAdapter.token_meta(op_token)
     {op, in_meta, [{:in, in_meta, [operand, right]}]}
   end
 
   # Range ternary rewrite: a .. (b // c) -> a ..// b // c
+  # Token format: {:range_op, meta, :..}
   defp build_binary_op(
-         %{kind: :range_op, metadata: meta},
+         {:range_op, _meta, _op} = op_token,
          left,
-         {:"//", _meta, [stop, step]},
+         {:"//", _meta2, [stop, step]},
          newlines
        ) do
-    range_meta = build_meta_with_newlines(meta, newlines)
+    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     {:..//, range_meta, [left, stop, step]}
   end
 
   # Assoc operator (=>) - just build as normal binary op
   # Note: Elixir doesn't add any special metadata for => operator
-  defp build_binary_op(%{kind: :assoc_op, metadata: meta}, left, right, newlines) do
-    op_meta = build_meta_with_newlines(meta, newlines)
+  # Token format: {:assoc_op, meta, :"=>"}
+  defp build_binary_op({:assoc_op, _meta, _op} = op_token, left, right, newlines) do
+    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     Builder.Helpers.binary(:"=>", left, right, op_meta)
   end
 
   defp build_binary_op(op_token, left, right, newlines) do
-    op = op_token.value
-    meta = build_meta_with_newlines(op_token.metadata, newlines)
+    op = TokenAdapter.value(op_token)
+    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     Builder.Helpers.binary(op, left, right, meta)
   end
 
@@ -2260,125 +2275,114 @@ defmodule ToxicParser.Pratt do
   end
 
   # Integer: extract parsed value from raw token metadata
-  # Include token: raw_string for token_metadata compatibility
-  defp literal_to_ast(
-         %{kind: :int, raw: {:int, {_, _, parsed_value}, raw_string}, metadata: meta},
-         state
-       ) do
+  # Token format: {:int, {{line, col}, {end_line, end_col}, parsed_value}, raw_string}
+  defp literal_to_ast({:int, {_, _, parsed_value}, raw_string} = token, state) do
     # Add token metadata for literal_encoder (original string representation)
-    token_meta = [{:token, to_string(raw_string)} | build_meta(meta)]
+    token_meta = [{:token, to_string(raw_string)} | Builder.Helpers.token_meta(token)]
     encode_literal(parsed_value, token_meta, state)
   end
 
   # Float: extract parsed value from raw token metadata
-  # Include token: raw_string for token_metadata compatibility
-  defp literal_to_ast(
-         %{kind: :flt, raw: {:flt, {_, _, parsed_value}, raw_string}, metadata: meta},
-         state
-       ) do
+  # Token format: {:flt, {{line, col}, {end_line, end_col}, parsed_value}, raw_string}
+  defp literal_to_ast({:flt, {_, _, parsed_value}, raw_string} = token, state) do
     # Add token metadata for literal_encoder (original string representation)
-    token_meta = [{:token, to_string(raw_string)} | build_meta(meta)]
+    token_meta = [{:token, to_string(raw_string)} | Builder.Helpers.token_meta(token)]
     encode_literal(parsed_value, token_meta, state)
   end
 
-  # Character literal: value is already the codepoint
-  # Include token: raw_string for token_metadata compatibility
-  defp literal_to_ast(
-         %{kind: :char, raw: {:char, {_, _, raw_charlist}, _}, value: codepoint, metadata: meta},
-         state
-       ) do
+  # Character literal: value is the codepoint
+  # Token format: {:char, {{line, col}, {end_line, end_col}, raw_charlist}, codepoint}
+  defp literal_to_ast({:char, {_, _, raw_charlist}, codepoint} = token, state) do
     # Add token metadata for literal_encoder (original string representation)
-    token_meta = [{:token, to_string(raw_charlist)} | build_meta(meta)]
+    token_meta = [{:token, to_string(raw_charlist)} | Builder.Helpers.token_meta(token)]
     encode_literal(codepoint, token_meta, state)
   end
 
-  # Boolean literals: kind is the literal value itself
-  defp literal_to_ast(%{kind: true, metadata: meta}, state) do
-    encode_literal(true, build_meta(meta), state)
+  # Boolean literals: 2-tuple tokens like {:true, meta}
+  defp literal_to_ast({true, _meta} = token, state) do
+    encode_literal(true, Builder.Helpers.token_meta(token), state)
   end
 
-  defp literal_to_ast(%{kind: false, metadata: meta}, state) do
-    encode_literal(false, build_meta(meta), state)
+  defp literal_to_ast({false, _meta} = token, state) do
+    encode_literal(false, Builder.Helpers.token_meta(token), state)
   end
 
-  defp literal_to_ast(%{kind: nil, metadata: meta}, state) do
-    encode_literal(nil, build_meta(meta), state)
+  defp literal_to_ast({nil, _meta} = token, state) do
+    encode_literal(nil, Builder.Helpers.token_meta(token), state)
   end
 
-  # Atom: value is already the atom
+  # Atom: 3-tuple token {:atom, meta, atom_value}
   # Include format: :atom for special atoms :true/:false/:nil (distinguishes :true from true)
-  defp literal_to_ast(%{kind: :atom, value: atom, metadata: meta}, state)
+  defp literal_to_ast({:atom, _meta, atom} = token, state)
        when atom in [true, false, nil] do
-    atom_meta = [{:format, :atom} | build_meta(meta)]
+    atom_meta = [{:format, :atom} | Builder.Helpers.token_meta(token)]
     encode_literal(atom, atom_meta, state)
   end
 
-  defp literal_to_ast(%{kind: :atom, value: atom, metadata: meta}, state) do
-    encode_literal(atom, build_meta(meta), state)
+  defp literal_to_ast({:atom, _meta, atom} = token, state) do
+    encode_literal(atom, Builder.Helpers.token_meta(token), state)
   end
 
   # Alias: wrap in __aliases__ tuple with :last metadata
   # NOT encoded - aliases are AST nodes, not primitive literals
-  defp literal_to_ast(%{kind: :alias, value: atom, metadata: meta}, _state) do
-    m = build_meta(meta)
+  defp literal_to_ast({:alias, _meta, atom} = token, _state) do
+    m = Builder.Helpers.token_meta(token)
     {:__aliases__, [last: m] ++ m, [atom]}
   end
 
   # Identifier: wrap in tuple with nil context (variable reference)
   # NOT encoded - identifiers are AST nodes, not primitive literals
-  defp literal_to_ast(%{kind: :identifier, value: atom, metadata: meta}, _state) do
-    {atom, build_meta(meta), nil}
+  defp literal_to_ast({:identifier, _meta, atom} = token, _state) do
+    {atom, Builder.Helpers.token_meta(token), nil}
   end
 
   # Paren identifier: same as identifier, but mark it so led() knows to handle (
   # Add paren_call: true marker so led() can distinguish if(a) from if (a)
-  defp literal_to_ast(%{kind: :paren_identifier, value: atom, metadata: meta}, _state) do
-    {atom, [paren_call: true] ++ build_meta(meta), nil}
+  defp literal_to_ast({:paren_identifier, _meta, atom} = token, _state) do
+    {atom, [paren_call: true] ++ Builder.Helpers.token_meta(token), nil}
   end
 
   # Do identifier: same as identifier
-  defp literal_to_ast(%{kind: :do_identifier, value: atom, metadata: meta}, _state) do
-    {atom, build_meta(meta), nil}
+  defp literal_to_ast({:do_identifier, _meta, atom} = token, _state) do
+    {atom, Builder.Helpers.token_meta(token), nil}
   end
 
   # Bracket identifier: same as identifier, [ will be handled by led
-  defp literal_to_ast(%{kind: :bracket_identifier, value: atom, metadata: meta}, _state) do
-    {atom, build_meta(meta), nil}
+  defp literal_to_ast({:bracket_identifier, _meta, atom} = token, _state) do
+    {atom, Builder.Helpers.token_meta(token), nil}
   end
 
   # Op identifier: same as identifier, for no-parens calls
-  defp literal_to_ast(%{kind: :op_identifier, value: atom, metadata: meta}, _state) do
-    {atom, build_meta(meta), nil}
+  defp literal_to_ast({:op_identifier, _meta, atom} = token, _state) do
+    {atom, Builder.Helpers.token_meta(token), nil}
   end
 
   # String (for future use)
-  defp literal_to_ast(%{kind: :string, value: value, metadata: meta}, state) do
-    encode_literal(value, build_meta(meta), state)
+  defp literal_to_ast({:string, _meta, value} = token, state) do
+    encode_literal(value, Builder.Helpers.token_meta(token), state)
   end
 
   # Range operator (..) as standalone expression
   # NOT encoded - operators are AST nodes, not primitive literals
-  defp literal_to_ast(%{kind: :range_op, value: op, metadata: meta}, _state) do
-    {op, build_meta(meta), []}
+  defp literal_to_ast({:range_op, _meta, op} = token, _state) do
+    {op, Builder.Helpers.token_meta(token), []}
   end
 
   # Ellipsis operator (...) as standalone expression
   # NOT encoded - operators are AST nodes, not primitive literals
-  defp literal_to_ast(%{kind: :ellipsis_op, value: op, metadata: meta}, _state) do
-    {op, build_meta(meta), []}
+  defp literal_to_ast({:ellipsis_op, _meta, op} = token, _state) do
+    {op, Builder.Helpers.token_meta(token), []}
   end
 
-  # Fallback for other tokens
-  defp literal_to_ast(%{value: value}, _state) do
+  # Fallback for 3-tuple tokens - return value
+  defp literal_to_ast({_kind, _meta, value}, _state) do
     value
   end
 
-  # Build metadata for AST nodes
-  defp build_meta(%{range: %{start: %{line: line, column: column}}}) do
-    [line: line, column: column]
+  # Fallback for 2-tuple tokens - return nil
+  defp literal_to_ast({_kind, _meta}, _state) do
+    nil
   end
-
-  defp build_meta(_), do: []
 
   defp syntax_error_before(meta) do
     line = Keyword.get(meta, :line, 1)
@@ -2415,12 +2419,13 @@ defmodule ToxicParser.Pratt do
   defp is_paren_call_valid(_), do: true
 
   # Build metadata with newlines count if present
+  # token_meta is already [line: L, column: C]
   defp build_meta_with_newlines(token_meta, 0) do
-    build_meta(token_meta)
+    token_meta
   end
 
   defp build_meta_with_newlines(token_meta, newlines) when newlines > 0 do
-    [newlines: newlines] ++ build_meta(token_meta)
+    [newlines: newlines] ++ token_meta
   end
 
   defp function_capture_operand?({:/, _meta, [callee, arity]}) when is_integer(arity) do
@@ -2456,12 +2461,13 @@ defmodule ToxicParser.Pratt do
   def led_dots_and_calls(left, %State{} = state, %EventLog{} = log, %Context{} = context) do
     case TokenAdapter.peek(state) do
       # Handle dot-call: foo.() (tokenized as dot_call_op followed by parens)
-      {:ok, %{kind: :dot_call_op} = _dot_tok, _} ->
+      # dot_call_op is a 3-tuple: {:dot_call_op, meta, :.}
+      {:ok, {:dot_call_op, _, _} = _dot_tok, _} ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)
-        dot_meta = build_meta(dot_tok.metadata)
+        dot_meta = TokenAdapter.token_meta(dot_tok)
 
         case TokenAdapter.next(state) do
-          {:ok, %{kind: :"("}, state} ->
+          {:ok, tok, state} when is_kind(tok, :"(") ->
             {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
 
             with {:ok, args, state, log} <-
@@ -2479,7 +2485,7 @@ defmodule ToxicParser.Pratt do
             end
 
           {:ok, other, state} ->
-            {:error, {:expected, :"(", got: other.kind}, state, log}
+            {:error, {:expected, :"(", got: TokenAdapter.kind(other)}, state, log}
 
           {:eof, state} ->
             {:error, :unexpected_eof, state, log}
@@ -2488,9 +2494,9 @@ defmodule ToxicParser.Pratt do
             {:error, diag, state, log}
         end
 
-      {:ok, %{kind: :dot_op} = _dot_tok, _} ->
+      {:ok, {:dot_op, _, _} = _dot_tok, _} ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)
-        dot_meta = build_meta(dot_tok.metadata)
+        dot_meta = TokenAdapter.token_meta(dot_tok)
 
         # Parse the RHS of dot - must be an alias or identifier
         # Pass dot_meta for curly calls where the call metadata uses the dot's position
@@ -2540,7 +2546,7 @@ defmodule ToxicParser.Pratt do
         end
 
       # Handle paren calls: foo(args) or unquote(struct)
-      {:ok, %{kind: :"("}, _} ->
+      {:ok, tok, _} when is_kind(tok, :"(") ->
         {:ok, _open_tok, state} = TokenAdapter.next(state)
 
         # Skip leading EOE and count newlines
@@ -2571,7 +2577,7 @@ defmodule ToxicParser.Pratt do
 
       # Handle bracket access: 0[l] for structs like %0[l]{}
       # Grammar: bracket_expr -> access_expr bracket_arg
-      {:ok, %{kind: :"["}, _} ->
+      {:ok, tok, _} when is_kind(tok, :"[")->
         {:ok, open_tok, state} = TokenAdapter.next(state)
 
         # Skip leading EOE and count newlines
@@ -2582,10 +2588,10 @@ defmodule ToxicParser.Pratt do
           {state, _trailing_newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.next(state) do
-            {:ok, %{kind: :"]"} = close_tok, state} ->
+            {:ok, {:"]", _} = close_tok, state} ->
               # Build bracket access AST like led_bracket does
-              open_meta = build_meta(open_tok.metadata)
-              close_meta = build_meta(close_tok.metadata)
+              open_meta = TokenAdapter.token_meta(open_tok)
+              close_meta = TokenAdapter.token_meta(close_tok)
 
               bracket_meta =
                 Meta.closing_meta(open_meta, close_meta, leading_newlines, from_brackets: true)
@@ -2597,7 +2603,7 @@ defmodule ToxicParser.Pratt do
               led_dots_and_calls(combined, state, log, context)
 
             {:ok, other, state} ->
-              {:error, {:expected, :"]", got: other.kind}, state, log}
+              {:error, {:expected, :"]", got: TokenAdapter.kind(other)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}

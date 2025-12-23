@@ -85,53 +85,87 @@ defmodule ToxicParser.Builder.Helpers do
     {:__error__, meta, payload}
   end
 
-  @doc "Builds AST from a token based on its kind."
-  @spec from_token(map()) :: Macro.t()
-  def from_token(%{kind: :identifier, value: name, metadata: meta}) do
-    identifier(name, token_meta(meta))
+  @doc """
+  Builds AST from a raw token based on its kind.
+
+  Tokens are raw tuples from the lexer:
+  - {kind, meta} for simple tokens
+  - {kind, meta, value} for tokens with values
+  - {kind, meta, v1, v2} for special tokens like "not in"
+  """
+  @spec from_token(tuple()) :: Macro.t()
+  def from_token({:identifier, _meta, name} = token) do
+    identifier(name, token_meta(token))
   end
 
-  def from_token(%{kind: :do_identifier, value: name, metadata: meta}) do
-    identifier(name, token_meta(meta))
+  def from_token({:do_identifier, _meta, name} = token) do
+    identifier(name, token_meta(token))
   end
 
-  def from_token(%{kind: :bracket_identifier, value: name, metadata: meta}) do
-    identifier(name, token_meta(meta))
+  def from_token({:bracket_identifier, _meta, name} = token) do
+    identifier(name, token_meta(token))
   end
 
-  def from_token(%{kind: :alias, value: name, metadata: meta}) do
+  def from_token({:paren_identifier, _meta, name} = token) do
+    identifier(name, token_meta(token))
+  end
+
+  def from_token({:op_identifier, _meta, name} = token) do
+    identifier(name, token_meta(token))
+  end
+
+  def from_token({:alias, _meta, name} = token) do
     # Aliases need both :last and regular location metadata
-    m = token_meta(meta)
+    m = token_meta(token)
     {:__aliases__, [last: m] ++ m, [name]}
   end
 
-  def from_token(%{kind: kind, value: _}) when kind in [true, false, nil] do
+  def from_token({kind, _meta}) when kind in [true, false, nil] do
     kind
   end
 
-  def from_token(%{kind: :atom, value: atom}) do
+  def from_token({:atom, _meta, atom}) do
     atom
   end
 
-  def from_token(%{kind: :int, raw: {:int, {_, _, parsed}, _}}) do
+  # For int/flt tokens, the parsed value is in meta.extra (3rd element of meta tuple)
+  def from_token({:int, {_, _, parsed}, _repr}) do
     parsed
   end
 
-  def from_token(%{kind: :flt, raw: {:flt, {_, _, parsed}, _}}) do
+  def from_token({:flt, {_, _, parsed}, _repr}) do
     parsed
   end
 
-  def from_token(%{kind: :char, value: codepoint}) do
+  def from_token({:char, _meta, codepoint}) do
     codepoint
   end
 
-  def from_token(%{value: value}) do
+  # Fallback for other 3-tuple tokens - return the value
+  def from_token({_kind, _meta, value}) do
     value
   end
 
-  @doc "Extracts line/column metadata from a token's metadata."
-  @spec token_meta(map()) :: keyword()
-  def token_meta(%{range: %{start: %{line: line, column: column}}}) do
+  # Fallback for 2-tuple tokens (rare to call from_token on these)
+  def from_token({_kind, _meta}) do
+    nil
+  end
+
+  @doc """
+  Extracts [line: L, column: C] metadata from a raw token.
+
+  Token meta format: {{start_line, start_col}, {end_line, end_col}, extra}
+  """
+  @spec token_meta(tuple()) :: keyword()
+  def token_meta({_kind, {{line, column}, _, _}}) do
+    [line: line, column: column]
+  end
+
+  def token_meta({_kind, {{line, column}, _, _}, _value}) do
+    [line: line, column: column]
+  end
+
+  def token_meta({_kind, {{line, column}, _, _}, _v1, _v2}) do
     [line: line, column: column]
   end
 

@@ -55,11 +55,11 @@ defmodule ToxicParser.Grammar.Keywords do
   defguard is_keyword_list_result(arg) when is_list(arg) and arg != [] and is_tuple(hd(arg))
 
   @doc "Returns true if the token kind starts a keyword pair."
-  @spec starts_kw?(map()) :: boolean()
-  def starts_kw?(%{kind: kind}) do
+  @spec starts_kw?(tuple()) :: boolean()
+  def starts_kw?(tok) when is_tuple(tok) do
     # Note: quoted strings like "foo": also start keywords, but we can't tell
     # without lookahead. Use starts_kw_or_quoted_key? in container contexts.
-    kind in @kw_kinds
+    TokenAdapter.kind(tok) in @kw_kinds
   end
 
   def starts_kw?(_), do: false
@@ -69,8 +69,9 @@ defmodule ToxicParser.Grammar.Keywords do
   Use this in container contexts (tuples, maps) where quoted keyword keys are valid.
   For call arguments, use starts_kw? instead.
   """
-  @spec starts_kw_or_quoted_key?(map()) :: boolean()
-  def starts_kw_or_quoted_key?(%{kind: kind}) do
+  @spec starts_kw_or_quoted_key?(tuple()) :: boolean()
+  def starts_kw_or_quoted_key?(tok) when is_tuple(tok) do
+    kind = TokenAdapter.kind(tok)
     kind in @kw_kinds or kind in @quoted_kw_start
   end
 
@@ -87,7 +88,8 @@ defmodule ToxicParser.Grammar.Keywords do
 
   defp scan_to_string_end(state, consumed, interp_depth, max) do
     case TokenAdapter.next(state) do
-      {:ok, %{kind: kind} = tok, state} ->
+      {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
         consumed = [tok | consumed]
 
         cond do
@@ -196,11 +198,13 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
+
         cond do
           starts_kw?(tok) ->
             parse_kw_data(state, ctx, log)
 
-          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+          allow_quoted_keys? and kind in @quoted_kw_start ->
             case quoted_string_is_keyword?(state) do
               {:keyword, state} ->
                 parse_kw_data(state, ctx, log)
@@ -232,11 +236,13 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
+
         cond do
           starts_kw?(tok) ->
             parse_kw_call(state, ctx, log)
 
-          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+          allow_quoted_keys? and kind in @quoted_kw_start ->
             case quoted_string_is_keyword?(state) do
               {:keyword, state} ->
                 parse_kw_call(state, ctx, log)
@@ -289,6 +295,8 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
+
         cond do
           starts_kw?(tok) ->
             case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
@@ -296,7 +304,7 @@ defmodule ToxicParser.Grammar.Keywords do
               {:error, reason, state, log} -> {:error, reason, state, log}
             end
 
-          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+          allow_quoted_keys? and kind in @quoted_kw_start ->
             case quoted_string_is_keyword?(state) do
               {:keyword, state} ->
                 case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
@@ -336,6 +344,8 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
+        kind = TokenAdapter.kind(tok)
+
         cond do
           # Definite keyword (kw_identifier) - no checkpoint needed.
           starts_kw?(tok) ->
@@ -345,7 +355,7 @@ defmodule ToxicParser.Grammar.Keywords do
             end
 
           # Quoted key - only parse if we can prove it ends with a colon.
-          allow_quoted_keys? and tok.kind in @quoted_kw_start ->
+          allow_quoted_keys? and kind in @quoted_kw_start ->
             case quoted_string_is_keyword?(state) do
               {:keyword, state} ->
                 case parse_call_args_no_parens_kw(state, ctx, log, min_bp) do
@@ -381,7 +391,7 @@ defmodule ToxicParser.Grammar.Keywords do
     end
 
     on_no_item_after_separator = fn comma_tok, state, _ctx, log ->
-      meta = Builder.Helpers.token_meta(comma_tok.metadata)
+      meta = TokenAdapter.token_meta(comma_tok)
       {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
     end
 
@@ -402,7 +412,7 @@ defmodule ToxicParser.Grammar.Keywords do
         {:ok, kw_list, state, log}
 
       {:error, {:trailing_comma, comma_tok}, state, log} ->
-        meta = Builder.Helpers.token_meta(comma_tok.metadata)
+        meta = TokenAdapter.token_meta(comma_tok)
         {:error, syntax_error_before(meta), state, log}
 
       {:error, reason, state, log} ->
@@ -429,11 +439,11 @@ defmodule ToxicParser.Grammar.Keywords do
     case parse_kw_pair(state, ctx, log, min_bp, value_ctx, error_kind) do
       {:ok, pair, state, log} ->
         case TokenAdapter.peek(state) do
-          {:ok, %{kind: :","}, _} ->
+          {:ok, tok, _} when elem(tok, 0) == :"," ->
             {:ok, _comma, state} = TokenAdapter.next(state)
             # Check for trailing comma - if next is a terminator, stop
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: kind}, _} when kind in [:eoe, :")", :"]", :"}", :">>"] ->
+              {:ok, tok, _} when elem(tok, 0) in [:eoe, :")", :"]", :"}", :">>"] ->
                 {:ok, Enum.reverse([pair | acc]), state, log}
 
               _ ->
@@ -451,16 +461,20 @@ defmodule ToxicParser.Grammar.Keywords do
 
   defp parse_kw_pair(state, _ctx, log, min_bp, value_ctx, error_kind) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: kind}, _} when kind in @kw_kinds ->
+      {:ok, tok, _} when elem(tok, 0) in @kw_kinds ->
         # Standard keyword like foo:
         # Add format: :keyword for token_metadata compatibility
-        {:ok, %{value: key, metadata: key_meta}, state} = TokenAdapter.next(state)
-        key_meta_kw = [{:format, :keyword} | Builder.Helpers.token_meta(key_meta)]
+        {:ok, tok, state} = TokenAdapter.next(state)
+        key = TokenAdapter.value(tok)
+        key_meta = TokenAdapter.token_meta(tok)
+        key_meta_kw = [{:format, :keyword} | key_meta]
         parse_kw_value(key, key_meta_kw, state, log, min_bp, value_ctx, error_kind)
 
-      {:ok, %{kind: kind}, _} when kind in @quoted_kw_start ->
+      {:ok, tok, _} when elem(tok, 0) in @quoted_kw_start ->
         # Potentially a quoted keyword like "foo": or 'bar':
         # Try parsing as string - if it returns keyword_key, it's a keyword
+        kind = TokenAdapter.kind(tok)
+
         case Strings.parse(state, Context.matched_expr(), log, 10000) do
           {:keyword_key, key_atom, key_meta, state, log} ->
             parse_kw_value(key_atom, key_meta, state, log, min_bp, value_ctx, error_kind)
@@ -486,7 +500,8 @@ defmodule ToxicParser.Grammar.Keywords do
             {:error, reason, state, log}
         end
 
-      {:ok, %{kind: kind}, _} ->
+      {:ok, tok, _} ->
+        kind = TokenAdapter.kind(tok)
         {:ok, _tok, state} = TokenAdapter.next(state)
         {:error, {:expected, :keyword, got: kind}, state, log}
 

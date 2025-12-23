@@ -3,8 +3,8 @@ defmodule ToxicParser.Grammar.Dots do
   Dot expression parsing helpers (`foo.bar`, `Foo.Bar`, `foo.(...)`, `foo.()`).
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
-  alias ToxicParser.Builder.Meta
+  alias ToxicParser.{Context, EventLog, Identifiers, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.Builder.{Helpers, Meta}
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @type result ::
@@ -17,7 +17,7 @@ defmodule ToxicParser.Grammar.Dots do
   @spec parse_dot_call(Macro.t(), State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_dot_call(left, %State{} = state, %Context{} = ctx, %EventLog{} = log) do
     {:ok, dot_tok, state} = TokenAdapter.next(state)
-    dot_meta = Builder.Helpers.token_meta(dot_tok.metadata)
+    dot_meta = Helpers.token_meta(dot_tok)
 
     # dot_call_op is immediately followed by (
     {:ok, _open, state} = TokenAdapter.next(state)
@@ -55,7 +55,9 @@ defmodule ToxicParser.Grammar.Dots do
   def parse_member(%State{} = state, %Context{} = ctx, %EventLog{} = log, dot_meta) do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
-        case Identifiers.classify(tok.kind) do
+        tok_kind = TokenAdapter.kind(tok)
+        
+        case Identifiers.classify(tok_kind) do
           kind
           when kind in [
                  :identifier,
@@ -63,25 +65,25 @@ defmodule ToxicParser.Grammar.Dots do
                  :dot_identifier,
                  :dot_do_identifier
                ] ->
-            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata)}, state, log}
+            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok)}, state, log}
 
           :bracket_identifier ->
             # Bracket identifier - bracket access IS allowed (no whitespace before [)
-            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :allows_bracket}, state,
+            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :allows_bracket}, state,
              log}
 
           # op_identifier or dot_op_identifier indicates no-parens call is expected
           kind when kind in [:op_identifier, :dot_op_identifier] ->
             # Return with :no_parens_call tag to indicate caller should expect no-parens args
-            {:ok, {tok.value, Builder.Helpers.token_meta(tok.metadata), :no_parens_call}, state,
+            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :no_parens_call}, state,
              log}
 
           :alias ->
             # Alias needs to be wrapped as __aliases__
-            alias_ast = Builder.Helpers.from_token(tok)
+            alias_ast = Helpers.from_token(tok)
 
             case TokenAdapter.peek(state) do
-              {:ok, %{kind: :"["}, _} ->
+              {:ok, {:"[", _}, _} ->
                 {:ok, {alias_ast, :allows_bracket}, state, log}
 
               _ ->
@@ -94,16 +96,16 @@ defmodule ToxicParser.Grammar.Dots do
           _ ->
             cond do
               # Check for quoted identifier: D."foo"
-              tok.kind == :quoted_identifier_start ->
+              tok_kind == :quoted_identifier_start ->
                 parse_quoted_identifier(tok, state, ctx, log)
 
               # Handle curly container call: n.{} or n.{a, b}
               # Grammar: dot_alias -> matched_expr dot_op open_curly container_args close_curly
-              tok.kind == :"{" ->
+              tok_kind == :"{" ->
                 parse_curly_call(tok, state, ctx, log, dot_meta)
 
               true ->
-                {:error, {:expected, :dot_member, got: tok.kind}, state, log}
+                {:error, {:expected, :dot_member, got: tok_kind}, state, log}
             end
         end
 
@@ -125,10 +127,12 @@ defmodule ToxicParser.Grammar.Dots do
            ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, ctx, log),
          {:ok, close_meta, trailing_newlines, state} <- Meta.consume_closing(state, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
-      callee_meta = Builder.Helpers.token_meta(tok.metadata)
+      callee_meta = Helpers.token_meta(tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-      callee = Builder.Helpers.from_token(tok)
+      # Use just the atom value for the callee, not the full AST form
+      # Dot call RHS should be :bar, not {:bar, meta, nil}
+      callee = TokenAdapter.value(tok)
       {:ok, {callee, meta, Enum.reverse(args)}, state, log}
     else
       other -> Result.normalize_error(other, log)
@@ -153,7 +157,7 @@ defmodule ToxicParser.Grammar.Dots do
       # Use dot's metadata for the call column (not the curly's position)
       # If dot_meta is empty (no dot context), fall back to open_tok metadata
       base_meta =
-        if dot_meta == [], do: Builder.Helpers.token_meta(open_tok.metadata), else: dot_meta
+        if dot_meta == [], do: Helpers.token_meta(open_tok), else: dot_meta
 
       meta = Meta.closing_meta(base_meta, close_meta, total_newlines)
 
@@ -172,11 +176,11 @@ defmodule ToxicParser.Grammar.Dots do
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"}, _} ->
+            {:ok, {:"}", _}, _} ->
               {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, %{kind: kind}, state} ->
-              {:error, {:expected, :"}", got: kind}, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -200,15 +204,16 @@ defmodule ToxicParser.Grammar.Dots do
 
   defp reject_initial_kw_data(state, container_ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"}"}, state} ->
+      {:ok, {:"}", _}, state} ->
         {:ok, state, log}
 
       {:ok, tok, state} ->
         cond do
           # Definite kw_data start - no need to checkpoint/parse.
           Keywords.starts_kw?(tok) ->
-            meta = Builder.Helpers.token_meta(tok.metadata)
-            {:error, syntax_error_before(meta, Atom.to_string(tok.value)), state, log}
+            meta = Helpers.token_meta(tok)
+            tok_value = TokenAdapter.value(tok)
+            {:error, syntax_error_before(meta, Atom.to_string(tok_value)), state, log}
 
           # Quoted key may or may not be kw_data; only this case needs checkpoint.
           Keywords.starts_kw_or_quoted_key?(tok) ->
@@ -217,7 +222,7 @@ defmodule ToxicParser.Grammar.Dots do
             case Keywords.try_parse_kw_data(checkpoint_state, container_ctx, log) do
               {:ok, kw_list, state, log} ->
                 state = TokenAdapter.rewind(state, ref)
-                meta = Builder.Helpers.token_meta(tok.metadata)
+                meta = Helpers.token_meta(tok)
                 token_display = kw_data_first_key_display(kw_list)
                 {:error, syntax_error_before(meta, token_display), state, log}
 
@@ -270,8 +275,8 @@ defmodule ToxicParser.Grammar.Dots do
   # Parse quoted identifier: D."foo" or D."foo"() or D."foo" arg (no-parens)
   # Token sequence: quoted_identifier_start -> string_fragment* -> quoted_identifier_end/quoted_op_identifier_end
   defp parse_quoted_identifier(start_tok, state, ctx, log) do
-    start_meta = Builder.Helpers.token_meta(start_tok.metadata)
-    delimiter = delimiter_from_value(start_tok.value)
+    start_meta = Helpers.token_meta(start_tok)
+    delimiter = delimiter_from_value(TokenAdapter.value(start_tok))
 
     with {:ok, fragments, end_kind, state, log} <-
            collect_fragments([], state, :quoted_identifier_end, log),
@@ -305,7 +310,7 @@ defmodule ToxicParser.Grammar.Dots do
 
         # quoted_paren_identifier_end or ( immediately follows: D."foo"()
         end_kind == :quoted_paren_identifier_end or
-            match?({:ok, %{kind: :"("}, _}, TokenAdapter.peek(state)) ->
+            match?({:ok, {:"(", _}, _}, TokenAdapter.peek(state)) ->
           {:ok, _open, state} = TokenAdapter.next(state)
 
           # Skip leading EOE and count newlines
@@ -352,26 +357,30 @@ defmodule ToxicParser.Grammar.Dots do
 
   defp collect_fragments(acc, state, target_end, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: ^target_end}, _} ->
-        {:ok, acc, target_end, state, log}
+      {:ok, tok, _} ->
+        tok_kind = TokenAdapter.kind(tok)
+        
+        cond do
+          tok_kind == target_end ->
+            {:ok, acc, target_end, state, log}
 
-      {:ok, %{kind: kind}, _}
-      when kind in @quoted_id_ends and target_end == :quoted_identifier_end ->
-        # Accept any quoted identifier end token
-        {:ok, acc, kind, state, log}
+          tok_kind in @quoted_id_ends and target_end == :quoted_identifier_end ->
+            # Accept any quoted identifier end token
+            {:ok, acc, tok_kind, state, log}
 
-      {:ok, %{kind: :string_fragment, value: fragment}, _} ->
-        {:ok, _frag, state} = TokenAdapter.next(state)
-        collect_fragments([fragment | acc], state, target_end, log)
+          tok_kind == :string_fragment ->
+            {:ok, _frag, state} = TokenAdapter.next(state)
+            collect_fragments([TokenAdapter.value(tok) | acc], state, target_end, log)
+
+          true ->
+            {:error, {:unexpected_string_token, tok_kind}, state, log}
+        end
 
       {:eof, state} ->
         {:error, :unexpected_eof, state, log}
 
       {:error, diag, state} ->
         {:error, diag, state, log}
-
-      {:ok, token, _} ->
-        {:error, {:unexpected_string_token, token.kind}, state, log}
     end
   end
 

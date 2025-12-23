@@ -154,7 +154,7 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp collect_exprs(acc, state, ctx, log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
+      {:ok, {:eoe, _meta, _value} = _eoe_tok, _} ->
         # Skip all consecutive EOE tokens (handles cases like "1\n;2")
         state = EOE.skip(state)
 
@@ -164,18 +164,21 @@ defmodule ToxicParser.Grammar.Expressions do
             finalize_exprs(acc, state, log)
 
           # Stop at terminators that shouldn't start new expressions
-          {:ok, %{kind: kind}, _} when kind in [:end_interpolation, :"}"] ->
-            finalize_exprs(acc, state, log)
+          {:ok, tok, _} ->
+            case TokenAdapter.kind(tok) do
+              kind when kind in [:end_interpolation, :"}"] ->
+                finalize_exprs(acc, state, log)
 
-          {:ok, _, _} ->
-            case expr(state, ctx, log) do
-              {:ok, next_expr, state, log} ->
-                # Annotate expression with trailing EOE if present
-                {next_expr, state} = maybe_annotate_eoe(next_expr, state)
-                collect_exprs([next_expr | acc], state, ctx, log)
+              _ ->
+                case expr(state, ctx, log) do
+                  {:ok, next_expr, state, log} ->
+                    # Annotate expression with trailing EOE if present
+                    {next_expr, state} = maybe_annotate_eoe(next_expr, state)
+                    collect_exprs([next_expr | acc], state, ctx, log)
 
-              {:error, reason, state, log} ->
-                recover_expr_error(acc, reason, state, ctx, log)
+                  {:error, reason, state, log} ->
+                    recover_expr_error(acc, reason, state, ctx, log)
+                end
             end
 
           {:error, diag, state} ->
@@ -216,7 +219,7 @@ defmodule ToxicParser.Grammar.Expressions do
   # This implements the `annotate_eoe` pattern from elixir_parser.yrl.
   defp maybe_annotate_eoe(ast, state) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe} = eoe_token, _} ->
+      {:ok, {:eoe, _meta, _value} = eoe_token, _} ->
         eoe_meta = EOE.build_eoe_meta(eoe_token)
         annotated = EOE.annotate_eoe(ast, eoe_meta)
         {annotated, state}
@@ -231,7 +234,7 @@ defmodule ToxicParser.Grammar.Expressions do
 
     with {:ok, state, log} <- Recovery.sync_expr(state, log) do
       case TokenAdapter.peek(state) do
-        {:ok, %{kind: :eoe}, _} ->
+        {:ok, {:eoe, _meta, _value}, _} ->
           # consume separator to make progress before continuing
           {:ok, _eoe, state} = TokenAdapter.next(state)
           collect_exprs([error_ast | acc], state, ctx, log)
@@ -249,7 +252,7 @@ defmodule ToxicParser.Grammar.Expressions do
   defp build_error_node(reason, state) do
     meta =
       case TokenAdapter.peek(state) do
-        {:ok, tok, _} -> Builder.Helpers.token_meta(tok.metadata)
+        {:ok, tok, _} -> TokenAdapter.token_meta(tok)
         _ -> []
       end
 

@@ -19,7 +19,7 @@ defmodule ToxicParser.LayoutTest do
 
     {state, count} = Layout.skip_newlines_only(state)
     assert count == 2
-    # Semicolon remains
-    assert {:ok, %{kind: :eoe, value: %{source: :semicolon}}, _} = TokenAdapter.peek(state)
+    # Semicolon remains - use tuple pattern
+    assert {:ok, {:eoe, _, %{source: :semicolon}}, _} = TokenAdapter.peek(state)
   end
 end

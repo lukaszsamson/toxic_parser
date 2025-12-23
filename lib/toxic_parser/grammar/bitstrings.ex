@@ -4,7 +4,6 @@ defmodule ToxicParser.Grammar.Bitstrings do
   """
 
   alias ToxicParser.{
-    Builder,
     Context,
     EventLog,
     ExprClass,
@@ -35,7 +34,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   @spec parse_base(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, %Context{} = _ctx, %EventLog{} = log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
-    open_meta = token_meta(open_tok.metadata)
+    open_meta = TokenAdapter.token_meta(open_tok)
 
     # Skip leading EOE and count newlines
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
@@ -50,11 +49,11 @@ defmodule ToxicParser.Grammar.Bitstrings do
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :">>"}, _} ->
+            {:ok, {:">>" , _meta}, _} ->
               {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, %{kind: kind}, state} ->
-              {:error, {:expected, :">>", got: kind}, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -92,14 +91,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
         _ ->
           case TokenAdapter.next(state) do
-            {:ok, %{kind: :">>"} = close_tok, state} ->
-              close_meta = token_meta(close_tok.metadata)
+            {:ok, {:">>" , _meta} = close_tok, state} ->
+              close_meta = TokenAdapter.token_meta(close_tok)
               meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
               ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
               {:ok, ast, state, log}
 
             {:ok, tok, state} ->
-              {:error, {:expected, :">>", got: tok.kind}, state, log}
+              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -111,7 +110,6 @@ defmodule ToxicParser.Grammar.Bitstrings do
     end
   end
 
-  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
 
   defp finalize_bitstring_items([]), do: []
 

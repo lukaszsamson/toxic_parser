@@ -4,11 +4,13 @@ defmodule ToxicParser.Layout do
 
   Provides helpers to peek and skip separator tokens without relying on the lexer
   to emit `:eoe` directly.
+
+  EOE tokens are 3-tuples: {:eoe, meta, %{source: :eol | :semicolon, newlines: count}}
   """
 
   alias ToxicParser.{State, TokenAdapter}
 
-  @type layout_token :: {:eoe, map(), %{source: :eol | :semicolon, newlines: non_neg_integer()}}
+  @type layout_token :: {:eoe, tuple(), %{source: :eol | :semicolon, newlines: non_neg_integer()}}
 
   @doc """
   Peeks at the next separator (`:eoe`) without consuming it, returning a view token.
@@ -16,8 +18,8 @@ defmodule ToxicParser.Layout do
   @spec peek_sep(State.t(), term()) :: {:ok, layout_token(), State.t()} | :none
   def peek_sep(%State{} = state, _ctx \\ nil) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{source: source, newlines: newlines}, metadata: meta}, state} ->
-        {:ok, {:eoe, meta, %{source: source, newlines: newlines}}, state}
+      {:ok, {:eoe, _meta, %{source: _source, newlines: _newlines}} = eoe, state} ->
+        {:ok, eoe, state}
 
       _ ->
         :none

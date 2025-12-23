@@ -3,7 +3,6 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
   alias ToxicParser.{
-    Builder,
     Context,
     EventLog,
     ExprClass,
@@ -23,7 +22,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
     state = EOE.skip(state)
 
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :")"}, _} ->
+      {:ok, tok, _} when elem(tok, 0) == :")" ->
         {:ok, acc, state, log}
 
       {:ok, _tok, _} ->
@@ -45,11 +44,11 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         state = EOE.skip(state)
 
         case TokenAdapter.peek(state) do
-          {:ok, %{kind: :")"}, state} ->
+          {:ok, tok, state} when elem(tok, 0) == :")" ->
             {:ok, [kw_list], state, log}
 
-          {:ok, %{kind: kind}, state} ->
-            {:error, {:expected, :")", got: kind}, state, log}
+          {:ok, tok, state} ->
+            {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, log}
 
           {:eof, state} ->
             {:error, :unexpected_eof, state, log}
@@ -76,7 +75,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         state = EOE.skip(state)
 
         case TokenAdapter.peek(state) do
-          {:ok, %{kind: :")"}, state} ->
+          {:ok, tok, state} when elem(tok, 0) == :")" ->
             {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), log}
 
           _ ->
@@ -95,15 +94,15 @@ defmodule ToxicParser.Grammar.CallsPrivate do
           state = EOE.skip(state)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :")"}, state} ->
+            {:ok, tok, state} when elem(tok, 0) == :")" ->
               {:ok, {:kw_call, kw_list}, state, log}
 
-            {:ok, %{kind: :","} = comma_tok, state} ->
-              meta = Builder.Helpers.token_meta(comma_tok.metadata)
+            {:ok, comma_tok, state} when elem(comma_tok, 0) == :"," ->
+              meta = TokenAdapter.token_meta(comma_tok)
               {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
 
-            {:ok, %{kind: kind}, state} ->
-              {:error, {:expected, :")", got: kind}, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}

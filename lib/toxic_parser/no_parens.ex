@@ -1,6 +1,8 @@
 defmodule ToxicParser.NoParens do
   @moduledoc false
 
+  alias ToxicParser.TokenAdapter
+
   @no_parens_arg_kinds [
     :int,
     :flt,
@@ -38,6 +40,8 @@ defmodule ToxicParser.NoParens do
     :ellipsis_op
   ]
 
-  @spec can_start_no_parens_arg?(map()) :: boolean()
-  def can_start_no_parens_arg?(%{kind: kind}), do: kind in @no_parens_arg_kinds
+  @spec can_start_no_parens_arg?(tuple()) :: boolean()
+  def can_start_no_parens_arg?(token) when is_tuple(token) do
+    TokenAdapter.kind(token) in @no_parens_arg_kinds
+  end
 end

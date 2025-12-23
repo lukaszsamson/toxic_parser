@@ -25,22 +25,22 @@ defmodule ToxicParser.Grammar.Containers do
   @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
   def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"("}, _} ->
+      {:ok, {:"(", _meta}, _} ->
         parse_paren(state, ctx, log, min_bp, opts)
 
-      {:ok, %{kind: :"["}, _} ->
+      {:ok, {:"[", _meta}, _} ->
         parse_list(state, ctx, log, min_bp, opts)
 
-      {:ok, %{kind: :"{", value: _}, _} ->
+      {:ok, {:"{", _meta}, _} ->
         parse_tuple(state, ctx, log, min_bp, opts)
 
-      {:ok, %{kind: :%{}}, _} ->
+      {:ok, {:%{}, _meta}, _} ->
         Maps.parse_map(state, ctx, log, min_bp)
 
-      {:ok, %{kind: :%}, _} ->
+      {:ok, {:%, _meta}, _} ->
         Maps.parse_map(state, ctx, log, min_bp)
 
-      {:ok, %{kind: :"<<", value: _}, _} ->
+      {:ok, {:"<<", _meta}, _} ->
         Bitstrings.parse(state, ctx, log, min_bp)
 
       {:eof, state} ->
@@ -61,13 +61,13 @@ defmodule ToxicParser.Grammar.Containers do
   @spec parse_container_base(State.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_container_base(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state) do
-      {:ok, %{kind: :"["}, _} ->
+      {:ok, {:"[", _meta}, _} ->
         parse_list_base(state, ctx, log)
 
-      {:ok, %{kind: :"{", value: _}, _} ->
+      {:ok, {:"{", _meta}, _} ->
         parse_tuple_base(state, ctx, log)
 
-      {:ok, %{kind: :"<<", value: _}, _} ->
+      {:ok, {:"<<", _meta}, _} ->
         Bitstrings.parse_base(state, ctx, log)
 
       {:eof, state} ->
@@ -89,7 +89,7 @@ defmodule ToxicParser.Grammar.Containers do
   #   access_expr -> empty_paren                     : wrap in __block__
   defp parse_paren(state, ctx, log, min_bp, opts) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
-    open_meta = token_meta(open_tok.metadata)
+    open_meta = TokenAdapter.token_meta(open_tok)
 
     # Skip leading newlines (but not semicolons) and count them
     {state, newlines} = skip_eoe_not_semicolon_with_count(state, 0)
@@ -129,10 +129,10 @@ defmodule ToxicParser.Grammar.Containers do
     case TokenAdapter.peek(state) do
       # Empty parens: () -> {:__block__, [parens: ...], []}
       # NOTE: parens: metadata doesn't include newlines (only line, column, closing)
-      {:ok, %{kind: :")"} = close_tok, _} ->
+      {:ok, {:")", _close_meta} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
-        close_meta = token_meta(close_tok.metadata)
-        parens_meta = [parens: Meta.closing_meta(open_meta, close_meta, 0, [], base_first: true)]
+        close_meta_kw = TokenAdapter.token_meta(close_tok)
+        parens_meta = [parens: Meta.closing_meta(open_meta, close_meta_kw, 0, [], base_first: true)]
         ast = {:__block__, parens_meta, []}
         Pratt.led(ast, state, log, min_bp, ctx, opts)
 
@@ -148,8 +148,6 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp token_meta(meta), do: Builder.Helpers.token_meta(meta)
-
   defp skip_eoe_not_semicolon_with_count(state, count) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
@@ -157,7 +155,7 @@ defmodule ToxicParser.Grammar.Containers do
           {state, count}
         else
           case tok do
-            %{kind: :eoe, value: %{newlines: n}} ->
+            {:eoe, _meta, %{newlines: n}} ->
               {:ok, _eoe, state} = TokenAdapter.next(state)
               skip_eoe_not_semicolon_with_count(state, count + n)
 
@@ -171,7 +169,7 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp semicolon_eoe?(%{kind: :eoe, value: %{source: :semicolon}}), do: true
+  defp semicolon_eoe?({:eoe, _meta, %{source: :semicolon}}), do: true
   defp semicolon_eoe?(_), do: false
 
   defp parse_list(state, ctx, log, min_bp, opts) do
@@ -184,7 +182,7 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse list without calling Pratt.led - used when caller controls led binding
   defp parse_list_base(state, _ctx, log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
-    open_meta = token_meta(open_tok.metadata)
+    open_meta = TokenAdapter.token_meta(open_tok)
 
     # Count leading newlines after [ for literal_encoder metadata
     {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
@@ -200,11 +198,11 @@ defmodule ToxicParser.Grammar.Containers do
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"]"}, _} ->
+            {:ok, {:"]", _meta}, _} ->
               {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, %{kind: kind}, state} ->
-              {:error, {:expected, :"]", got: kind}, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :"]", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -236,8 +234,8 @@ defmodule ToxicParser.Grammar.Containers do
              skip_eoe_initial?: false
            ) do
       case TokenAdapter.next(state) do
-        {:ok, %{kind: :"]"} = close_tok, state} ->
-          close_meta = token_meta(close_tok.metadata)
+        {:ok, {:"]", _meta} = close_tok, state} ->
+          close_meta = TokenAdapter.token_meta(close_tok)
 
           # Build list metadata with closing location and newlines (for token_metadata compatibility)
           list_meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
@@ -247,7 +245,7 @@ defmodule ToxicParser.Grammar.Containers do
           {:ok, encoded_list, state, log}
 
         {:ok, tok, state} ->
-          {:error, {:expected, :"]", got: tok.kind}, state, log}
+          {:error, {:expected, :"]", got: TokenAdapter.kind(tok)}, state, log}
 
         {:eof, state} ->
           {:error, :unexpected_eof, state, log}
@@ -285,7 +283,7 @@ defmodule ToxicParser.Grammar.Containers do
   # Parse tuple without calling Pratt.led - used when caller controls led binding
   defp parse_tuple_base(state, ctx, log) do
     {:ok, open_tok, state} = TokenAdapter.next(state)
-    open_meta = token_meta(open_tok.metadata)
+    open_meta = TokenAdapter.token_meta(open_tok)
 
     with {:ok, elements, newlines, close_meta, state, log} <- parse_tuple_args(state, ctx, log) do
       meta = Meta.closing_meta(open_meta, close_meta, newlines)
@@ -322,11 +320,11 @@ defmodule ToxicParser.Grammar.Containers do
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, %{kind: :"}"}, _} ->
+            {:ok, {:"}", _meta}, _} ->
               {:ok, {:kw_data, kw_list}, state, log}
 
-            {:ok, %{kind: kind}, state} ->
-              {:error, {:expected, :"}", got: kind}, state, log}
+            {:ok, tok, state} ->
+              {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
@@ -364,12 +362,12 @@ defmodule ToxicParser.Grammar.Containers do
 
         _ ->
           case TokenAdapter.next(state) do
-            {:ok, %{kind: :"}"} = close_tok, state} ->
-              close_meta = token_meta(close_tok.metadata)
+            {:ok, {:"}", _meta} = close_tok, state} ->
+              close_meta = TokenAdapter.token_meta(close_tok)
               {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, log}
 
             {:ok, tok, state} ->
-              {:error, {:expected, :"}", got: tok.kind}, state, log}
+              {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, log}
 
             {:eof, state} ->
               {:error, :unexpected_eof, state, log}
