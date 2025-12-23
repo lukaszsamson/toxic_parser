@@ -3,7 +3,7 @@ defmodule ToxicParser.State do
   Parser state carrier for streaming tokens and parser options.
   """
 
-  alias ToxicParser.{Context, Error}
+  alias ToxicParser.{Context, Error, EventLog}
 
   @type mode :: :strict | :tolerant
   @type expression_context :: Context.t()
@@ -11,13 +11,16 @@ defmodule ToxicParser.State do
   @type checkpoint :: %{
           ref: reference(),
           lookahead: [map()],
+          lookahead_back: [map()],
           diagnostics: [Error.t()],
-          terminators: [term()]
+          terminators: [term()],
+          event_log: EventLog.t()
         }
 
   @type t :: %__MODULE__{
           stream: Toxic.t(),
           lookahead: [map()],
+          lookahead_back: [map()],
           diagnostics: [Error.t()],
           warnings: [ToxicParser.Warning.t()],
           mode: mode(),
@@ -34,6 +37,7 @@ defmodule ToxicParser.State do
 
   defstruct stream: nil,
             lookahead: [],
+            lookahead_back: [],
             diagnostics: [],
             warnings: [],
             mode: :strict,
@@ -45,7 +49,7 @@ defmodule ToxicParser.State do
             terminators: [],
             max_peek: 4,
             source: "",
-            event_log: ToxicParser.EventLog.new()
+            event_log: EventLog.new()
 
   @doc """
   Builds an initial state from source with parser options.
@@ -77,7 +81,7 @@ defmodule ToxicParser.State do
       terminators: terminators,
       max_peek: Keyword.get(opts, :max_peek, 4),
       source: source_bin,
-      event_log: ToxicParser.EventLog.new()
+      event_log: EventLog.new()
     }
   end
 

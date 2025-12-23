@@ -1,7 +1,7 @@
 defmodule ToxicParser.TokenAdapterTest do
   use ExUnit.Case, async: true
 
-  alias ToxicParser.TokenAdapter
+  alias ToxicParser.{EventLog, TokenAdapter}
 
   defp drain_tokens(state, acc \\ []) do
     case TokenAdapter.next(state) do
@@ -40,18 +40,34 @@ defmodule ToxicParser.TokenAdapterTest do
   test "checkpoint and rewind restore lookahead and diagnostics" do
     state = TokenAdapter.new("1\n\n2")
 
+    meta = %{
+      range: %{start: %{offset: 0, line: 1, column: 1}, end: %{offset: 0, line: 1, column: 1}},
+      delimiter: nil,
+      newlines: 0,
+      synthesized?: false,
+      terminators: [],
+      role: :none
+    }
+
     {:ok, first, state} = TokenAdapter.next(state)
     assert first.kind == :int
+
+    state = %{state | event_log: EventLog.token(state.event_log, %{kind: :int, value: 1}, meta)}
 
     {ref, state} = TokenAdapter.checkpoint(state)
     {:ok, eoe, state} = TokenAdapter.next(state)
     assert eoe.kind == :eoe
+    checkpoint_log = state.checkpoints[ref].event_log
+
+    mutated_log = EventLog.token(state.event_log, %{kind: :int, value: 2}, meta)
+    state = %{state | event_log: mutated_log}
 
     rewound = TokenAdapter.rewind(state, ref)
     {:ok, eoe_again, _} = TokenAdapter.next(rewound)
     assert eoe_again.kind == :eoe
 
     assert rewound.checkpoints == %{}
+    assert rewound.event_log == checkpoint_log
   end
 
   test "drop_checkpoint removes saved state without rewinding" do

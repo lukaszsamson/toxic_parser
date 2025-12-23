@@ -4,29 +4,29 @@ defmodule ToxicParser.Grammar.EOE do
   skipping, counting newlines, and building/annotating metadata.
   """
 
-  alias ToxicParser.{State, TokenAdapter}
+  alias ToxicParser.{Layout, State, TokenAdapter}
   alias ToxicParser.Builder.Helpers
 
   @spec skip(State.t()) :: State.t()
   def skip(%State{} = state) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe}, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
+    case Layout.peek_sep(state) do
+      {:ok, _eoe, state} ->
+        {:ok, _tok, state} = TokenAdapter.next(state)
         skip(state)
 
-      _ ->
+      :none ->
         state
     end
   end
 
   @spec skip_count_newlines(State.t(), non_neg_integer()) :: {State.t(), non_neg_integer()}
   def skip_count_newlines(%State{} = state, count) when is_integer(count) and count >= 0 do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, value: %{newlines: n}}, _} ->
+    case Layout.peek_sep(state) do
+      {:ok, {:eoe, _meta, %{newlines: n}}, state} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
         skip_count_newlines(state, count + n)
 
-      _ ->
+      :none ->
         {state, count}
     end
   end
@@ -38,13 +38,15 @@ defmodule ToxicParser.Grammar.EOE do
   """
   @spec skip_newlines_only(State.t(), non_neg_integer()) :: {State.t(), non_neg_integer()}
   def skip_newlines_only(%State{} = state, count) when is_integer(count) and count >= 0 do
-    case TokenAdapter.peek(state) do
-      # Only skip if it's an EOE from newlines, not semicolons
-      {:ok, %{kind: :eoe, value: %{source: source, newlines: n}}, _} when source != :semicolon ->
+    case Layout.peek_sep(state) do
+      {:ok, {:eoe, _meta, %{source: :semicolon}}, _state} ->
+        {state, count}
+
+      {:ok, {:eoe, _meta, %{newlines: n}}, state} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
         skip_newlines_only(state, count + n)
 
-      _ ->
+      :none ->
         {state, count}
     end
   end
@@ -62,13 +64,13 @@ defmodule ToxicParser.Grammar.EOE do
 
   @spec skip_with_meta(State.t(), keyword() | nil) :: {State.t(), keyword()}
   def skip_with_meta(%State{} = state, first_meta \\ nil) do
-    case TokenAdapter.peek(state) do
-      {:ok, %{kind: :eoe, metadata: meta}, _} ->
+    case Layout.peek_sep(state) do
+      {:ok, {:eoe, meta, _value}, state} ->
         {:ok, _eoe, state} = TokenAdapter.next(state)
         new_meta = first_meta || Helpers.token_meta(meta)
         skip_with_meta(state, new_meta)
 
-      _ ->
+      :none ->
         {state, first_meta || []}
     end
   end

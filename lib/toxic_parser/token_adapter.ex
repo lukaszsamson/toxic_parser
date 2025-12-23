@@ -39,19 +39,21 @@ defmodule ToxicParser.TokenAdapter do
   Consume the next token (with EOE normalization).
   """
   @spec next(State.t()) :: result()
-  def next(%State{lookahead: [next | rest]} = state) do
-    case consume_fuel(state) do
-      {:ok, state} ->
-        {:ok, next, %{state | lookahead: rest, terminators: next.metadata.terminators}}
-
-      {:error, reason, state} ->
-        {:error, reason, state}
-    end
-  end
-
   def next(%State{} = state) do
     with {:ok, state} <- consume_fuel(state) do
-      fetch_next(state, cache?: false)
+      case pop_lookahead(state) do
+        {:ok, token, state} ->
+          {:ok, token, %{state | terminators: token.metadata.terminators}}
+
+        :empty ->
+          case fetch_next(state, cache?: false) do
+            {:ok, token, state} ->
+              {:ok, token, %{state | terminators: token.metadata.terminators}}
+
+            other ->
+              other
+          end
+      end
     end
   end
 
@@ -59,8 +61,14 @@ defmodule ToxicParser.TokenAdapter do
   Peek the next token without consuming it.
   """
   @spec peek(State.t()) :: result()
-  def peek(%State{lookahead: [next | _]} = state), do: {:ok, next, state}
-  def peek(%State{} = state), do: fetch_next(state, cache?: true)
+  def peek(%State{} = state) do
+    state = normalize_lookahead(state)
+
+    case state.lookahead do
+      [next | _] -> {:ok, next, state}
+      _ -> fetch_next(state, cache?: true)
+    end
+  end
 
   @doc """
   Push a previously consumed token back into the lookahead buffer.
@@ -77,7 +85,8 @@ defmodule ToxicParser.TokenAdapter do
   """
   @spec pushback_many(State.t(), [token()]) :: State.t()
   def pushback_many(%State{} = state, tokens) when is_list(tokens) do
-    %{state | lookahead: tokens ++ state.lookahead}
+    front = Enum.reduce(Enum.reverse(tokens), state.lookahead, fn token, acc -> [token | acc] end)
+    %{state | lookahead: front}
   end
 
   @doc """
@@ -93,20 +102,50 @@ defmodule ToxicParser.TokenAdapter do
 
   def peek_n(%State{} = state, n) do
     case ensure_lookahead(state, n) do
-      {:ok, state} -> {:ok, Enum.take(state.lookahead, n), state}
+      {:ok, state} -> {:ok, take_lookahead(state, n), state}
       {:eof, state} -> {:eof, [], state}
       {:error, err, state} -> {:error, err, [], state}
     end
   end
 
-  defp ensure_lookahead(state, n) when length(state.lookahead) >= n, do: {:ok, state}
-
   defp ensure_lookahead(state, n) do
-    case fetch_next(state, cache?: true) do
-      {:ok, _token, state} -> ensure_lookahead(state, n)
-      {:eof, state} -> {:eof, state}
-      {:error, err, state} -> {:error, err, state}
+    state = normalize_lookahead(state)
+
+    cond do
+      lookahead_size(state) >= n ->
+        {:ok, state}
+
+      true ->
+        case fetch_next(state, cache?: true) do
+          {:ok, _token, state} -> ensure_lookahead(state, n)
+          {:eof, state} -> {:eof, state}
+          {:error, err, state} -> {:error, err, state}
+        end
     end
+  end
+
+  defp normalize_lookahead(%State{lookahead: [], lookahead_back: back} = state) when back != [] do
+    %{state | lookahead: Enum.reverse(back), lookahead_back: []}
+  end
+
+  defp normalize_lookahead(state), do: state
+
+  defp pop_lookahead(%State{} = state) do
+    state = normalize_lookahead(state)
+
+    case state.lookahead do
+      [next | rest] -> {:ok, next, %{state | lookahead: rest}}
+      [] -> :empty
+    end
+  end
+
+  defp lookahead_size(%State{lookahead: front, lookahead_back: back}),
+    do: length(front) + length(back)
+
+  defp take_lookahead(%State{lookahead: front, lookahead_back: back}, n) do
+    front
+    |> Stream.concat(back |> Enum.reverse())
+    |> Enum.take(n)
   end
 
   @doc """
@@ -119,8 +158,10 @@ defmodule ToxicParser.TokenAdapter do
     saved = %{
       ref: ref,
       lookahead: state.lookahead,
+      lookahead_back: state.lookahead_back,
       diagnostics: state.diagnostics,
-      terminators: state.terminators
+      terminators: state.terminators,
+      event_log: state.event_log
     }
 
     {ref, %{state | stream: stream, checkpoints: Map.put(state.checkpoints, ref, saved)}}
@@ -139,8 +180,10 @@ defmodule ToxicParser.TokenAdapter do
       state
       | stream: stream,
         lookahead: checkpoint.lookahead,
+        lookahead_back: checkpoint.lookahead_back,
         diagnostics: checkpoint.diagnostics,
         terminators: checkpoint.terminators,
+        event_log: checkpoint.event_log,
         checkpoints: Map.delete(state.checkpoints, ref)
     }
   end
@@ -156,18 +199,22 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   defp fetch_next(%State{stream: stream} = state, opts) do
-    {terminators, stream} = Toxic.current_terminators(stream)
+    needs_terms? = needs_terminators?(state, opts)
 
     case Toxic.next(stream) do
       {:ok, raw, stream} ->
+        {terminators, stream} = maybe_fetch_terminators(stream, state, needs_terms?)
         {normalized, diagnostics} = normalize_token(raw, state, terminators)
         state = update_state(state, stream, terminators, diagnostics, opts, normalized)
         {:ok, normalized, state}
 
       {:eof, stream} ->
+        {terminators, stream} = maybe_fetch_terminators(stream, state, needs_terms?)
         {:eof, %{state | stream: stream, terminators: terminators}}
 
       {:error, reason, stream} ->
+        {terminators, stream} = refresh_terminators(stream, state)
+
         diagnostic =
           Error.from_toxic(
             nil,
@@ -181,9 +228,27 @@ defmodule ToxicParser.TokenAdapter do
           {:ok, token, state}
         else
           {:error, diagnostic,
-           %{state | stream: stream, diagnostics: [diagnostic | state.diagnostics]}}
+           %{
+             state
+             | stream: stream,
+               terminators: terminators,
+               diagnostics: [diagnostic | state.diagnostics]
+           }}
         end
     end
+  end
+
+  defp maybe_fetch_terminators(stream, _state, true), do: Toxic.current_terminators(stream)
+  defp maybe_fetch_terminators(stream, state, false), do: {state.terminators, stream}
+
+  defp refresh_terminators(stream, _state), do: Toxic.current_terminators(stream)
+
+  defp needs_terminators?(state, opts) do
+    Keyword.get(opts, :force_terminators?, false) ||
+      Keyword.get(opts, :fetch_terminators?, false) ||
+      state.mode == :tolerant ||
+      Keyword.get(state.opts, :token_metadata, false) ||
+      Keyword.get(state.opts, :emit_events, false)
   end
 
   defp consume_fuel(%State{fuel: :infinity} = state), do: {:ok, state}
@@ -207,7 +272,9 @@ defmodule ToxicParser.TokenAdapter do
     state
   end
 
-  defp maybe_cache(state, true, token), do: %{state | lookahead: state.lookahead ++ [token]}
+  defp maybe_cache(state, true, token),
+    do: %{state | lookahead_back: [token | state.lookahead_back]}
+
   defp maybe_cache(state, _cache?, _token), do: state
 
   defp normalize_token({:eol, meta} = raw, state, terminators) do
