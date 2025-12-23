@@ -570,7 +570,7 @@ defmodule ToxicParser.Grammar.Maps do
         {:valid, [list]}
 
       Enum.all?(list, &is_keyword_or_assoc_entry?/1) ->
-        raise "dead code"
+        # raise "dead code"
         # Annotate keys in assoc entries with :assoc metadata
         annotated = Enum.map(list, &annotate_assoc_entry/1)
         {:valid, annotated}

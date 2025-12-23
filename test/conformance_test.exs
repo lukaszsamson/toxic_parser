@@ -3656,6 +3656,26 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 157" do
       assert_conforms("fn \#{\n;\ncond1 -> :ok end")
     end
+
+    test "repro 158" do
+      assert_conforms("fn ;\na -> :ok end")
+      assert_conforms("fn ;\n -> :ok end")
+      assert_conforms("fn ;\n.. -> :ok end")
+      assert_conforms("fn ;\#{//\n'c' -> :ok end")
+      assert_conforms("fn ;\n\"\",cond -> :ok end")
+    end
+
+    test "repro 159" do
+      assert_conforms("%-%{}{}")
+    end
+
+    test "repro 160" do
+      assert_conforms(";[@ eggs,().\ngamma.(bar.\n\nqux beta, beta: (bar;baz;(case\n\n;try\n;).gamma\n).gamma\n\n) do end !== baz foo.\n\nwith,delta: ... delta\n\n];if")
+    end
+
+    # test "repro 161" do
+    #   assert_conforms("%-%{}{}")
+    # end
   end
 
   # =============================================================================
