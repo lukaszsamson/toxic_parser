@@ -3676,7 +3676,9 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "repro 161" do
-      assert_conforms(";()\nbeta <\n\n+ (gamma.receive do\nend) + ... beta +baz;@ Kernel\n;baz gamma.\nfoo alpha.eggs, beta: not\n\nfoo")
+      assert_conforms(
+        ";()\nbeta <\n\n+ (gamma.receive do\nend) + ... beta +baz;@ Kernel\n;baz gamma.\nfoo alpha.eggs, beta: not\n\nfoo"
+      )
     end
 
     # test "repro 162" do

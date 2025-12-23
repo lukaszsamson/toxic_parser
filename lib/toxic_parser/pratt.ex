@@ -765,7 +765,8 @@ defmodule ToxicParser.Pratt do
                     if operand_context.allow_do_block and
                          (do_block_expr?(operand_base) or
                             (op_token.kind in [:ellipsis_op, :range_op] and
-                               contains_do_block?(operand_base))) do
+                               contains_do_block?(operand_base))) and
+                         not (op_token.kind == :dual_op and has_parens_meta?(operand_base)) do
                       case bp(next_tok.kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           state_full = TokenAdapter.rewind(state_after_base, ref)
@@ -2179,6 +2180,9 @@ defmodule ToxicParser.Pratt do
 
   # Restrict context to prevent no_parens_expr extension in nested operands
   defp restrict_no_parens_extension(%Context{} = ctx), do: %{ctx | allow_no_parens_expr: false}
+
+  defp has_parens_meta?({_, meta, _}) when is_list(meta), do: Keyword.has_key?(meta, :parens)
+  defp has_parens_meta?(_), do: false
 
   # Build binary operation AST, with special handling for "not in" rewrite
   # "not in" gets rewritten to {:not, NotMeta, [{:in, InMeta, [left, right]}]}
