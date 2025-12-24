@@ -45,13 +45,19 @@ defmodule ToxicParser.Cursor do
   end
 
   @spec next(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
-  def next(cursor), do: do_next(maybe_flip(cursor))
-
-  defp do_next({rest, driver, [tok | front], back, max_peek, size}) do
+  # Fast path: front has tokens
+  def next({rest, driver, [tok | front], back, max_peek, size}) do
     {:ok, tok, {rest, driver, front, back, max_peek, size - 1}}
   end
 
-  defp do_next({rest, driver, [], [], max_peek, 0}) do
+  # Flip path: front empty, back has tokens
+  def next({rest, driver, [], [_ | _] = back, max_peek, size}) do
+    [tok | front] = Enum.reverse(back)
+    {:ok, tok, {rest, driver, front, [], max_peek, size - 1}}
+  end
+
+  # Fetch path: both queues empty, get from driver
+  def next({rest, driver, [], [], max_peek, 0}) do
     case Toxic.Driver.next(rest, driver) do
       {:ok, tok, rest, driver} -> {:ok, tok, {rest, driver, [], [], max_peek, 0}}
       {:eof, driver} -> {:eof, {[], driver, [], [], max_peek, 0}}
@@ -60,26 +66,28 @@ defmodule ToxicParser.Cursor do
   end
 
   @spec peek(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
-  def peek(cursor) do
-    cursor = maybe_flip(cursor)
+  # Fast path: front has tokens
+  def peek({_rest, _driver, [tok | _], _back, _max_peek, _size} = cursor) do
+    {:ok, tok, cursor}
+  end
 
-    case cursor do
-      {_rest, _driver, [tok | _], _back, _max_peek, _size} ->
-        {:ok, tok, cursor}
+  # Flip path: front empty, back has tokens
+  def peek({rest, driver, [], [_ | _] = back, max_peek, size}) do
+    [tok | _] = front = Enum.reverse(back)
+    {:ok, tok, {rest, driver, front, [], max_peek, size}}
+  end
 
-      _ ->
-        case fetch_one(cursor) do
-          {:ok, cursor} ->
-            cursor = maybe_flip(cursor)
-            {_rest, _driver, [tok | _], _back, _max_peek, _size} = cursor
-            {:ok, tok, cursor}
+  # Fetch path: both queues empty, get from driver
+  def peek({rest, driver, [], [], max_peek, 0} = _cursor) do
+    case Toxic.Driver.next(rest, driver) do
+      {:ok, tok, rest, driver} ->
+        {:ok, tok, {rest, driver, [tok], [], max_peek, 1}}
 
-          {:eof, cursor} ->
-            {:eof, cursor}
+      {:eof, driver} ->
+        {:eof, {[], driver, [], [], max_peek, 0}}
 
-          {:error, reason, cursor} ->
-            {:error, reason, cursor}
-        end
+      {:error, reason, rest, driver} ->
+        {:error, reason, {rest, driver, [], [], max_peek, 0}}
     end
   end
 
