@@ -2,12 +2,14 @@ defmodule ToxicParser.TokenAdapter do
   @moduledoc """
   Provides peek/checkpoint/rewind helpers for Toxic streaming tokens.
 
-  Phase 3 refactor: Tokens are now stored as raw Toxic tuples, with helper
-  functions for accessing kind/value/meta. EOE normalization is handled via
-  a view token for backward compatibility during migration.
+  Phase 4: Delegates to ToxicParser.Cursor for token transport.
+  Cursor handles lookahead internally with a two-list queue, replacing
+  both the Toxic stream batching and the previous TokenAdapter lookahead.
+
+  Token accessors (kind/value/meta/etc.) and EOE normalization are preserved.
   """
 
-  alias ToxicParser.{Error, Position, State}
+  alias ToxicParser.{Cursor, Error, Position, State}
 
   # Import token macros for pattern matching
   require Toxic.Token
@@ -35,15 +37,71 @@ defmodule ToxicParser.TokenAdapter do
           | {:eof, State.t()}
           | {:error, Error.t(), State.t()}
 
+  # Only update terminators when we encounter tokens that change the terminator stack.
+  # This is a critical performance optimization - terminators only change on delimiters.
+  # Per LEXER_REFACTOR_V2.md Section 1.4: "TokenAdapter calls current_terminators/1 on every fetch (wasteful)"
+  #
+  # Terminator-affecting tokens:
+  # - Brackets/blocks: (, ), [, ], {, }, <<, >>, do, end, fn
+  # - String/heredoc boundaries: bin_string_start/end, list_string_start/end, bin_heredoc_start/end, list_heredoc_start/end
+  # - Sigil boundaries: sigil_start, sigil_end
+  # - Interpolation: begin_interpolation, end_interpolation
+  # - Quoted atoms: atom_start
+  # - Quoted identifiers: quoted_identifier_start, quoted_*_identifier_end variants
+  @delimiter_tokens [
+    # Brackets and blocks
+    :"(",
+    :")",
+    :"[",
+    :"]",
+    :"{",
+    :"}",
+    :"<<",
+    :">>",
+    :do,
+    :end,
+    :fn,
+    # String/heredoc boundaries
+    :bin_string_start,
+    :bin_string_end,
+    :list_string_start,
+    :list_string_end,
+    :bin_heredoc_start,
+    :bin_heredoc_end,
+    :list_heredoc_start,
+    :list_heredoc_end,
+    # Sigil boundaries
+    :sigil_start,
+    :sigil_end,
+    # Interpolation
+    :begin_interpolation,
+    :end_interpolation,
+    # Quoted atoms
+    :atom_start,
+    # Quoted identifiers
+    :quoted_identifier_start,
+    :quoted_identifier_end,
+    :quoted_paren_identifier_end,
+    :quoted_bracket_identifier_end,
+    :quoted_do_identifier_end,
+    :quoted_op_identifier_end,
+    # Quoted keyword identifiers (:"key":)
+    :kw_identifier_safe_end,
+    :kw_identifier_unsafe_end
+  ]
+
   # ============================================================================
   # Token field accessors - work with raw tokens
   # ============================================================================
 
   @doc "Extract kind from a raw token"
   @spec kind(token()) :: atom()
-  def kind({kind, _meta}), do: kind
-  def kind({kind, _meta, _value}), do: kind
-  def kind({kind, _meta, _v1, _v2}), do: kind
+  def kind(tuple), do: elem(tuple, 0)
+  # def kind({kind, _meta}), do: kind
+  # def kind({kind, _meta, _value}), do: kind
+  # def kind({kind, _meta, _v1, _v2}), do: kind
+
+  @compile {:inline, kind: 1}
 
   @doc "Extract value from a raw token. Returns nil for 2-tuple tokens."
   @spec value(token()) :: term()
@@ -139,11 +197,12 @@ defmodule ToxicParser.TokenAdapter do
 
   @doc """
   Returns the current terminator snapshot without consuming tokens.
+  Pay-for-play: only called when needed, not on every token.
   """
   @spec current_terminators(State.t()) :: {[term()], State.t()}
-  def current_terminators(%State{stream: stream} = state) do
-    {terms, stream} = Toxic.current_terminators(stream)
-    {terms, %{state | stream: stream, terminators: terms}}
+  def current_terminators(%State{cursor: cursor} = state) do
+    {terms, cursor} = Cursor.current_terminators(cursor)
+    {terms, %{state | cursor: cursor, terminators: terms}}
   end
 
   # ============================================================================
@@ -159,13 +218,7 @@ defmodule ToxicParser.TokenAdapter do
   @spec next(State.t()) :: result()
   def next(%State{} = state) do
     with {:ok, state} <- consume_fuel(state) do
-      case pop_lookahead(state) do
-        {:ok, token, state} ->
-          {:ok, token, state}
-
-        :empty ->
-          fetch_next(state, cache?: false)
-      end
+      fetch_next(state)
     end
   end
 
@@ -173,12 +226,25 @@ defmodule ToxicParser.TokenAdapter do
   Peek the next token without consuming it.
   """
   @spec peek(State.t()) :: result()
-  def peek(%State{} = state) do
-    state = normalize_lookahead(state)
+  def peek(%State{cursor: cursor} = state) do
+    case Cursor.peek(cursor) do
+      {:ok, raw, cursor} ->
+        state = %{state | cursor: cursor}
+        {normalized, diagnostics} = normalize_token(raw)
+        state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
+        if elem(normalized, 0) in @delimiter_tokens and (state.mode == :tolerant ||
+        Keyword.get(state.opts, :token_metadata, false) ||
+        Keyword.get(state.opts, :emit_events, false)) do
+          {:ok, normalized, update_terminators(state)}
+        else
+          {:ok, normalized, state}
+        end
 
-    case state.lookahead do
-      [next | _] -> {:ok, next, state}
-      _ -> fetch_next(state, cache?: true)
+      {:eof, cursor} ->
+        {:eof, %{state | cursor: cursor}}
+
+      {:error, reason, cursor} ->
+        handle_error(reason, cursor, state)
     end
   end
 
@@ -186,8 +252,8 @@ defmodule ToxicParser.TokenAdapter do
   Push a previously consumed token back into the lookahead buffer.
   """
   @spec pushback(State.t(), token()) :: State.t()
-  def pushback(%State{} = state, token) when is_tuple(token) do
-    %{state | lookahead: [token | state.lookahead]}
+  def pushback(%State{cursor: cursor} = state, token) when is_tuple(token) do
+    %{state | cursor: Cursor.pushback(cursor, token)}
   end
 
   @doc """
@@ -196,9 +262,8 @@ defmodule ToxicParser.TokenAdapter do
   Tokens must be in source order (the first token in the list will be the next token returned).
   """
   @spec pushback_many(State.t(), [token()]) :: State.t()
-  def pushback_many(%State{} = state, tokens) when is_list(tokens) do
-    front = Enum.reduce(Enum.reverse(tokens), state.lookahead, fn token, acc -> [token | acc] end)
-    %{state | lookahead: front}
+  def pushback_many(%State{cursor: cursor} = state, tokens) when is_list(tokens) do
+    %{state | cursor: Cursor.pushback_many(cursor, tokens)}
   end
 
   @doc """
@@ -212,11 +277,23 @@ defmodule ToxicParser.TokenAdapter do
     raise ArgumentError, "peek_n/2 capped at #{max}"
   end
 
-  def peek_n(%State{} = state, n) do
-    case ensure_lookahead(state, n) do
-      {:ok, state} -> {:ok, take_lookahead(state, n), state}
-      {:eof, state} -> {:eof, [], state}
-      {:error, err, state} -> {:error, err, [], state}
+  def peek_n(%State{cursor: cursor} = state, n) do
+    case Cursor.peek_n(cursor, n) do
+      {:ok, tokens, cursor} ->
+        state = %{state | cursor: cursor}
+        {normalized, state} = normalize_tokens(tokens, state)
+        {:ok, normalized, state}
+
+      {:eof, tokens, cursor} ->
+        state = %{state | cursor: cursor}
+        {normalized, state} = normalize_tokens(tokens, state)
+        {:eof, normalized, state}
+
+      {:error, reason, tokens, cursor} ->
+        state = %{state | cursor: cursor}
+        {normalized, state} = normalize_tokens(tokens, state)
+        diagnostic = make_diagnostic(reason, state)
+        {:error, diagnostic, normalized, %{state | diagnostics: [diagnostic | state.diagnostics]}}
     end
   end
 
@@ -226,21 +303,21 @@ defmodule ToxicParser.TokenAdapter do
 
   @doc """
   Create a checkpoint for backtracking.
+  Saves cursor state plus diagnostics/event_log for full rollback.
   """
   @spec checkpoint(State.t()) :: {reference(), State.t()}
   def checkpoint(%State{} = state) do
-    {ref, stream} = Toxic.checkpoint(state.stream)
+    ref = make_ref()
 
     saved = %{
       ref: ref,
-      lookahead: state.lookahead,
-      lookahead_back: state.lookahead_back,
+      cursor: Cursor.mark(state.cursor),
       diagnostics: state.diagnostics,
       terminators: state.terminators,
       event_log: state.event_log
     }
 
-    {ref, %{state | stream: stream, checkpoints: Map.put(state.checkpoints, ref, saved)}}
+    {ref, %{state | checkpoints: Map.put(state.checkpoints, ref, saved)}}
   end
 
   @doc """
@@ -250,13 +327,9 @@ defmodule ToxicParser.TokenAdapter do
   def rewind(%State{} = state, ref) do
     checkpoint = Map.fetch!(state.checkpoints, ref)
 
-    stream = Toxic.rewind_to(state.stream, ref)
-
     %{
       state
-      | stream: stream,
-        lookahead: checkpoint.lookahead,
-        lookahead_back: checkpoint.lookahead_back,
+      | cursor: Cursor.rewind(state.cursor, checkpoint.cursor),
         diagnostics: checkpoint.diagnostics,
         terminators: checkpoint.terminators,
         event_log: checkpoint.event_log,
@@ -270,53 +343,12 @@ defmodule ToxicParser.TokenAdapter do
   @spec drop_checkpoint(State.t(), reference()) :: State.t()
   def drop_checkpoint(%State{} = state, ref) do
     {_checkpoint, checkpoints} = Map.pop!(state.checkpoints, ref)
-    :ok = Toxic.drop_checkpoint(ref)
     %{state | checkpoints: checkpoints}
   end
 
   # ============================================================================
   # Private helpers
   # ============================================================================
-
-  defp ensure_lookahead(state, n) do
-    state = normalize_lookahead(state)
-
-    cond do
-      lookahead_size(state) >= n ->
-        {:ok, state}
-
-      true ->
-        case fetch_next(state, cache?: true) do
-          {:ok, _token, state} -> ensure_lookahead(state, n)
-          {:eof, state} -> {:eof, state}
-          {:error, err, state} -> {:error, err, state}
-        end
-    end
-  end
-
-  defp normalize_lookahead(%State{lookahead: [], lookahead_back: back} = state) when back != [] do
-    %{state | lookahead: Enum.reverse(back), lookahead_back: []}
-  end
-
-  defp normalize_lookahead(state), do: state
-
-  defp pop_lookahead(%State{} = state) do
-    state = normalize_lookahead(state)
-
-    case state.lookahead do
-      [next | rest] -> {:ok, next, %{state | lookahead: rest}}
-      [] -> :empty
-    end
-  end
-
-  defp lookahead_size(%State{lookahead: front, lookahead_back: back}),
-    do: length(front) + length(back)
-
-  defp take_lookahead(%State{lookahead: front, lookahead_back: back}, n) do
-    front
-    |> Stream.concat(back |> Enum.reverse())
-    |> Enum.take(n)
-  end
 
   defp consume_fuel(%State{fuel: :infinity} = state), do: {:ok, state}
 
@@ -328,74 +360,70 @@ defmodule ToxicParser.TokenAdapter do
     end
   end
 
-  defp fetch_next(%State{stream: stream} = state, opts) do
-    needs_terms? = needs_terminators?(state, opts)
 
-    case Toxic.next(stream) do
-      {:ok, raw, stream} ->
-        {terminators, stream} = maybe_fetch_terminators(stream, state, needs_terms?)
+
+  defp fetch_next(%State{cursor: cursor} = state) do
+    case Cursor.next(cursor) do
+      {:ok, raw, cursor} ->
+        state = %{state | cursor: cursor}
         {normalized, diagnostics} = normalize_token(raw)
-        state = update_state(state, stream, terminators, diagnostics, opts, normalized)
-        {:ok, normalized, state}
-
-      {:eof, stream} ->
-        {terminators, stream} = maybe_fetch_terminators(stream, state, needs_terms?)
-        {:eof, %{state | stream: stream, terminators: terminators}}
-
-      {:error, reason, stream} ->
-        {terminators, stream} = refresh_terminators(stream, state)
-
-        diagnostic =
-          Error.from_toxic(
-            nil,
-            reason,
-            line_index: state.line_index,
-            terminators: terminators
-          )
-
-        if state.mode == :tolerant do
-          {token, state} = synthetic_error_token(stream, state, terminators, diagnostic, opts)
-          {:ok, token, state}
+        state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
+        if elem(normalized, 0) in @delimiter_tokens and (state.mode == :tolerant ||
+        Keyword.get(state.opts, :token_metadata, false) ||
+        Keyword.get(state.opts, :emit_events, false)) do
+          {:ok, normalized, update_terminators(state)}
         else
-          {:error, diagnostic,
-           %{
-             state
-             | stream: stream,
-               terminators: terminators,
-               diagnostics: [diagnostic | state.diagnostics]
-           }}
+          {:ok, normalized, state}
         end
+
+      {:eof, cursor} ->
+        {:eof, %{state | cursor: cursor}}
+
+      {:error, reason, cursor} ->
+        handle_error(reason, cursor, state)
     end
   end
 
-  defp maybe_fetch_terminators(stream, _state, true), do: Toxic.current_terminators(stream)
-  defp maybe_fetch_terminators(stream, state, false), do: {state.terminators, stream}
+  defp handle_error(reason, cursor, state) do
+    {terminators, cursor} = Cursor.current_terminators(cursor)
+    state = %{state | cursor: cursor, terminators: terminators}
 
-  defp refresh_terminators(stream, _state), do: Toxic.current_terminators(stream)
+    diagnostic = make_diagnostic(reason, state)
 
-  defp needs_terminators?(state, opts) do
-    Keyword.get(opts, :force_terminators?, false) ||
-      Keyword.get(opts, :fetch_terminators?, false) ||
-      state.mode == :tolerant ||
-      Keyword.get(state.opts, :token_metadata, false) ||
-      Keyword.get(state.opts, :emit_events, false)
+    if state.mode == :tolerant do
+      {token, state} = synthetic_error_token(state, diagnostic)
+      {:ok, token, state}
+    else
+      {:error, diagnostic, %{state | diagnostics: [diagnostic | state.diagnostics]}}
+    end
   end
 
-  defp update_state(state, stream, terminators, diagnostics, opts, normalized) do
-    state =
-      state
-      |> maybe_cache(opts[:cache?], normalized)
-      |> Map.put(:stream, stream)
-      |> Map.put(:terminators, terminators)
-      |> Map.update!(:diagnostics, &(Enum.reverse(diagnostics) ++ &1))
-
-    state
+  defp make_diagnostic(reason, state) do
+    Error.from_toxic(
+      nil,
+      reason,
+      line_index: state.line_index,
+      terminators: state.terminators
+    )
   end
 
-  defp maybe_cache(state, true, token),
-    do: %{state | lookahead_back: [token | state.lookahead_back]}
+  defp add_diagnostics(state, []), do: state
 
-  defp maybe_cache(state, _cache?, _token), do: state
+  defp add_diagnostics(state, diagnostics) do
+    %{state | diagnostics: Enum.reverse(diagnostics) ++ state.diagnostics}
+  end
+
+  defp update_terminators(state) do
+    {terms, cursor} = Cursor.current_terminators(state.cursor)
+    %{state | cursor: cursor, terminators: terms}
+  end
+
+  defp normalize_tokens(tokens, state) do
+    Enum.map_reduce(tokens, state, fn raw, state ->
+      {normalized, diagnostics} = normalize_token(raw)
+      {normalized, if(diagnostics != [], do: add_diagnostics(state, diagnostics), else: state)}
+    end)
+  end
 
   # ============================================================================
   # Token normalization - minimal, only EOE view token conversion
@@ -434,8 +462,8 @@ defmodule ToxicParser.TokenAdapter do
     {raw, []}
   end
 
-  defp synthetic_error_token(stream, state, terminators, diagnostic, opts) do
-    {{line, col}, stream} = Toxic.position(stream)
+  defp synthetic_error_token(state, diagnostic) do
+    {{line, col}, cursor} = Cursor.position(state.cursor)
 
     meta = {
       {line, col},
@@ -445,12 +473,11 @@ defmodule ToxicParser.TokenAdapter do
 
     token = {:error_token, meta, diagnostic.reason}
 
-    state =
+    state = %{
       state
-      |> Map.put(:stream, %{stream | error: nil})
-      |> maybe_cache(opts[:cache?], token)
-      |> Map.update!(:diagnostics, &[diagnostic | &1])
-      |> Map.put(:terminators, terminators)
+      | cursor: cursor,
+        diagnostics: [diagnostic | state.diagnostics]
+    }
 
     {token, state}
   end

@@ -1,26 +1,26 @@
 defmodule ToxicParser.State do
   @moduledoc """
   Parser state carrier for streaming tokens and parser options.
+
+  Phase 4: Uses Cursor for token transport instead of Toxic stream.
+  Cursor handles lookahead internally with a two-list queue.
   """
 
-  alias ToxicParser.{Context, Error, EventLog}
+  alias ToxicParser.{Context, Cursor, Error, EventLog}
 
   @type mode :: :strict | :tolerant
   @type expression_context :: Context.t()
 
   @type checkpoint :: %{
           ref: reference(),
-          lookahead: [map()],
-          lookahead_back: [map()],
+          cursor: Cursor.t(),
           diagnostics: [Error.t()],
           terminators: [term()],
           event_log: EventLog.t()
         }
 
   @type t :: %__MODULE__{
-          stream: Toxic.t(),
-          lookahead: [map()],
-          lookahead_back: [map()],
+          cursor: Cursor.t(),
           diagnostics: [Error.t()],
           warnings: [ToxicParser.Warning.t()],
           mode: mode(),
@@ -35,9 +35,7 @@ defmodule ToxicParser.State do
           event_log: ToxicParser.EventLog.t()
         }
 
-  defstruct stream: nil,
-            lookahead: [],
-            lookahead_back: [],
+  defstruct cursor: nil,
             diagnostics: [],
             warnings: [],
             mode: :strict,
@@ -58,28 +56,29 @@ defmodule ToxicParser.State do
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
     mode = Keyword.get(opts, :mode, :strict)
     source_bin = if is_binary(source), do: source, else: List.to_string(source)
+    max_peek = Keyword.get(opts, :max_peek, 4)
 
-    stream =
-      Toxic.new(source, 1, 1,
-        error_mode: if(mode == :tolerant, do: :tolerant, else: :strict),
-        preserve_comments: Keyword.get(opts, :preserve_comments, false),
-        existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false),
-        max_batch: 8
-      )
+    cursor_opts = [
+      mode: mode,
+      preserve_comments: Keyword.get(opts, :preserve_comments, false),
+      existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false),
+      max_peek: max_peek
+    ]
 
-    {terminators, stream} = Toxic.current_terminators(stream)
+    cursor = Cursor.new(source, cursor_opts)
+    {terminators, cursor} = Cursor.current_terminators(cursor)
 
     ctx = Keyword.get(opts, :expression_context, Context.expr())
 
     %__MODULE__{
-      stream: stream,
+      cursor: cursor,
       mode: mode,
       opts: opts,
       fuel: Keyword.get(opts, :fuel_limit, :infinity),
       expression_context: ctx,
       line_index: line_index(source_bin),
       terminators: terminators,
-      max_peek: Keyword.get(opts, :max_peek, 4),
+      max_peek: max_peek,
       source: source_bin,
       event_log: EventLog.new()
     }

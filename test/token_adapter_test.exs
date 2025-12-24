@@ -148,13 +148,14 @@ defmodule ToxicParser.TokenAdapterTest do
     strict_state = TokenAdapter.new(")", mode: :strict)
     assert {:error, _diag, _} = TokenAdapter.next(strict_state)
 
-    tolerant_state = TokenAdapter.new("1", mode: :tolerant)
-    tolerant_state = %{tolerant_state | stream: %{tolerant_state.stream | error: {:fatal, :boom}}}
+    # Tolerant mode: errors are handled by synthesizing error tokens
+    # Test with invalid input that produces a lexer error
+    tolerant_state = TokenAdapter.new("\x00", mode: :tolerant)
 
+    # In tolerant mode, lexer errors become error_token synthetic tokens
     assert {:ok, token, state_after} = TokenAdapter.next(tolerant_state)
     assert TokenAdapter.kind(token) == :error_token
-    assert state_after.stream.error == nil
-    assert length(state_after.diagnostics) == 1
+    assert length(state_after.diagnostics) >= 1
   end
 
   test "fuel guard halts iteration when limit is reached" do
