@@ -231,14 +231,10 @@ defmodule ToxicParser.TokenAdapter do
       {:ok, raw, cursor} ->
         state = %{state | cursor: cursor}
         {normalized, diagnostics} = normalize_token(raw)
-        state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
-        if elem(normalized, 0) in @delimiter_tokens and (state.mode == :tolerant ||
-        Keyword.get(state.opts, :token_metadata, false) ||
-        Keyword.get(state.opts, :emit_events, false)) do
-          {:ok, normalized, update_terminators(state)}
-        else
-          {:ok, normalized, state}
-        end
+        # state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
+        # Per LEXER_REFACTOR_V3.md item 6: do NOT update terminators on peek.
+        # Terminators only need to be computed on consumption, not lookahead.
+        {:ok, normalized, state}
 
       {:eof, cursor} ->
         {:eof, %{state | cursor: cursor}}
@@ -368,9 +364,12 @@ defmodule ToxicParser.TokenAdapter do
         state = %{state | cursor: cursor}
         {normalized, diagnostics} = normalize_token(raw)
         state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
-        if elem(normalized, 0) in @delimiter_tokens and (state.mode == :tolerant ||
-        Keyword.get(state.opts, :token_metadata, false) ||
-        Keyword.get(state.opts, :emit_events, false)) do
+        # Per LEXER_REFACTOR_V3.md item 6: only update terminators when:
+        # - tolerant mode recovery needs it, OR
+        # - emit_events is enabled (for event metadata)
+        # NOT for token_metadata - terminators are only needed for diagnostics/events.
+        if elem(normalized, 0) in @delimiter_tokens and
+             (state.mode == :tolerant or Keyword.get(state.opts, :emit_events, false)) do
           {:ok, normalized, update_terminators(state)}
         else
           {:ok, normalized, state}
