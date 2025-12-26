@@ -348,7 +348,7 @@ defmodule ToxicParser.TokenAdapter do
     end
   end
 
-
+  defguard is_delimiter(token) when elem(token, 0) in @delimiter_tokens
 
   defp fetch_next(%State{cursor: cursor} = state) do
     case Cursor.next(cursor) do
@@ -360,7 +360,7 @@ defmodule ToxicParser.TokenAdapter do
         # - tolerant mode recovery needs it, OR
         # - emit_events is enabled (for event metadata)
         # NOT for token_metadata - terminators are only needed for diagnostics/events.
-        if elem(raw, 0) in @delimiter_tokens and
+        if is_delimiter(raw) and
              (state.mode == :tolerant or Keyword.get(state.opts, :emit_events, false)) do
           {:ok, raw, update_terminators(state)}
         else
