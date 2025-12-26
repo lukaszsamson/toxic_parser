@@ -334,10 +334,15 @@ defmodule ToxicParser.Grammar.Strings do
                             if TokenAdapter.kind(interp_end_tok) == :end_interpolation do
                               {:ok, _end, state} = TokenAdapter.next(state)
                               close_meta = TokenAdapter.token_meta(interp_end_tok)
-                              interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
+
+                              interp_ast =
+                                build_interpolation_ast(expr, open_meta, close_meta, kind)
+
                               {:ok, interp_ast, state, log}
                             else
-                              {:error, {:expected_end_interpolation, TokenAdapter.kind(interp_end_tok)}, state, log}
+                              {:error,
+                               {:expected_end_interpolation, TokenAdapter.kind(interp_end_tok)},
+                               state, log}
                             end
 
                           {:eof, state} ->

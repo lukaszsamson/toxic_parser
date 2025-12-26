@@ -226,7 +226,9 @@ defmodule ToxicParser.Grammar.Stabs do
                 patterns == [] ->
                   # `when foo: 1` has no LHS for the `when` operator, and `foo: 1` is not a valid
                   # guard expression on its own. Match Elixir's "syntax error before: foo".
-                  {:error, syntax_error_before(TokenAdapter.token_meta(tok), TokenAdapter.value(tok)), state, log}
+                  {:error,
+                   syntax_error_before(TokenAdapter.token_meta(tok), TokenAdapter.value(tok)),
+                   state, log}
 
                 true ->
                   # This may be the special `when` operator form that allows a keyword list RHS:
@@ -606,7 +608,8 @@ defmodule ToxicParser.Grammar.Stabs do
                     end
                   end
 
-                is_keyword_list(expr) and TokenAdapter.kind(tok) in [:list_string_start, :bin_string_start] ->
+                is_keyword_list(expr) and
+                    TokenAdapter.kind(tok) in [:list_string_start, :bin_string_start] ->
                   # Another quoted keyword after a keyword list - continue merging
                   parse_call_args_parens_quoted_kw_continuation(expr, acc, state, ctx, log)
 
@@ -728,7 +731,8 @@ defmodule ToxicParser.Grammar.Stabs do
                     end
                   end
 
-                is_keyword_list(expr) and TokenAdapter.kind(tok) in [:list_string_start, :bin_string_start] ->
+                is_keyword_list(expr) and
+                    TokenAdapter.kind(tok) in [:list_string_start, :bin_string_start] ->
                   # Another quoted keyword after a keyword list - continue merging
                   parse_stab_pattern_exprs_quoted_kw_continuation(expr, acc, state, log)
 

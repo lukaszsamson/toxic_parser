@@ -132,7 +132,11 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, {:")", _close_meta} = close_tok, _} ->
         {:ok, _close, state} = TokenAdapter.next(state)
         close_meta_kw = TokenAdapter.token_meta(close_tok)
-        parens_meta = [parens: Meta.closing_meta(open_meta, close_meta_kw, 0, [], base_first: true)]
+
+        parens_meta = [
+          parens: Meta.closing_meta(open_meta, close_meta_kw, 0, [], base_first: true)
+        ]
+
         ast = {:__block__, parens_meta, []}
         Pratt.led(ast, state, log, min_bp, ctx, opts)
 

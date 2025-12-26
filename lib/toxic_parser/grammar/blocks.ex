@@ -125,10 +125,17 @@ defmodule ToxicParser.Grammar.Blocks do
 
   defp expect_kind_with_meta(state, kind, log) do
     case TokenAdapter.next(state) do
-      {:ok, {^kind, meta}, state} -> {:ok, meta, state, log}
-      {:ok, token, state} -> {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, log}
-      {:eof, state} -> {:error, :unexpected_eof, state, log}
-      other -> Result.normalize_error(other, log)
+      {:ok, {^kind, meta}, state} ->
+        {:ok, meta, state, log}
+
+      {:ok, token, state} ->
+        {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, log}
+
+      {:eof, state} ->
+        {:error, :unexpected_eof, state, log}
+
+      other ->
+        Result.normalize_error(other, log)
     end
   end
 

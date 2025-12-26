@@ -56,7 +56,7 @@ defmodule ToxicParser.Grammar.Dots do
     case TokenAdapter.next(state) do
       {:ok, tok, state} ->
         tok_kind = TokenAdapter.kind(tok)
-        
+
         case Identifiers.classify(tok_kind) do
           kind
           when kind in [
@@ -67,14 +67,12 @@ defmodule ToxicParser.Grammar.Dots do
 
           :bracket_identifier ->
             # Bracket identifier - bracket access IS allowed (no whitespace before [)
-            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :allows_bracket}, state,
-             log}
+            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :allows_bracket}, state, log}
 
           # op_identifier indicates no-parens call is expected
           :op_identifier ->
             # Return with :no_parens_call tag to indicate caller should expect no-parens args
-            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :no_parens_call}, state,
-             log}
+            {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :no_parens_call}, state, log}
 
           :alias ->
             # Alias needs to be wrapped as __aliases__
@@ -357,7 +355,7 @@ defmodule ToxicParser.Grammar.Dots do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
         tok_kind = TokenAdapter.kind(tok)
-        
+
         cond do
           tok_kind == target_end ->
             {:ok, acc, target_end, state, log}

@@ -225,6 +225,7 @@ defmodule ToxicParser.TokenAdapter do
     case Cursor.peek(cursor) do
       {:ok, raw, ^cursor} ->
         {:ok, raw, state}
+
       {:ok, raw, cursor} ->
         # Return raw token unchanged.
         # Per LEXER_REFACTOR_V3.md item 6: do NOT update terminators on peek.
@@ -357,17 +358,20 @@ defmodule ToxicParser.TokenAdapter do
       {:ok, raw, cursor} ->
         state = %{state | cursor: cursor}
         # Extract diagnostics from error tokens
-        state = case raw do
-          {:error_token, _meta, %Toxic.Error{} = err} ->
-            add_diagnostics(state, [err])
-          _ -> state
-        end
+        state =
+          case raw do
+            {:error_token, _meta, %Toxic.Error{} = err} ->
+              add_diagnostics(state, [err])
+
+            _ ->
+              state
+          end
+
         # Per LEXER_REFACTOR_V3.md item 6: only update terminators when:
         # - tolerant mode recovery needs it, OR
         # - emit_events is enabled (for event metadata)
         # NOT for token_metadata - terminators are only needed for diagnostics/events.
-        if is_delimiter(raw) and
-             (state.mode == :tolerant or Keyword.get(state.opts, :emit_events, false)) do
+        if is_delimiter(raw) and (state.mode == :tolerant or state.emit_events?) do
           {:ok, raw, update_terminators(state)}
         else
           {:ok, raw, state}

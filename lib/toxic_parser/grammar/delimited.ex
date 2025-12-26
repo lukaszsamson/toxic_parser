@@ -94,6 +94,7 @@ defmodule ToxicParser.Grammar.Delimited do
     case TokenAdapter.peek(state) do
       {:ok, tok, state} ->
         kind = TokenAdapter.kind(tok)
+
         if kind in close_kinds do
           if opts[:allow_empty?] do
             {:ok, [], state, log}
@@ -141,6 +142,7 @@ defmodule ToxicParser.Grammar.Delimited do
         case TokenAdapter.peek(state) do
           {:ok, tok, state} ->
             kind = TokenAdapter.kind(tok)
+
             cond do
               kind in close_kinds ->
                 {:ok, Enum.reverse([item | acc_rev]), state, log}
@@ -152,6 +154,7 @@ defmodule ToxicParser.Grammar.Delimited do
                 case TokenAdapter.peek(state) do
                   {:ok, tok, state} ->
                     kind = TokenAdapter.kind(tok)
+
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
                         {:ok, Enum.reverse([item | acc_rev]), state, log}

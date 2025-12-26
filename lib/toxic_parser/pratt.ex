@@ -289,7 +289,8 @@ defmodule ToxicParser.Pratt do
 
       # kw_identifier at expression position is a syntax error
       :kw_identifier ->
-        {:error, syntax_error_before(TokenAdapter.token_meta(token), TokenAdapter.value(token)), state, log}
+        {:error, syntax_error_before(TokenAdapter.token_meta(token), TokenAdapter.value(token)),
+         state, log}
 
       _ ->
         nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts)
@@ -458,7 +459,8 @@ defmodule ToxicParser.Pratt do
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
       # Don't add it when there's a do-block because then there's no ambiguity
       meta =
-        if TokenAdapter.kind(callee_tok) == :op_identifier and length(args) == 1 and not has_do_block do
+        if TokenAdapter.kind(callee_tok) == :op_identifier and length(args) == 1 and
+             not has_do_block do
           [ambiguous_op: nil] ++ base_meta
         else
           base_meta
@@ -556,7 +558,12 @@ defmodule ToxicParser.Pratt do
               op = TokenAdapter.value(op_token)
               meta = TokenAdapter.token_meta(op_token)
               # Use raw meta tuple (not keyword list) for from_token compatibility
-              operand = Builder.Helpers.from_token({:identifier, TokenAdapter.meta(operand_token), TokenAdapter.value(operand_token)})
+              operand =
+                Builder.Helpers.from_token(
+                  {:identifier, TokenAdapter.meta(operand_token),
+                   TokenAdapter.value(operand_token)}
+                )
+
               ast = Builder.Helpers.unary(op, operand, meta)
 
               case TokenAdapter.peek(state) do
@@ -1500,7 +1507,8 @@ defmodule ToxicParser.Pratt do
                   # 3. OR next token starts a keyword list
                   should_parse_no_parens =
                     expects_no_parens_call or Keywords.starts_kw?(next_tok) or
-                      (NoParens.can_start_no_parens_arg?(next_tok) and TokenAdapter.kind(next_tok) != :dual_op)
+                      (NoParens.can_start_no_parens_arg?(next_tok) and
+                         TokenAdapter.kind(next_tok) != :dual_op)
 
                   if should_parse_no_parens do
                     with {:ok, args, state, log} <-
@@ -2608,7 +2616,7 @@ defmodule ToxicParser.Pratt do
 
       # Handle bracket access: 0[l] for structs like %0[l]{}
       # Grammar: bracket_expr -> access_expr bracket_arg
-      {:ok, tok, _} when is_kind(tok, :"[")->
+      {:ok, tok, _} when is_kind(tok, :"[") ->
         {:ok, open_tok, state} = TokenAdapter.next(state)
 
         # Skip leading EOE and count newlines

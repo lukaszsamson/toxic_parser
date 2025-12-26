@@ -52,7 +52,8 @@ defmodule ToxicParser.Grammar.EOE do
   where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
   """
   @spec build_sep_meta(tuple()) :: keyword()
-  def build_sep_meta({kind, {_, _, newlines}} = token) when kind in [:eol, :";"] and is_integer(newlines) do
+  def build_sep_meta({kind, {_, _, newlines}} = token)
+      when kind in [:eol, :";"] and is_integer(newlines) do
     [newlines: newlines] ++ Helpers.token_meta(token)
   end
 

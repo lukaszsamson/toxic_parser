@@ -49,7 +49,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
           {state, _newlines} = EOE.skip_count_newlines(state, 0)
 
           case TokenAdapter.peek(state) do
-            {:ok, {:">>" , _meta}, _} ->
+            {:ok, {:">>", _meta}, _} ->
               {:ok, {:kw_data, kw_list}, state, log}
 
             {:ok, tok, state} ->
@@ -91,7 +91,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
         _ ->
           case TokenAdapter.next(state) do
-            {:ok, {:">>" , _meta} = close_tok, state} ->
+            {:ok, {:">>", _meta} = close_tok, state} ->
               close_meta = TokenAdapter.token_meta(close_tok)
               meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
               ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
@@ -109,7 +109,6 @@ defmodule ToxicParser.Grammar.Bitstrings do
       end
     end
   end
-
 
   defp finalize_bitstring_items([]), do: []
 

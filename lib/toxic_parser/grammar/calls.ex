@@ -335,7 +335,15 @@ defmodule ToxicParser.Grammar.Calls do
             # Some tokens have a binary bp but are also valid as standalone/nullary expressions
             # (elixir_parser.yrl: sub_matched_expr -> range_op | ellipsis_op).
             can_be_unary =
-              kind in [:dual_op, :unary_op, :at_op, :capture_op, :ternary_op, :range_op, :ellipsis_op]
+              kind in [
+                :dual_op,
+                :unary_op,
+                :at_op,
+                :capture_op,
+                :ternary_op,
+                :range_op,
+                :ellipsis_op
+              ]
 
             case {can_be_unary, Pratt.bp(kind)} do
               {false, bp} when is_integer(bp) and bp < min_bp ->

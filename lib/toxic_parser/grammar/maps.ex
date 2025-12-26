@@ -95,7 +95,7 @@ defmodule ToxicParser.Grammar.Maps do
       # So ^t.d should be ^(t.d) - dots are part of the operand
       {:ok, tok, _} ->
         tok_kind = TokenAdapter.kind(tok)
-        
+
         cond do
           tok_kind in [:unary_op, :dual_op] ->
             {:ok, op_tok, state} = TokenAdapter.next(state)
@@ -214,7 +214,7 @@ defmodule ToxicParser.Grammar.Maps do
       # E.g., %@+a.i{} should be @(+(a.i)){} not (@(+a)).i{}
       {:ok, tok, _} ->
         tok_kind = TokenAdapter.kind(tok)
-        
+
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
             {:ok, op_tok, state} = TokenAdapter.next(state)
@@ -291,7 +291,7 @@ defmodule ToxicParser.Grammar.Maps do
       # Other unary ops - recurse with dots
       {:ok, tok, _} ->
         tok_kind = TokenAdapter.kind(tok)
-        
+
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
             {:ok, op_tok, state} = TokenAdapter.next(state)
@@ -458,7 +458,8 @@ defmodule ToxicParser.Grammar.Maps do
         {:ok, tok, _} ->
           tok_kind = TokenAdapter.kind(tok)
           tok_kind in [:bin_string_start, :list_string_start]
-        _ -> 
+
+        _ ->
           false
       end
 
