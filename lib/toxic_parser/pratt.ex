@@ -299,7 +299,9 @@ defmodule ToxicParser.Pratt do
   # allow_containers: when false (e.g., struct base parsing), don't parse no-parens calls
   # The grammar's map_base_expr only produces bare identifiers via sub_matched_expr
   defp nud_literal_or_unary(token, state, context, log, min_bp, allow_containers, opts) do
-    case Precedence.unary(TokenAdapter.kind(token)) do
+    token_kind = TokenAdapter.kind(token)
+
+    case Precedence.unary(token_kind) do
       {_bp, _assoc} ->
         # Pass outer min_bp for trailing led(), not the unary's own precedence.
         # The operand_min_bp is computed inside parse_unary from the operator's precedence.
@@ -307,37 +309,37 @@ defmodule ToxicParser.Pratt do
 
       nil ->
         cond do
-          TokenAdapter.kind(token) == :dual_op ->
+          token_kind == :dual_op ->
             # Pass outer min_bp for trailing led()
             parse_unary(token, state, context, log)
 
           # ternary_op ://" used as unary (e.g., //foo) becomes {:/,_,[{:/,_,nil},rhs]}
-          TokenAdapter.kind(token) == :ternary_op and TokenAdapter.value(token) == :"//" ->
+          token_kind == :ternary_op and TokenAdapter.value(token) == :"//" ->
             parse_ternary_unary(token, state, context, log)
 
           # Binary-only operators cannot start an expression
           # e.g., "1 + * 3" should error because * cannot follow +
-          is_binary_only_op(TokenAdapter.kind(token)) ->
+          is_binary_only_op(token_kind) ->
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, TokenAdapter.value(token)), state, log}
 
           # EOE tokens (semicolons) cannot start an expression
           # e.g., "1+;\n2" should error because ; cannot follow +
           # Note: newlines are handled separately by EOE.skip_newlines_only
-          TokenAdapter.kind(token) == :eoe and TokenAdapter.value(token).source == :semicolon ->
+          token_kind == :eoe and TokenAdapter.value(token).source == :semicolon ->
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "';'"), state, log}
 
           # Comma cannot start an expression
           # e.g., "if true do\n  foo = [],\n  baz\nend" - comma after [] is invalid
-          TokenAdapter.kind(token) == :"," ->
+          token_kind == :"," ->
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "','"), state, log}
 
           # Block identifiers (after, else, catch, rescue) are only valid as block labels
           # They cannot be used as variables or expressions outside block context
           # e.g., "after = 1" is invalid
-          TokenAdapter.kind(token) == :block_identifier ->
+          token_kind == :block_identifier ->
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "'#{TokenAdapter.value(token)}'"), state, log}
 
@@ -349,13 +351,15 @@ defmodule ToxicParser.Pratt do
 
   defp nud_identifier_or_literal(token, state, context, log, min_bp, allow_containers, opts) do
     allow_do_blocks = Context.allow_do_block?(context)
+    token_kind = TokenAdapter.kind(token)
 
     case TokenAdapter.peek(state) do
       {:ok, next_tok, _} ->
-        binary_bp = bp(TokenAdapter.kind(next_tok))
+        next_kind = TokenAdapter.kind(next_tok)
+        binary_bp = bp(next_kind)
 
         allow_no_parens =
-          TokenAdapter.kind(token) == :op_identifier or
+          token_kind == :op_identifier or
             (is_nil(binary_bp) and
                (NoParens.can_start_no_parens_arg?(next_tok) or
                   Keywords.starts_kw?(next_tok)))
@@ -380,7 +384,7 @@ defmodule ToxicParser.Pratt do
           false | literal_kinds
         ]
 
-        if TokenAdapter.kind(token) not in excluded_kinds and
+        if token_kind not in excluded_kinds and
              allow_no_parens and
              allow_containers do
           call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
@@ -499,8 +503,12 @@ defmodule ToxicParser.Pratt do
 
   # Common unary parsing logic after EOE is handled
   defp parse_unary_after_eoe_skip(op_token, state, context, log) do
+    op_kind = TokenAdapter.kind(op_token)
+
     case TokenAdapter.next(state) do
       {:ok, operand_token, state} ->
+        operand_kind = TokenAdapter.kind(operand_token)
+
         # Special case: ... and .. followed by pure binary operator or terminator should be standalone
         # e.g., "... * 1" should parse as (* (...) 1), not (... *)
         # e.g., "fn -> ... end" - the ... before end should be standalone
@@ -524,11 +532,11 @@ defmodule ToxicParser.Pratt do
         # dual_op can be unary (+/-), ternary_op can be unary (//)
         # so they should NOT trigger standalone ellipsis
         is_pure_binary_op =
-          TokenAdapter.kind(operand_token) not in [:dual_op, :ternary_op] and
-            Precedence.binary(TokenAdapter.kind(operand_token)) != nil
+          operand_kind not in [:dual_op, :ternary_op] and
+            Precedence.binary(operand_kind) != nil
 
-        if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] and
-             (is_pure_binary_op or TokenAdapter.kind(operand_token) in ellipsis_terminators) do
+        if op_kind in [:ellipsis_op, :range_op] and
+             (is_pure_binary_op or operand_kind in ellipsis_terminators) do
           ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           state = TokenAdapter.pushback(state, operand_token)
           {:ok, ast, state, log}
@@ -536,14 +544,14 @@ defmodule ToxicParser.Pratt do
           # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
           # The @foo becomes the subject, bracket access is handled at outer level
         else
-          if TokenAdapter.kind(op_token) == :at_op do
+          if op_kind == :at_op do
             at_bp =
               case Precedence.unary(:at_op) do
                 {bp, _assoc} -> bp
                 _ -> 320
               end
 
-            if TokenAdapter.kind(operand_token) == :bracket_identifier do
+            if operand_kind == :bracket_identifier do
               op = TokenAdapter.value(op_token)
               meta = TokenAdapter.token_meta(op_token)
               # Use raw meta tuple (not keyword list) for from_token compatibility
@@ -624,7 +632,9 @@ defmodule ToxicParser.Pratt do
 
                     {:ok, next_tok, _} ->
                       if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
-                        case {TokenAdapter.kind(next_tok), bp(TokenAdapter.kind(next_tok))} do
+                        next_tok_kind = TokenAdapter.kind(next_tok)
+
+                        case {next_tok_kind, bp(next_tok_kind)} do
                           {_, nil} ->
                             {:ok, operand_base,
                              TokenAdapter.drop_checkpoint(state_after_base, ref), log}
@@ -703,22 +713,22 @@ defmodule ToxicParser.Pratt do
 
             operand_min_bp =
               cond do
-                TokenAdapter.kind(operand_token) == :do_identifier and Context.allow_do_block?(context) ->
+                operand_kind == :do_identifier and Context.allow_do_block?(context) ->
                   0
 
-                TokenAdapter.kind(operand_token) == :identifier and next_token_kind == :do_identifier and
+                operand_kind == :identifier and next_token_kind == :do_identifier and
                     Context.allow_do_block?(context) ->
                   0
 
-                TokenAdapter.kind(operand_token) == :identifier and next_token_kind == :identifier and
+                operand_kind == :identifier and next_token_kind == :identifier and
                   next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
                   0
 
-                TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] ->
+                op_kind in [:ellipsis_op, :range_op] ->
                   100
 
                 true ->
-                  case Precedence.unary(TokenAdapter.kind(op_token)) do
+                  case Precedence.unary(op_kind) do
                     {bp, _assoc} -> bp
                     nil -> 300
                   end
@@ -729,7 +739,7 @@ defmodule ToxicParser.Pratt do
             # Exception: ellipsis_op follows yecc rules and can take expr/no_parens_expr operands.
             # The outer context is preserved for led() after the unary is built.
             operand_context =
-              if TokenAdapter.kind(op_token) == :ellipsis_op do
+              if op_kind == :ellipsis_op do
                 cond do
                   # no_parens_expr -> ellipsis_op no_parens_expr
                   Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
@@ -761,15 +771,17 @@ defmodule ToxicParser.Pratt do
               operand_result =
                 case TokenAdapter.peek(state_after_base) do
                   {:ok, next_tok, _} ->
+                    next_tok_kind = TokenAdapter.kind(next_tok)
+
                     # elixir_parser.yrl: unmatched_expr -> unary_op_eol expr
                     # When the operand is a do-block expression, allow lower-precedence operators
                     # to bind *inside* the unary operand by reparsing with min_bp=0.
                     if operand_context.allow_do_block and
                          (do_block_expr?(operand_base) or
-                            (TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] and
+                            (op_kind in [:ellipsis_op, :range_op] and
                                contains_do_block?(operand_base))) and
-                         not (TokenAdapter.kind(op_token) == :dual_op and has_parens_meta?(operand_base)) do
-                      case bp(TokenAdapter.kind(next_tok)) do
+                         not (op_kind == :dual_op and has_parens_meta?(operand_base)) do
+                      case bp(next_tok_kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           state_full = TokenAdapter.rewind(state_after_base, ref)
 
@@ -785,11 +797,11 @@ defmodule ToxicParser.Pratt do
                            log}
                       end
                     else
-                      if TokenAdapter.kind(op_token) == :capture_op do
+                      if op_kind == :capture_op do
                         function_capture? = function_capture_operand?(operand_base)
 
                         case {function_capture?, contains_do_block?(operand_base),
-                              bp(TokenAdapter.kind(next_tok))} do
+                              bp(next_tok_kind)} do
                           {false, true, next_bp}
                           when is_integer(next_bp) and next_bp < operand_min_bp ->
                             state_full = TokenAdapter.rewind(state_after_base, ref)
@@ -831,7 +843,7 @@ defmodule ToxicParser.Pratt do
 
       {:eof, state} ->
         # Special case: ... and .. can be standalone at EOF
-        if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] do
+        if op_kind in [:ellipsis_op, :range_op] do
           ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, log}
         else
@@ -958,14 +970,16 @@ defmodule ToxicParser.Pratt do
   # we need special handling but must preserve min_bp for associativity
   # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
   defp parse_rhs(token, state, context, log, min_bp, opts \\ []) do
+    token_kind = TokenAdapter.kind(token)
+
     # Check if this is an identifier that could be a call with arguments
     cond do
-      Identifiers.classify(TokenAdapter.kind(token)) != :other ->
+      Identifiers.classify(token_kind) != :other ->
         # Handle identifier specially to preserve min_bp
         parse_rhs_identifier(token, state, context, log, min_bp, opts)
 
       # Container tokens need special handling to preserve min_bp
-      TokenAdapter.kind(token) in [:"[", :"{", :"(", :"<<", :%, :%{}, :%] ->
+      token_kind in [:"[", :"{", :"(", :"<<", :%, :%{}, :%] ->
         state = TokenAdapter.pushback(state, token)
         alias ToxicParser.Grammar.Containers
 
@@ -973,7 +987,7 @@ defmodule ToxicParser.Pratt do
         Containers.parse(state, context, log, min_bp, opts)
 
       # String and quoted atom tokens need special handling to preserve min_bp
-      TokenAdapter.kind(token) in [
+      token_kind in [
         :bin_string_start,
         :list_string_start,
         :bin_heredoc_start,
@@ -1045,11 +1059,14 @@ defmodule ToxicParser.Pratt do
         led(ast, state, log, min_bp, context, opts)
 
       {:ok, next_tok, _} ->
+        token_kind = TokenAdapter.kind(token)
+        next_tok_kind = TokenAdapter.kind(next_tok)
+
         cond do
           # Alias followed by [ is bracket access, not a no-parens call
           # Grammar: bracket_expr -> access_expr bracket_arg
           # Build alias AST and let led handle the [ as bracket access
-          TokenAdapter.kind(token) == :alias and TokenAdapter.kind(next_tok) == :"[" ->
+          token_kind == :alias and next_tok_kind == :"[" ->
             ast = Builder.Helpers.from_token(token)
             opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
@@ -1058,7 +1075,7 @@ defmodule ToxicParser.Pratt do
           # (e.g., `a -2` where `-2` is unary argument, not binary subtraction)
           # This must be checked BEFORE binary operator check
           # TODO: no coverage? only failing corpus
-          TokenAdapter.kind(token) == :op_identifier and
+          token_kind == :op_identifier and
               (NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok)) ->
             state = TokenAdapter.pushback(state, token)
 
@@ -1070,7 +1087,7 @@ defmodule ToxicParser.Pratt do
             end
 
           # Binary operator follows - just return identifier, led will handle with min_bp
-          bp(TokenAdapter.kind(next_tok)) ->
+          bp(next_tok_kind) ->
             ast = Builder.Helpers.from_token(token)
             opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, log, min_bp, context, opts)
@@ -1178,9 +1195,10 @@ defmodule ToxicParser.Pratt do
          eoe_tokens,
          newlines_before_op
        ) do
-    precedence = Precedence.binary(TokenAdapter.kind(next_token))
+    next_token_kind = TokenAdapter.kind(next_token)
+    precedence = Precedence.binary(next_token_kind)
 
-    case {TokenAdapter.kind(next_token), precedence} do
+    case {next_token_kind, precedence} do
       # Parens call: identifier(args) or expr()(args) (nested call)
       # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
       # NOTE: Only treat as call if there's NO EOE between left and (

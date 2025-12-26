@@ -57,11 +57,12 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_simple_string(state, ctx, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = TokenAdapter.token_meta(start_tok)
-    kind = string_kind(TokenAdapter.kind(start_tok))
-    target_ends = closing_for(TokenAdapter.kind(start_tok))
+    start_tok_kind = TokenAdapter.kind(start_tok)
+    kind = string_kind(start_tok_kind)
+    target_ends = closing_for(start_tok_kind)
 
     # Get delimiter for metadata
-    delimiter = string_delimiter(TokenAdapter.kind(start_tok))
+    delimiter = string_delimiter(start_tok_kind)
 
     with {:ok, parts, actual_end, end_tok, state, log} <-
            collect_parts([], state, target_ends, kind, log),
@@ -105,8 +106,9 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_heredoc(state, ctx, log, min_bp, opts) do
     {:ok, start_tok, state} = TokenAdapter.next(state)
     start_meta = TokenAdapter.token_meta(start_tok)
-    kind = string_kind(TokenAdapter.kind(start_tok))
-    target_ends = closing_for(TokenAdapter.kind(start_tok))
+    start_tok_kind = TokenAdapter.kind(start_tok)
+    kind = string_kind(start_tok_kind)
+    target_ends = closing_for(start_tok_kind)
 
     with {:ok, parts, _actual_end, end_tok, state, log} <-
            collect_parts([], state, target_ends, kind, log),
