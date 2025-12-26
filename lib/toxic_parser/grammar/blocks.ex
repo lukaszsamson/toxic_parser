@@ -47,13 +47,25 @@ defmodule ToxicParser.Grammar.Blocks do
     fn_meta = TokenAdapter.token_meta(fn_tok)
     log = enter_scope(log, :fn, TokenAdapter.token_meta(fn_tok))
 
-    # In elixir_parser.yrl, fn_eoe consumes at most one `eoe` token and
+    # In elixir_parser.yrl, fn_eoe consumes at most one separator token and
     # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
     {state, newlines} =
       case TokenAdapter.peek(state) do
-        {:ok, {:eoe, _meta, %{newlines: n}}, _} ->
-          {:ok, _eoe, state} = TokenAdapter.next(state)
+        {:ok, {:eol, {_, _, n}}, _} when is_integer(n) ->
+          {:ok, _eol, state} = TokenAdapter.next(state)
           {state, n}
+
+        {:ok, {:eol, _meta}, _} ->
+          {:ok, _eol, state} = TokenAdapter.next(state)
+          {state, 0}
+
+        {:ok, {:";", {_, _, n}}, _} when is_integer(n) ->
+          {:ok, _semi, state} = TokenAdapter.next(state)
+          {state, n}
+
+        {:ok, {:";", _meta}, _} ->
+          {:ok, _semi, state} = TokenAdapter.next(state)
+          {state, 0}
 
         _ ->
           {state, 0}

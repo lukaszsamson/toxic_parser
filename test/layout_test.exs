@@ -3,23 +3,25 @@ defmodule ToxicParser.LayoutTest do
 
   alias ToxicParser.{Layout, TokenAdapter}
 
-  test "peek_sep returns view token for newlines and semicolons" do
+  test "peek_sep returns raw separator tokens" do
     state = TokenAdapter.new("1\n\n;2")
 
     {:ok, _tok, state} = TokenAdapter.next(state)
 
-    assert {:ok, {:eoe, _meta, %{source: :eol, newlines: 2}}, state} = Layout.peek_sep(state)
+    # Raw eol token with newline count in third element
+    assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}}, state} = Layout.peek_sep(state)
     {:ok, _tok, state} = TokenAdapter.next(state)
-    assert {:ok, {:eoe, _meta, %{source: :semicolon, newlines: 0}}, _} = Layout.peek_sep(state)
+    # Raw semicolon token
+    assert {:ok, {:";", _meta}, _} = Layout.peek_sep(state)
   end
 
-  test "skip_newlines_only counts only newline EOEs" do
+  test "skip_newlines_only counts only newline tokens, stops at semicolon" do
     state = TokenAdapter.new("1\n\n;2")
     {:ok, _tok, state} = TokenAdapter.next(state)
 
     {state, count} = Layout.skip_newlines_only(state)
     assert count == 2
-    # Semicolon remains - use tuple pattern
-    assert {:ok, {:eoe, _, %{source: :semicolon}}, _} = TokenAdapter.peek(state)
+    # Semicolon remains - not consumed by skip_newlines_only
+    assert {:ok, {:";", _meta}, _} = TokenAdapter.peek(state)
   end
 end

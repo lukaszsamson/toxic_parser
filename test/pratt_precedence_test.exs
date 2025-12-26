@@ -6,7 +6,7 @@ defmodule ToxicParser.PrattPrecedenceTest do
 
   test "binary binding powers are ordered and include dot/not_in" do
     table = Precedence.binary_table()
-    assert {:dot_op, _, _} = List.keyfind(table, :dot_op, 0)
+    assert {:., _, _} = List.keyfind(table, :., 0)
     assert Precedence.not_in() == elem(Precedence.binary(:in_op), 0)
 
     # Ensure ordering is ascending by binding power

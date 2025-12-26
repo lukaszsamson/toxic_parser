@@ -85,7 +85,7 @@ defmodule ToxicParser.Grammar.Calls do
             parse_op_identifier_call(tok, state, ctx, log)
 
           # Binary operator or dot operator follows - let Pratt handle expression
-          Pratt.bp(next_kind) != nil or next_kind in [:dot_op, :dot_call_op] ->
+          Pratt.bp(next_kind) != nil or next_kind in [:., :dot_call_op] ->
             state = TokenAdapter.pushback(state, tok)
             Pratt.parse(state, ctx, log)
 
@@ -324,7 +324,7 @@ defmodule ToxicParser.Grammar.Calls do
         kind = TokenAdapter.kind(tok)
 
         case kind do
-          k when k in [:eoe, :")", :"]", :"}", :do] ->
+          k when k in [:eol, :";", :")", :"]", :"}", :do] ->
             {:ok, Enum.reverse(acc), state, log}
 
           _ ->
@@ -398,7 +398,7 @@ defmodule ToxicParser.Grammar.Calls do
               {:ok, tok, _} ->
                 kind = TokenAdapter.kind(tok)
 
-                if kind in [:eoe, :")", :"]", :"}", :do] do
+                if kind in [:eol, :";", :")", :"]", :"}", :do] do
                   meta = TokenAdapter.token_meta(comma_tok)
 
                   {:error, {meta, "syntax error before: ", ""}, state, log}
@@ -492,7 +492,7 @@ defmodule ToxicParser.Grammar.Calls do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call_no_led(tok, state, ctx, log, min_bp, opts)
 
-          Pratt.bp(next_kind) != nil or next_kind in [:dot_op, :dot_call_op] ->
+          Pratt.bp(next_kind) != nil or next_kind in [:., :dot_call_op] ->
             raise "dead code"
             # Binary operator follows - return as bare identifier, caller will handle
             ast = Builder.Helpers.from_token(tok)

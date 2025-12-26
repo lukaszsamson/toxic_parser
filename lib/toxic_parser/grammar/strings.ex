@@ -305,11 +305,11 @@ defmodule ToxicParser.Grammar.Strings do
             interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
             {:ok, interp_ast, state, log}
 
-          :eoe ->
-            # Interpolation starting with EOE (e.g., #{;})
+          k when k in [:eol, :";"] ->
+            # Interpolation starting with separator (e.g., #{;})
             # In Elixir grammar: grammar -> eoe : {'__block__', meta_from_token('$1'), []}.
-            {:ok, eoe_tok, state} = TokenAdapter.next(state)
-            eoe_meta = TokenAdapter.token_meta(eoe_tok)
+            {:ok, sep_tok, state} = TokenAdapter.next(state)
+            sep_meta = TokenAdapter.token_meta(sep_tok)
             # Skip any additional EOE
             alias ToxicParser.Grammar.EOE
             state = EOE.skip(state)
@@ -321,7 +321,7 @@ defmodule ToxicParser.Grammar.Strings do
                     # Just EOE before close - empty block with EOE metadata
                     {:ok, _end, state} = TokenAdapter.next(state)
                     close_meta = TokenAdapter.token_meta(end_tok)
-                    empty_block = {:__block__, eoe_meta, []}
+                    empty_block = {:__block__, sep_meta, []}
                     interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
                     {:ok, interp_ast, state, log}
 

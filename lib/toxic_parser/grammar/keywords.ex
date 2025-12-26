@@ -39,7 +39,8 @@ defmodule ToxicParser.Grammar.Keywords do
   @quoted_kw_scan_max 512
   @no_parens_kw_terminators [
     :eof,
-    :eoe,
+    :eol,
+    :";",
     :")",
     :"]",
     :"}",
@@ -443,7 +444,7 @@ defmodule ToxicParser.Grammar.Keywords do
             {:ok, _comma, state} = TokenAdapter.next(state)
             # Check for trailing comma - if next is a terminator, stop
             case TokenAdapter.peek(state) do
-              {:ok, tok, _} when elem(tok, 0) in [:eoe, :")", :"]", :"}", :">>"] ->
+              {:ok, tok, _} when elem(tok, 0) in [:eol, :";", :")", :"]", :"}", :">>"] ->
                 {:ok, Enum.reverse([pair | acc]), state, log}
 
               _ ->

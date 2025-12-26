@@ -97,7 +97,7 @@ defmodule ToxicParser.Grammar.Containers do
     # Check for leading semicolon (forces stab interpretation)
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
-        if semicolon_eoe?(tok) do
+        if semicolon?(tok) do
           # Leading semicolon - parse as stab or empty
           {:ok, _semi, state} = TokenAdapter.next(state)
           # Skip any additional EOE and count newlines
@@ -151,13 +151,17 @@ defmodule ToxicParser.Grammar.Containers do
   defp skip_eoe_not_semicolon_with_count(state, count) do
     case TokenAdapter.peek(state) do
       {:ok, tok, _} ->
-        if semicolon_eoe?(tok) do
+        if semicolon?(tok) do
           {state, count}
         else
           case tok do
-            {:eoe, _meta, %{newlines: n}} ->
-              {:ok, _eoe, state} = TokenAdapter.next(state)
+            {:eol, {_, _, n}} when is_integer(n) ->
+              {:ok, _eol, state} = TokenAdapter.next(state)
               skip_eoe_not_semicolon_with_count(state, count + n)
+
+            {:eol, _meta} ->
+              {:ok, _eol, state} = TokenAdapter.next(state)
+              skip_eoe_not_semicolon_with_count(state, count)
 
             _ ->
               {state, count}
@@ -169,8 +173,8 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp semicolon_eoe?({:eoe, _meta, %{source: :semicolon}}), do: true
-  defp semicolon_eoe?(_), do: false
+  defp semicolon?({:";", _meta}), do: true
+  defp semicolon?(_), do: false
 
   defp parse_list(state, ctx, log, min_bp, opts) do
     with {:ok, ast, state, log} <- parse_list_base(state, ctx, log) do

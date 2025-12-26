@@ -502,7 +502,7 @@ defmodule ToxicParser.Grammar.Stabs do
     {state, _newlines} = EOE.skip_newlines_only(state, 0)
 
     case TokenAdapter.peek(state) do
-      {:ok, {:eoe, _, %{source: :semicolon}}, _} ->
+      {:ok, {:";", _}, _} ->
         # Force fallback to regular parenthesized-expression parsing.
         {:error, :paren_semicolon, state, log}
 
@@ -572,14 +572,14 @@ defmodule ToxicParser.Grammar.Stabs do
         case TokenAdapter.peek(state) do
           # Only annotate trailing newline EOE when this is a single-arg paren group.
           # For multi-arg groups like `(a, b\n)`, Elixir does NOT annotate the last arg.
-          {:ok, {:eoe, _, _} = eoe_tok, _} ->
-            eoe_meta = EOE.build_eoe_meta(eoe_tok)
-            state_after_eoe = EOE.skip(state)
+          {:ok, {kind, _} = sep_tok, _} when kind in [:eol, :";"] ->
+            sep_meta = EOE.build_sep_meta(sep_tok)
+            state_after_sep = EOE.skip(state)
 
-            if acc == [] and match?({:ok, {:")", _}, _}, TokenAdapter.peek(state_after_eoe)) do
-              {EOE.annotate_eoe(expr, eoe_meta), state_after_eoe}
+            if acc == [] and match?({:ok, {:")", _}, _}, TokenAdapter.peek(state_after_sep)) do
+              {EOE.annotate_eoe(expr, sep_meta), state_after_sep}
             else
-              {expr, state_after_eoe}
+              {expr, state_after_sep}
             end
 
           _ ->
@@ -898,7 +898,7 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, {:block_identifier, _, _}, _} when terminator == :end ->
         {:ok, nil, state, log}
 
-      {:ok, {:eoe, _, _}, _} ->
+      {:ok, {kind, _}, _} when kind in [:eol, :";"] ->
         # `-> ;` / `-> \n` (newlines are normally already skipped by stab_op_eol)
         {:ok, nil, state, log}
 
@@ -1012,23 +1012,23 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp maybe_annotate_and_consume_eoe(expr, state) do
     case TokenAdapter.peek(state) do
-      {:ok, {:eoe, _, _} = eoe_tok, _} ->
-        eoe_meta = EOE.build_eoe_meta(eoe_tok)
+      {:ok, {kind, _} = sep_tok, _} when kind in [:eol, :";"] ->
+        sep_meta = EOE.build_sep_meta(sep_tok)
 
         annotated =
           case expr do
             {:->, meta, [pats, {:__block__, [], [{:unquote_splicing, _, [_]} = u]}]} ->
-              u = EOE.annotate_eoe(u, eoe_meta)
+              u = EOE.annotate_eoe(u, sep_meta)
               {:->, meta, [pats, {:__block__, [], [u]}]}
 
             {:->, meta, [pats, body]} ->
-              {:->, meta, [pats, EOE.annotate_eoe(body, eoe_meta)]}
+              {:->, meta, [pats, EOE.annotate_eoe(body, sep_meta)]}
 
             _ ->
-              EOE.annotate_eoe(expr, eoe_meta)
+              EOE.annotate_eoe(expr, sep_meta)
           end
 
-        {:ok, _eoe, state} = TokenAdapter.next(state)
+        {:ok, _sep, state} = TokenAdapter.next(state)
         {annotated, EOE.skip(state)}
 
       _ ->
@@ -1067,7 +1067,7 @@ defmodule ToxicParser.Grammar.Stabs do
           top? and tok_kind == :stab_op ->
             {:clause, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
 
-          top? and boundary? and tok_kind == :eoe ->
+          top? and boundary? and tok_kind in [:eol, :";"] ->
             scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, true)
 
           top? and boundary? ->
@@ -1076,13 +1076,13 @@ defmodule ToxicParser.Grammar.Stabs do
           top? and stop_token?(tok, terminator, stop_kinds) ->
             {:expr, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
 
-          top? and tok_kind == :eoe and eoe_source(tok) == :semicolon ->
+          top? and tok_kind == :";" ->
             {:expr, TokenAdapter.pushback_many(state2, Enum.reverse([tok | consumed]))}
 
-          top? and tok_kind == :eoe and ctx.open? == false ->
+          top? and tok_kind == :eol and ctx.open? == false ->
             scan_classify(state2, [tok | consumed], ctx, terminator, stop_kinds, max - 1, true)
 
-          top? and tok_kind == :eoe ->
+          top? and tok_kind == :eol ->
             scan_classify(
               state2,
               [tok | consumed],
@@ -1108,10 +1108,6 @@ defmodule ToxicParser.Grammar.Stabs do
         {:unknown, TokenAdapter.pushback_many(state2, Enum.reverse(consumed))}
     end
   end
-
-  # Helper to extract source from EOE token
-  defp eoe_source({:eoe, _, %{source: source}}), do: source
-  defp eoe_source(_), do: nil
 
   defp scan_update_ctx(ctx, tok) do
     ctx

@@ -6,7 +6,8 @@ defmodule ToxicParser.TokenAdapter do
   Cursor handles lookahead internally with a two-list queue, replacing
   both the Toxic stream batching and the previous TokenAdapter lookahead.
 
-  Token accessors (kind/value/meta/etc.) and EOE normalization are preserved.
+  Returns raw tokens from the lexer unchanged. Token accessors
+  (kind/value/meta/etc.) are provided for convenience.
   """
 
   alias ToxicParser.{Cursor, Error, Position, State}
@@ -25,9 +26,6 @@ defmodule ToxicParser.TokenAdapter do
   # - 2-tuple: {kind, meta} - punctuation, keywords
   # - 3-tuple: {kind, meta, value} - literals, operators, identifiers
   # - 4-tuple: {kind, meta, v1, v2} - special tokens like "not in"
-  #
-  # EOE view token (parser-owned, not from lexer):
-  # - {:eoe, meta, %{source: :eol | :semicolon, newlines: count}}
 
   @type raw_token :: tuple()
   @type token :: raw_token()
@@ -133,8 +131,6 @@ defmodule ToxicParser.TokenAdapter do
   def newlines({kind, {_, _, count}}) when kind in [:eol, :";", :","] and is_integer(count),
     do: count
 
-  # EOE view token has newlines in the value map
-  def newlines({:eoe, _meta, %{newlines: n}}), do: n
   # Literals encode parsed values in extra, not newline counts
   def newlines({kind, _meta, _value}) when kind in [:int, :flt, :char], do: 0
   # 3-tuple tokens with newline count in extra
@@ -212,8 +208,7 @@ defmodule ToxicParser.TokenAdapter do
   @doc """
   Consume the next token.
 
-  Returns raw tokens from the lexer. EOL (`:eol`) and semicolon (`:\";\"``)
-  tokens are converted to `:eoe` view tokens for parser-level separation.
+  Returns raw tokens from the lexer unchanged.
   """
   @spec next(State.t()) :: result()
   def next(%State{} = state) do
@@ -229,12 +224,9 @@ defmodule ToxicParser.TokenAdapter do
   def peek(%State{cursor: cursor} = state) do
     case Cursor.peek(cursor) do
       {:ok, raw, cursor} ->
-        state = %{state | cursor: cursor}
-        {normalized, diagnostics} = normalize_token(raw)
-        # state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
+        # Return raw token unchanged.
         # Per LEXER_REFACTOR_V3.md item 6: do NOT update terminators on peek.
-        # Terminators only need to be computed on consumption, not lookahead.
-        {:ok, normalized, state}
+        {:ok, raw, %{state | cursor: cursor}}
 
       {:eof, cursor} ->
         {:eof, %{state | cursor: cursor}}
@@ -277,19 +269,19 @@ defmodule ToxicParser.TokenAdapter do
     case Cursor.peek_n(cursor, n) do
       {:ok, tokens, cursor} ->
         state = %{state | cursor: cursor}
-        {normalized, state} = normalize_tokens(tokens, state)
-        {:ok, normalized, state}
+        {tokens, state} = process_tokens_for_peek(tokens, state)
+        {:ok, tokens, state}
 
       {:eof, tokens, cursor} ->
         state = %{state | cursor: cursor}
-        {normalized, state} = normalize_tokens(tokens, state)
-        {:eof, normalized, state}
+        {tokens, state} = process_tokens_for_peek(tokens, state)
+        {:eof, tokens, state}
 
       {:error, reason, tokens, cursor} ->
         state = %{state | cursor: cursor}
-        {normalized, state} = normalize_tokens(tokens, state)
+        {tokens, state} = process_tokens_for_peek(tokens, state)
         diagnostic = make_diagnostic(reason, state)
-        {:error, diagnostic, normalized, %{state | diagnostics: [diagnostic | state.diagnostics]}}
+        {:error, diagnostic, tokens, %{state | diagnostics: [diagnostic | state.diagnostics]}}
     end
   end
 
@@ -362,17 +354,17 @@ defmodule ToxicParser.TokenAdapter do
     case Cursor.next(cursor) do
       {:ok, raw, cursor} ->
         state = %{state | cursor: cursor}
-        {normalized, diagnostics} = normalize_token(raw)
-        state = if diagnostics != [], do: add_diagnostics(state, diagnostics), else: state
+        # Extract diagnostics from error tokens
+        state = maybe_extract_error_diagnostic(raw, state)
         # Per LEXER_REFACTOR_V3.md item 6: only update terminators when:
         # - tolerant mode recovery needs it, OR
         # - emit_events is enabled (for event metadata)
         # NOT for token_metadata - terminators are only needed for diagnostics/events.
-        if elem(normalized, 0) in @delimiter_tokens and
+        if elem(raw, 0) in @delimiter_tokens and
              (state.mode == :tolerant or Keyword.get(state.opts, :emit_events, false)) do
-          {:ok, normalized, update_terminators(state)}
+          {:ok, raw, update_terminators(state)}
         else
-          {:ok, normalized, state}
+          {:ok, raw, state}
         end
 
       {:eof, cursor} ->
@@ -406,8 +398,6 @@ defmodule ToxicParser.TokenAdapter do
     )
   end
 
-  defp add_diagnostics(state, []), do: state
-
   defp add_diagnostics(state, diagnostics) do
     %{state | diagnostics: Enum.reverse(diagnostics) ++ state.diagnostics}
   end
@@ -417,49 +407,19 @@ defmodule ToxicParser.TokenAdapter do
     %{state | cursor: cursor, terminators: terms}
   end
 
-  defp normalize_tokens(tokens, state) do
+  # Process tokens for peek_n - just extract error diagnostics
+  defp process_tokens_for_peek(tokens, state) do
     Enum.map_reduce(tokens, state, fn raw, state ->
-      {normalized, diagnostics} = normalize_token(raw)
-      {normalized, if(diagnostics != [], do: add_diagnostics(state, diagnostics), else: state)}
+      {raw, maybe_extract_error_diagnostic(raw, state)}
     end)
   end
 
-  # ============================================================================
-  # Token normalization - minimal, only EOE view token conversion
-  # ============================================================================
-
-  # Convert :eol to :eoe view token (parser-owned separator)
-  defp normalize_token({:eol, meta} = _raw) do
-    {{_, _, count}, _} = {meta, nil}
-    count = if is_integer(count), do: count, else: 0
-    token = {:eoe, meta, %{source: :eol, newlines: count}}
-    {token, []}
+  # Extract diagnostics from error tokens (if present)
+  defp maybe_extract_error_diagnostic({:error_token, _meta, %Toxic.Error{} = err}, state) do
+    add_diagnostics(state, [err])
   end
 
-  # Convert :; to :eoe view token
-  defp normalize_token({:";", meta} = _raw) do
-    {{_, _, count}, _} = {meta, nil}
-    count = if is_integer(count), do: count, else: 0
-    token = {:eoe, meta, %{source: :semicolon, newlines: count}}
-    {token, []}
-  end
-
-  # Error tokens need diagnostic extraction
-  defp normalize_token({:error_token, _meta, %Toxic.Error{} = err} = raw) do
-    # Diagnostic will be created by fetch_next when state is available
-    {raw, [err]}
-  end
-
-  # Dot token normalization: {:., meta} -> {:dot_op, meta, :.}
-  # This makes it consistent with other operators for pattern matching
-  defp normalize_token({:., meta}) do
-    {{:dot_op, meta, :.}, []}
-  end
-
-  # All other tokens pass through unchanged
-  defp normalize_token(raw) do
-    {raw, []}
-  end
+  defp maybe_extract_error_diagnostic(_raw, state), do: state
 
   defp synthetic_error_token(state, diagnostic) do
     {{line, col}, cursor} = Cursor.position(state.cursor)

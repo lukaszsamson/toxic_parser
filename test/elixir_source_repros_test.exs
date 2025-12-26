@@ -850,4 +850,35 @@ defmodule ToxicParser.ElixirSourceReprosTest do
       assert_conforms(code)
     end
   end
+
+  describe "reserved words as dot members" do
+    test "nil as dot member" do
+      # From: /Users/lukaszsamson/claude_fun/elixir_oss/projects/elixir/lib/mix/lib/mix/tasks/xref.ex
+      # `counters.nil` - nil is a reserved word but valid as field access
+      code = "counters.nil"
+
+      assert_conforms(code)
+    end
+
+    test "true as dot member" do
+      # Reserved word true as field access
+      code = "flags.true"
+
+      assert_conforms(code)
+    end
+
+    test "false as dot member" do
+      # Reserved word false as field access
+      code = "flags.false"
+
+      assert_conforms(code)
+    end
+
+    test "nil as dot member in string interpolation" do
+      # From xref.ex line 1153: "Runtime dependencies: #{counters.nil} (edges)"
+      code = ~S'"count: #{counters.nil}"'
+
+      assert_conforms(code)
+    end
+  end
 end

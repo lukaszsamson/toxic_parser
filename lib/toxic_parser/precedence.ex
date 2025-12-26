@@ -30,7 +30,7 @@ defmodule ToxicParser.Precedence do
     {:dual_op, 210, :left},
     {:mult_op, 220, :left},
     {:power_op, 230, :left},
-    {:dot_op, 310, :left},
+    {:., 310, :left},
     {:dot_call_op, 310, :left}
   ]
 
@@ -86,7 +86,7 @@ defmodule ToxicParser.Precedence do
 
   @doc "Returns the binding power for dot vs dot-call handling."
   @spec dot() :: {bp(), assoc()} | nil
-  def dot, do: binary(:dot_op)
+  def dot, do: binary(:.)
 
   @doc "Returns the full binary precedence list."
   @spec binary_table() :: [{atom(), bp(), assoc()}]

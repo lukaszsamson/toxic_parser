@@ -11,19 +11,19 @@ defmodule ToxicParser.TokenAdapterTest do
     end
   end
 
-  test "normalizes eol to eoe with preserved newline count" do
+  test "returns raw eol token with preserved newline count" do
     state = TokenAdapter.new("1\n\n2", preserve_comments: true)
 
     tokens = drain_tokens(state)
 
-    assert Enum.map(tokens, &TokenAdapter.kind/1) == [:int, :eoe, :int]
+    assert Enum.map(tokens, &TokenAdapter.kind/1) == [:int, :eol, :int]
 
-    [{:eoe, meta, %{newlines: newlines}}] =
-      Enum.filter(tokens, &(TokenAdapter.kind(&1) == :eoe))
+    # Raw eol token has newlines in third element of meta tuple
+    [{:eol, meta}] = Enum.filter(tokens, &(TokenAdapter.kind(&1) == :eol))
 
+    # Raw meta format: {{start_line, start_col}, {end_line, end_col}, newlines}
+    {{start_line, _}, {end_line, _}, newlines} = meta
     assert newlines == 2
-    # Raw meta format: {{start_line, start_col}, {end_line, end_col}, extra}
-    {{start_line, _}, {end_line, _}, _} = meta
     assert start_line == 1
     assert end_line == 3
   end
@@ -35,7 +35,8 @@ defmodule ToxicParser.TokenAdapterTest do
     assert TokenAdapter.kind(first) == :int
 
     {:ok, tokens, state} = TokenAdapter.peek_n(state, 2)
-    assert Enum.map(tokens, &TokenAdapter.kind/1) == [:int, :eoe]
+    # Raw semicolon token kind is :";", not :eoe
+    assert Enum.map(tokens, &TokenAdapter.kind/1) == [:int, :";"]
 
     {:ok, still_first, _state} = TokenAdapter.peek(state)
     assert TokenAdapter.kind(still_first) == :int
@@ -59,16 +60,17 @@ defmodule ToxicParser.TokenAdapterTest do
     state = %{state | event_log: EventLog.token(state.event_log, %{kind: :int, value: 1}, meta)}
 
     {ref, state} = TokenAdapter.checkpoint(state)
-    {:ok, eoe, state} = TokenAdapter.next(state)
-    assert TokenAdapter.kind(eoe) == :eoe
+    {:ok, eol, state} = TokenAdapter.next(state)
+    # Raw eol token
+    assert TokenAdapter.kind(eol) == :eol
     checkpoint_log = state.checkpoints[ref].event_log
 
     mutated_log = EventLog.token(state.event_log, %{kind: :int, value: 2}, meta)
     state = %{state | event_log: mutated_log}
 
     rewound = TokenAdapter.rewind(state, ref)
-    {:ok, eoe_again, _} = TokenAdapter.next(rewound)
-    assert TokenAdapter.kind(eoe_again) == :eoe
+    {:ok, eol_again, _} = TokenAdapter.next(rewound)
+    assert TokenAdapter.kind(eol_again) == :eol
 
     assert rewound.checkpoints == %{}
     assert rewound.event_log == checkpoint_log
@@ -81,7 +83,8 @@ defmodule ToxicParser.TokenAdapterTest do
     assert TokenAdapter.kind(first) == :int
 
     {ref, state} = TokenAdapter.checkpoint(state)
-    {:ok, {:eoe, _, _}, state} = TokenAdapter.next(state)
+    # Raw semicolon token
+    {:ok, {:";", _}, state} = TokenAdapter.next(state)
 
     state = TokenAdapter.drop_checkpoint(state, ref)
     assert state.checkpoints == %{}
@@ -95,23 +98,24 @@ defmodule ToxicParser.TokenAdapterTest do
     state = TokenAdapter.new("a;b;c")
     {:ok, {:identifier, _, :a}, state} = TokenAdapter.next(state)
     {ref, state} = TokenAdapter.checkpoint(state)
-    {:ok, {:eoe, _, _}, state} = TokenAdapter.next(state)
+    # Raw semicolon token
+    {:ok, {:";", _}, state} = TokenAdapter.next(state)
     {:ok, {:identifier, _, :b}, state} = TokenAdapter.next(state)
 
     dropped_state = TokenAdapter.drop_checkpoint(state, ref)
     {:ok, next_after_drop, _} = TokenAdapter.next(dropped_state)
-    assert TokenAdapter.kind(next_after_drop) == :eoe
+    assert TokenAdapter.kind(next_after_drop) == :";", "Expected semicolon token after drop"
 
     # Test rewind goes back to checkpoint position
     state = TokenAdapter.new("a;b;c")
     {:ok, {:identifier, _, :a}, state} = TokenAdapter.next(state)
     {ref, state} = TokenAdapter.checkpoint(state)
-    {:ok, {:eoe, _, _}, state} = TokenAdapter.next(state)
+    {:ok, {:";", _}, state} = TokenAdapter.next(state)
     {:ok, {:identifier, _, :b}, state} = TokenAdapter.next(state)
 
     rewound_state = TokenAdapter.rewind(state, ref)
     {:ok, next_after_rewind, _} = TokenAdapter.next(rewound_state)
-    assert TokenAdapter.kind(next_after_rewind) == :eoe
+    assert TokenAdapter.kind(next_after_rewind) == :";"
   end
 
   test "tolerant mode surfaces error_token and synthesized closers" do

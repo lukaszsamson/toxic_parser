@@ -60,7 +60,7 @@ defmodule ToxicParser.Pratt do
     :concat_op,
     :mult_op,
     :power_op,
-    :dot_op,
+    :.,
     :dot_call_op
   ]
 
@@ -70,7 +70,7 @@ defmodule ToxicParser.Pratt do
 
   # Operators that can extend matched_expr to no_parens_expr
   # From elixir_parser.yrl no_parens_op_expr rules (lines 230-250)
-  # EXCLUDED: :dot_op, :dot_call_op (via access_expr), :stab_op (handled separately), :assoc_op (map-only)
+  # EXCLUDED: :., :dot_call_op (via access_expr), :stab_op (handled separately), :assoc_op (map-only)
   @no_parens_op_expr_operators [
     :match_op,
     :dual_op,
@@ -323,10 +323,10 @@ defmodule ToxicParser.Pratt do
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, TokenAdapter.value(token)), state, log}
 
-          # EOE tokens (semicolons) cannot start an expression
+          # Semicolons cannot start an expression
           # e.g., "1+;\n2" should error because ; cannot follow +
           # Note: newlines are handled separately by EOE.skip_newlines_only
-          token_kind == :eoe and TokenAdapter.value(token).source == :semicolon ->
+          token_kind == :";" ->
             meta = TokenAdapter.token_meta(token)
             {:error, syntax_error_before(meta, "';'"), state, log}
 
@@ -477,13 +477,13 @@ defmodule ToxicParser.Pratt do
     # and doesn't skip it, allowing `led` to see the EOE separation
     if TokenAdapter.kind(op_token) in [:ellipsis_op, :range_op] do
       case TokenAdapter.peek(state) do
-        {:ok, tok, _} when is_kind(tok, :eoe) ->
-          # EOE is a terminator for ellipsis/range - return standalone
+        {:ok, {kind, _}, _} when kind in [:eol, :";"] ->
+          # Separator is a terminator for ellipsis/range - return standalone
           ast = {TokenAdapter.value(op_token), TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, log}
 
         _ ->
-          # Not EOE, proceed with normal parsing
+          # Not a separator, proceed with normal parsing
           parse_unary_operand_or_standalone(op_token, state, context, log)
       end
     else
@@ -517,7 +517,8 @@ defmodule ToxicParser.Pratt do
         ellipsis_terminators = [
           :end,
           :do,
-          :eoe,
+          :eol,
+          :";",
           :")",
           :"]",
           :"}",
@@ -640,7 +641,7 @@ defmodule ToxicParser.Pratt do
                              TokenAdapter.drop_checkpoint(state_after_base, ref), log}
 
                           {kind, next_bp}
-                          when kind in [:dot_op, :dot_call_op] and next_bp < at_bp ->
+                          when kind in [:., :dot_call_op] and next_bp < at_bp ->
                             {:ok, operand_base,
                              TokenAdapter.drop_checkpoint(state_after_base, ref), log}
 
@@ -1158,7 +1159,7 @@ defmodule ToxicParser.Pratt do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
-    {state, eoe_tokens, newlines_before_op} = peek_past_eoe(state)
+    {state, sep_tokens, newlines_before_op} = peek_past_sep(state)
 
     case TokenAdapter.peek(state) do
       {:ok, next_token, _} ->
@@ -1170,13 +1171,13 @@ defmodule ToxicParser.Pratt do
           min_bp,
           context,
           opts,
-          eoe_tokens,
+          sep_tokens,
           newlines_before_op
         )
 
       {:eof, state} ->
         # At EOF, push back EOE tokens so they're available for expr_list
-        state = pushback_eoe_tokens(state, eoe_tokens)
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
 
       {:error, diag, state} ->
@@ -1192,7 +1193,7 @@ defmodule ToxicParser.Pratt do
          min_bp,
          context,
          opts,
-         eoe_tokens,
+         sep_tokens,
          newlines_before_op
        ) do
     next_token_kind = TokenAdapter.kind(next_token)
@@ -1205,7 +1206,7 @@ defmodule ToxicParser.Pratt do
       # `foo()` is a call, but `foo\n()` is not (the newline separates them)
       # Also, for bare identifiers like `if (a)`, only treat as call if
       # the identifier came from a :paren_identifier token (no space before `(`)
-      {:"(", _} when eoe_tokens == [] ->
+      {:"(", _} when sep_tokens == [] ->
         led_call(left, state, log, min_bp, context, opts)
 
       # dot_call_op: expr.(args) - anonymous function call
@@ -1213,46 +1214,46 @@ defmodule ToxicParser.Pratt do
       {:dot_call_op, {bp, _}} when bp >= min_bp ->
         led_dot_call(left, state, log, min_bp, context, opts)
 
-      {:dot_op, {bp, _}} when bp >= min_bp ->
+      {:., {bp, _}} when bp >= min_bp ->
         led_dot(left, state, log, min_bp, context, opts)
 
       # Bracket access: expr[key]
-      # Bracket access has precedence 310 (same as dot_op)
+      # Bracket access has precedence 310 (same as .)
       # NOTE: Only treat as bracket access if:
       # 1. Bracket precedence (310) >= min_bp
       # 2. NO EOE between left and [ (`foo[x]` is bracket access, `foo\n[x]` is not)
       # 3. allows_bracket flag is true (for dot members: `foo.bar[x]` yes, `foo.bar [x]` no)
-      {:"[", _} when 310 >= min_bp and eoe_tokens == [] ->
+      {:"[", _} when 310 >= min_bp and sep_tokens == [] ->
         led_bracket(left, state, log, min_bp, context, opts)
 
       # Special case: ternary_op :"//" following range_op :".."
       # Combines into {:..//, meta, [start, stop, step]}
       # BUT: If there's EOE between range and //, don't combine - // starts a new expression
       # e.g., "x..0;//y" should be two expressions: x..0 and //y (not x..0//y)
-      {:ternary_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens == [] ->
+      {:ternary_op, {bp, _assoc}} when bp >= min_bp and sep_tokens == [] ->
         parse_ternary_op(left, state, min_bp, context, log)
 
       # ternary_op after EOE is NOT a ternary continuation - it's unary // starting a new expr
-      {:ternary_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
-        state = pushback_eoe_tokens(state, eoe_tokens)
+      {:ternary_op, {bp, _assoc}} when bp >= min_bp and sep_tokens != [] ->
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
 
       # dual_op (+/-) after EOE is NOT a binary operator - it starts a new expression
       # e.g., "x()\n\n-1" should be two expressions: x() and -1 (unary minus)
       # This matches Elixir's behavior where dual_op after newlines is unary
-      {:dual_op, {bp, _assoc}} when bp >= min_bp and eoe_tokens != [] ->
+      {:dual_op, {bp, _assoc}} when bp >= min_bp and sep_tokens != [] ->
         # Push back EOE tokens and return left - dual_op after EOE is not continuation
-        state = pushback_eoe_tokens(state, eoe_tokens)
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
 
-      # range_op (..) or ellipsis_op (...) after EOE:
-      # - After semicolon EOE, it starts a new expression (e.g. "t;..<e").
-      # - After newline EOE, it can continue the previous expression (e.g. "a\n..b").
+      # range_op (..) or ellipsis_op (...) after separator:
+      # - After semicolon, it starts a new expression (e.g. "t;..<e").
+      # - After newline, it can continue the previous expression (e.g. "a\n..b").
       {kind, {bp, assoc}}
-      when kind in [:range_op, :ellipsis_op] and bp >= min_bp and eoe_tokens != [] ->
-        # Check if any EOE token was a semicolon (using tuple pattern for raw tokens)
-        if Enum.any?(eoe_tokens, fn {:eoe, _meta, %{source: src}} -> src == :semicolon end) do
-          state = pushback_eoe_tokens(state, eoe_tokens)
+      when kind in [:range_op, :ellipsis_op] and bp >= min_bp and sep_tokens != [] ->
+        # Check if any separator token was a semicolon
+        if Enum.any?(sep_tokens, fn {kind, _meta} -> kind == :";" end) do
+          state = pushback_sep_tokens(state, sep_tokens)
           {:ok, left, state, log}
         else
           led_binary(left, state, log, min_bp, context, opts, bp, assoc)
@@ -1262,13 +1263,13 @@ defmodule ToxicParser.Pratt do
       # Parsing it here would wrongly parse "1 -> 2" as a binary expression
       # Stab clauses are handled by the Stabs module which knows when -> is valid
       {:stab_op, _} ->
-        state = pushback_eoe_tokens(state, eoe_tokens)
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
 
       # assoc_op (=>) is map-only in elixir_parser.yrl (assoc_expr / map grammar),
       # so it must NOT behave like a general binary operator in Pratt parsing.
       {:assoc_op, {_bp, _assoc}} ->
-        state = pushback_eoe_tokens(state, eoe_tokens)
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
 
       {_, {bp, assoc}} when bp >= min_bp ->
@@ -1287,13 +1288,13 @@ defmodule ToxicParser.Pratt do
           led_binary(left, state, log, min_bp, context, opts, bp, assoc, newlines_before_op)
         else
           # No continuation operator found - push back EOE tokens
-          state = pushback_eoe_tokens(state, eoe_tokens)
+          state = pushback_sep_tokens(state, sep_tokens)
           {:ok, left, state, log}
         end
 
       _ ->
         # No continuation operator found - push back EOE tokens
-        state = pushback_eoe_tokens(state, eoe_tokens)
+        state = pushback_sep_tokens(state, sep_tokens)
         {:ok, left, state, log}
     end
   end
@@ -1979,27 +1980,39 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Peek past EOE tokens without consuming them permanently
-  # Returns {state_after_eoe, eoe_tokens_list, newlines_count}
-  # The eoe_tokens_list can be used to push back if we don't find a continuation operator
-  defp peek_past_eoe(state, eoe_tokens \\ [], newlines \\ 0) do
+  # Peek past separator tokens without consuming them permanently
+  # Returns {state_after_sep, sep_tokens_list, newlines_count}
+  # The sep_tokens_list can be used to push back if we don't find a continuation operator
+  defp peek_past_sep(state, sep_tokens \\ [], newlines \\ 0) do
     case TokenAdapter.peek(state) do
-      {:ok, {:eoe, _meta, %{newlines: n}} = eoe_tok, _} ->
-        {:ok, _eoe, state} = TokenAdapter.next(state)
-        peek_past_eoe(state, [eoe_tok | eoe_tokens], newlines + n)
+      {:ok, {:eol, {_, _, n}} = sep_tok, _} when is_integer(n) ->
+        {:ok, _sep, state} = TokenAdapter.next(state)
+        peek_past_sep(state, [sep_tok | sep_tokens], newlines + n)
+
+      {:ok, {:eol, _meta} = sep_tok, _} ->
+        {:ok, _sep, state} = TokenAdapter.next(state)
+        peek_past_sep(state, [sep_tok | sep_tokens], newlines)
+
+      {:ok, {:";", {_, _, n}} = sep_tok, _} when is_integer(n) ->
+        {:ok, _sep, state} = TokenAdapter.next(state)
+        peek_past_sep(state, [sep_tok | sep_tokens], newlines + n)
+
+      {:ok, {:";", _meta} = sep_tok, _} ->
+        {:ok, _sep, state} = TokenAdapter.next(state)
+        peek_past_sep(state, [sep_tok | sep_tokens], newlines)
 
       _ ->
-        {state, Enum.reverse(eoe_tokens), newlines}
+        {state, Enum.reverse(sep_tokens), newlines}
     end
   end
 
-  # Push back a list of EOE tokens so the first token read is first in lookahead.
+  # Push back a list of separator tokens so the first token read is first in lookahead.
   # Since pushback adds to the FRONT of lookahead, we need to push in reverse order:
   # For [newline, semicolon], push semicolon first, then newline, so lookahead is [newline, semicolon].
-  defp pushback_eoe_tokens(state, []), do: state
+  defp pushback_sep_tokens(state, []), do: state
 
-  defp pushback_eoe_tokens(state, eoe_tokens) do
-    Enum.reduce(Enum.reverse(eoe_tokens), state, fn tok, acc ->
+  defp pushback_sep_tokens(state, sep_tokens) do
+    Enum.reduce(Enum.reverse(sep_tokens), state, fn tok, acc ->
       TokenAdapter.pushback(acc, tok)
     end)
   end
@@ -2512,7 +2525,7 @@ defmodule ToxicParser.Pratt do
             {:error, diag, state, log}
         end
 
-      {:ok, {:dot_op, _, _} = _dot_tok, _} ->
+      {:ok, tok, _} when is_kind(tok, :.) ->
         {:ok, dot_tok, state} = TokenAdapter.next(state)
         dot_meta = TokenAdapter.token_meta(dot_tok)
 

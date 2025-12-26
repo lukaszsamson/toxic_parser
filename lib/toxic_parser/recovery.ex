@@ -5,7 +5,7 @@ defmodule ToxicParser.Recovery do
 
   alias ToxicParser.{EventLog, State, TokenAdapter}
 
-  @expr_sync [:eoe, :"}", :"]", :")", :end]
+  @expr_sync [:eol, :";", :"}", :"]", :")", :end]
 
   @spec sync_expr(State.t(), EventLog.t()) :: {:ok, State.t(), EventLog.t()}
   def sync_expr(%State{} = state, %EventLog{} = log) do

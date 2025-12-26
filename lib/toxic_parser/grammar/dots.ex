@@ -43,7 +43,7 @@ defmodule ToxicParser.Grammar.Dots do
   or `{:ok, call_ast, state, log}` for calls.
 
   For simple identifiers, also returns `:no_parens_call` flag when the identifier
-  was classified as :op_identifier or :dot_op_identifier, indicating that a
+  was classified as :op_identifier, indicating that a
   no-parens call is expected.
 
   The optional `dot_meta` parameter provides the dot's metadata for curly calls
@@ -61,9 +61,7 @@ defmodule ToxicParser.Grammar.Dots do
           kind
           when kind in [
                  :identifier,
-                 :do_identifier,
-                 :dot_identifier,
-                 :dot_do_identifier
+                 :do_identifier
                ] ->
             {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok)}, state, log}
 
@@ -72,8 +70,8 @@ defmodule ToxicParser.Grammar.Dots do
             {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :allows_bracket}, state,
              log}
 
-          # op_identifier or dot_op_identifier indicates no-parens call is expected
-          kind when kind in [:op_identifier, :dot_op_identifier] ->
+          # op_identifier indicates no-parens call is expected
+          :op_identifier ->
             # Return with :no_parens_call tag to indicate caller should expect no-parens args
             {:ok, {TokenAdapter.value(tok), Helpers.token_meta(tok), :no_parens_call}, state,
              log}
@@ -90,7 +88,7 @@ defmodule ToxicParser.Grammar.Dots do
                 {:ok, alias_ast, state, log}
             end
 
-          kind when kind in [:paren_identifier, :dot_call_identifier, :dot_paren_identifier] ->
+          :paren_identifier ->
             parse_paren_call(tok, state, ctx, log)
 
           _ ->
