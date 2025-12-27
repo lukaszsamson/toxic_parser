@@ -3,33 +3,33 @@ defmodule ToxicParser.Recovery do
   Minimal recovery helpers for skipping to synchronization points.
   """
 
-  alias ToxicParser.{EventLog, State, TokenAdapter}
+  alias ToxicParser.{Cursor, EventLog, State, TokenAdapter}
 
   @expr_sync [:eol, :";", :"}", :"]", :")", :end]
 
-  @spec sync_expr(State.t(), EventLog.t()) :: {:ok, State.t(), EventLog.t()}
-  def sync_expr(%State{} = state, %EventLog{} = log) do
-    skip_until(state, @expr_sync, log)
+  @spec sync_expr(State.t(), Cursor.t(), EventLog.t()) :: {:ok, State.t(), Cursor.t(), EventLog.t()}
+  def sync_expr(%State{} = state, cursor, %EventLog{} = log) do
+    skip_until(state, cursor, @expr_sync, log)
   end
 
-  defp skip_until(state, kinds, log) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
+  defp skip_until(state, cursor, kinds, log) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, _, _} ->
         if TokenAdapter.kind(tok) in kinds do
-          {:ok, state, log}
+          {:ok, state, cursor, log}
         else
-          case TokenAdapter.next(state) do
-            {:ok, _t, state} -> skip_until(state, kinds, log)
-            {:eof, state} -> {:ok, state, log}
-            {:error, _reason, state} -> {:ok, state, log}
+          case TokenAdapter.next(state, cursor) do
+            {:ok, _t, state, cursor} -> skip_until(state, cursor, kinds, log)
+            {:eof, state, cursor} -> {:ok, state, cursor, log}
+            {:error, _reason, state, cursor} -> {:ok, state, cursor, log}
           end
         end
 
-      {:eof, state} ->
-        {:ok, state, log}
+      {:eof, state, cursor} ->
+        {:ok, state, cursor, log}
 
-      {:error, _diag, state} ->
-        {:ok, state, log}
+      {:error, _diag, state, cursor} ->
+        {:ok, state, cursor, log}
     end
   end
 end

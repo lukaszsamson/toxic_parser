@@ -25,29 +25,29 @@ defmodule ToxicParser.PrattPrecedenceTest do
   end
 
   test "pratt stub returns token value or EOF error" do
-    state = TokenAdapter.new("1 + 2")
+    {state, cursor} = TokenAdapter.new("1 + 2")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} = Pratt.parse(state, Context.matched_expr(), log)
+    assert {:ok, ast, _state, _cursor, %EventLog{}} = Pratt.parse(state, cursor, Context.matched_expr(), log)
     assert match?({_, _, _}, ast)
   end
 
   test "grammar expr_list dispatches to pratt" do
-    state = TokenAdapter.new("1 + 2\n3")
+    {state, cursor} = TokenAdapter.new("1 + 2\n3")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} =
-             Grammar.Expressions.expr_list(state, Context.matched_expr(), log)
+    assert {:ok, ast, _state, _cursor, %EventLog{}} =
+             Grammar.Expressions.expr_list(state, cursor, Context.matched_expr(), log)
 
     assert {:__block__, [], [_a, _b]} = ast
   end
 
   test "calls parser falls back to Pratt when identifier is not a call" do
-    state = TokenAdapter.new("foo")
+    {state, cursor} = TokenAdapter.new("foo")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, %EventLog{}} =
-             Grammar.Expressions.expr(state, Context.matched_expr(), log)
+    assert {:ok, ast, _state, _cursor, %EventLog{}} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
 
     assert {:foo, _, nil} = ast
   end

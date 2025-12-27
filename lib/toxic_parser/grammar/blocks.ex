@@ -9,14 +9,14 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Stabs
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
-          | {:no_block, State.t()}
+          {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
+          | {:no_block, State.t(), Cursor.t()}
 
   @doc """
   Entry point for block constructs. Only `fn` needs special handling here
@@ -25,60 +25,60 @@ defmodule ToxicParser.Grammar.Blocks do
   Other block keywords like `case`, `cond`, `with`, `try`, `receive`, `for`
   are just normal function calls with do-blocks and are handled by Calls.parse.
   """
-  @spec parse(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    case TokenAdapter.peek(state) do
-      {:ok, {:fn, _meta} = tok, _} ->
-        parse_fn(tok, state, ctx, log)
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:fn, _meta} = tok, state, cursor} ->
+        parse_fn(tok, state, cursor, ctx, log)
 
-      {:eof, state} ->
-        {:no_block, state}
+      {:eof, state, cursor} ->
+        {:no_block, state, cursor}
 
-      {:error, _diag, state} ->
-        {:no_block, state}
+      {:error, _diag, state, cursor} ->
+        {:no_block, state, cursor}
 
-      _ ->
-        {:no_block, state}
+      {:ok, _tok, state, cursor} ->
+        {:no_block, state, cursor}
     end
   end
 
-  defp parse_fn(fn_tok, state, ctx, log) do
-    {:ok, _fn, state} = TokenAdapter.next(state)
+  defp parse_fn(fn_tok, state, cursor, ctx, log) do
+    {:ok, _fn, state, cursor} = TokenAdapter.next(state, cursor)
     fn_meta = TokenAdapter.token_meta(fn_tok)
-    log = enter_scope(log, :fn, TokenAdapter.token_meta(fn_tok))
+    log = enter_scope(log, :fn, TokenAdapter.full_metadata(fn_tok, state))
 
     # In elixir_parser.yrl, fn_eoe consumes at most one separator token and
     # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
-    {state, newlines} =
-      case TokenAdapter.peek(state) do
-        {:ok, {:eol, {_, _, n}}, _} when is_integer(n) ->
-          {:ok, _eol, state} = TokenAdapter.next(state)
-          {state, n}
+    {state, cursor, newlines} =
+      case TokenAdapter.peek(state, cursor) do
+        {:ok, {:eol, {_, _, n}}, _, cursor} when is_integer(n) ->
+          {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
+          {state, cursor, n}
 
-        {:ok, {:eol, _meta}, _} ->
-          {:ok, _eol, state} = TokenAdapter.next(state)
-          {state, 0}
+        {:ok, {:eol, _meta}, _, cursor} ->
+          {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
+          {state, cursor, 0}
 
-        {:ok, {:";", {_, _, n}}, _} when is_integer(n) ->
-          {:ok, _semi, state} = TokenAdapter.next(state)
-          {state, n}
+        {:ok, {:";", {_, _, n}}, _, cursor} when is_integer(n) ->
+          {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
+          {state, cursor, n}
 
-        {:ok, {:";", _meta}, _} ->
-          {:ok, _semi, state} = TokenAdapter.next(state)
-          {state, 0}
+        {:ok, {:";", _meta}, _, cursor} ->
+          {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
+          {state, cursor, 0}
 
         _ ->
-          {state, 0}
+          {state, cursor, 0}
       end
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
-    with {:ok, clauses, state, log} <- Stabs.parse_stab_eoe_until([], state, ctx, log, :end),
-         {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
-      log = exit_scope(log, :fn, TokenAdapter.token_meta(fn_tok))
+    with {:ok, clauses, state, cursor, log} <- Stabs.parse_stab_eoe_until([], state, cursor, ctx, log, :end),
+         {:ok, end_meta, state, cursor, log} <- expect_kind_with_meta(state, cursor, :end, log) do
+      log = exit_scope(log, :fn, TokenAdapter.full_metadata(fn_tok, state))
       end_location = meta_to_location(end_meta)
       # Build metadata: [newlines: N, closing: [...], line: L, column: C]
       meta = Meta.closing_meta(fn_meta, end_location, newlines)
-      {:ok, {:fn, meta, clauses}, state, log}
+      {:ok, {:fn, meta, clauses}, state, cursor, log}
     end
   end
 
@@ -89,33 +89,33 @@ defmodule ToxicParser.Grammar.Blocks do
 
   Handles labeled sections (`else/catch/rescue/after`).
   """
-  @spec parse_do_block(State.t(), Pratt.context(), EventLog.t()) ::
-          {:ok, {keyword(), keyword(Macro.t())}, State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
-  def parse_do_block(%State{} = state, %Context{} = ctx, %EventLog{} = log) do
-    case TokenAdapter.next(state) do
-      {:ok, {:do, do_meta}, state} ->
-        log = enter_scope(log, :do_block, do_meta)
+  @spec parse_do_block(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) ::
+          {:ok, {keyword(), keyword(Macro.t())}, State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
+  def parse_do_block(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, {:do, do_meta} = do_tok, state, cursor} ->
+        log = enter_scope(log, :do_block, TokenAdapter.full_metadata(do_tok, state))
         do_location = meta_to_location(do_meta)
 
-        with {:ok, sections, state, log} <-
-               parse_labeled_sections([], :do, do_location, state, ctx, log),
-             {:ok, end_meta, state, log} <- expect_kind_with_meta(state, :end, log) do
-          log = exit_scope(log, :do_block, do_meta)
+        with {:ok, sections, state, cursor, log} <-
+               parse_labeled_sections([], :do, do_location, state, cursor, ctx, log),
+             {:ok, end_meta, state, cursor, log} <- expect_kind_with_meta(state, cursor, :end, log) do
+          log = exit_scope(log, :do_block, TokenAdapter.full_metadata(do_tok, state))
           end_location = meta_to_location(end_meta)
           # Build do/end metadata like elixir_parser.yrl does
           block_meta = [do: do_location, end: end_location]
-          {:ok, {block_meta, sections}, state, log}
+          {:ok, {block_meta, sections}, state, cursor, log}
         end
 
-      {:ok, token, state} ->
-        {:error, {:expected, :do, got: TokenAdapter.kind(token)}, state, log}
+      {:ok, token, state, cursor} ->
+        {:error, {:expected, :do, got: TokenAdapter.kind(token)}, state, cursor, log}
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -123,44 +123,44 @@ defmodule ToxicParser.Grammar.Blocks do
   defp meta_to_location({{line, column}, _, _}), do: [line: line, column: column]
   defp meta_to_location(_), do: []
 
-  defp expect_kind_with_meta(state, kind, log) do
-    case TokenAdapter.next(state) do
-      {:ok, {^kind, meta}, state} ->
-        {:ok, meta, state, log}
+  defp expect_kind_with_meta(state, cursor, kind, log) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, {^kind, meta}, state, cursor} ->
+        {:ok, meta, state, cursor, log}
 
-      {:ok, token, state} ->
-        {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, log}
+      {:ok, token, state, cursor} ->
+        {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, cursor, log}
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-      other ->
-        Result.normalize_error(other, log)
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
-  defp parse_labeled_sections(acc, label, label_meta, state, ctx, log) do
+  defp parse_labeled_sections(acc, label, label_meta, state, cursor, ctx, log) do
     stop_kinds = [:end, :block_identifier, :else, :catch, :rescue, :after]
 
-    with {:ok, items_rev, state, log} <-
-           Stabs.parse_stab_items_until([], state, ctx, log, :end, stop_kinds) do
+    with {:ok, items_rev, state, cursor, log} <-
+           Stabs.parse_stab_items_until([], state, cursor, ctx, log, :end, stop_kinds) do
       section_value = Stabs.build_section_value(items_rev)
       # Encode label through literal_encoder if present
       encoded_label = Builder.Helpers.literal(label, label_meta, state)
       acc = [{encoded_label, section_value} | acc]
 
-      case TokenAdapter.peek(state) do
-        {:ok, tok, _} ->
+      case TokenAdapter.peek(state, cursor) do
+        {:ok, tok, _, cursor} ->
           if block_label?(tok) do
-            {:ok, label_tok, state} = TokenAdapter.next(state)
+            {:ok, label_tok, state, cursor} = TokenAdapter.next(state, cursor)
             next_label_meta = TokenAdapter.token_meta(label_tok)
-            parse_labeled_sections(acc, label_from(tok), next_label_meta, state, ctx, log)
+            parse_labeled_sections(acc, label_from(tok), next_label_meta, state, cursor, ctx, log)
           else
-            {:ok, Enum.reverse(acc), state, log}
+            {:ok, Enum.reverse(acc), state, cursor, log}
           end
 
         _ ->
-          {:ok, Enum.reverse(acc), state, log}
+          {:ok, Enum.reverse(acc), state, cursor, log}
       end
     end
   end

@@ -4,6 +4,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   alias ToxicParser.{
     Context,
+    Cursor,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -14,126 +15,130 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
-  @spec parse_paren_args([Macro.t()], State.t(), Pratt.context(), EventLog.t()) ::
-          {:ok, [Macro.t()], State.t(), EventLog.t()} | {:error, term(), State.t(), EventLog.t()}
-  def parse_paren_args(acc, %State{} = state, %Context{}, log) do
+  @spec parse_paren_args([Macro.t()], State.t(), Cursor.t(), Pratt.context(), EventLog.t()) ::
+          {:ok, [Macro.t()], State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
+  def parse_paren_args(acc, %State{} = state, cursor, %Context{}, log) do
     container_ctx = Context.container_expr()
 
-    state = EOE.skip(state)
+    {state, cursor} = EOE.skip(state, cursor)
 
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} when elem(tok, 0) == :")" ->
-        {:ok, acc, state, log}
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+        {:ok, acc, state, cursor, log}
 
-      {:ok, _tok, _} ->
-        with {:ok, args, state, log} <- parse_call_args_parens(state, container_ctx, log) do
-          {:ok, Enum.reverse(args) ++ acc, state, log}
+      {:ok, _tok, state, cursor} ->
+        with {:ok, args, state, cursor, log} <-
+               parse_call_args_parens(state, cursor, container_ctx, log) do
+          {:ok, Enum.reverse(args) ++ acc, state, cursor, log}
         end
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
-  defp parse_call_args_parens(state, container_ctx, log) do
-    case Keywords.try_parse_kw_call(state, container_ctx, log) do
-      {:ok, kw_list, state, log} ->
-        state = EOE.skip(state)
+  defp parse_call_args_parens(state, cursor, container_ctx, log) do
+    case Keywords.try_parse_kw_call(state, cursor, container_ctx, log) do
+      {:ok, kw_list, state, cursor, log} ->
+        {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state) do
-          {:ok, tok, state} when elem(tok, 0) == :")" ->
-            {:ok, [kw_list], state, log}
+        case TokenAdapter.peek(state, cursor) do
+          {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+            {:ok, [kw_list], state, cursor, log}
 
-          {:ok, tok, state} ->
-            {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, log}
+          {:ok, tok, state, cursor} ->
+            {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-          {:eof, state} ->
-            {:error, :unexpected_eof, state, log}
+          {:eof, state, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, state} ->
-            {:error, diag, state, log}
+          {:error, diag, state, cursor} ->
+            {:error, diag, state, cursor, log}
         end
 
-      {:no_kw, state, log} ->
-        try_single_no_parens_arg(state, log, fn state, log ->
-          parse_call_args_parens_list(state, container_ctx, log)
+      {:no_kw, state, cursor, log} ->
+        try_single_no_parens_arg(state, cursor, log, fn state, cursor, log ->
+          parse_call_args_parens_list(state, cursor, container_ctx, log)
         end)
 
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
+      {:error, reason, state, cursor, log} ->
+        {:error, reason, state, cursor, log}
     end
   end
 
-  defp try_single_no_parens_arg(state, log, fallback) do
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+  defp try_single_no_parens_arg(state, cursor, log, fallback) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-    case Expressions.expr(checkpoint_state, Context.no_parens_expr(), log) do
-      {:ok, expr, state, log} ->
-        state = EOE.skip(state)
+    case Expressions.expr(checkpoint_state, cursor, Context.no_parens_expr(), log) do
+      {:ok, expr, state, cursor, log} ->
+        {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state) do
-          {:ok, tok, state} when elem(tok, 0) == :")" ->
-            {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), log}
+        case TokenAdapter.peek(state, cursor) do
+          {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+            {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
           _ ->
-            fallback.(TokenAdapter.rewind(state, ref), log)
+            {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+            fallback.(state, cursor, log)
         end
 
-      {:error, _reason, state, log} ->
-        fallback.(TokenAdapter.rewind(state, ref), log)
+      {:error, _reason, state, cursor, log} ->
+        {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+        fallback.(state, cursor, log)
     end
   end
 
-  defp parse_call_args_parens_list(state, container_ctx, log) do
-    item_fun = fn state, _ctx, log ->
-      case Keywords.try_parse_kw_call(state, container_ctx, log) do
-        {:ok, kw_list, state, log} ->
-          state = EOE.skip(state)
+  defp parse_call_args_parens_list(state, cursor, container_ctx, log) do
+    item_fun = fn state, cursor, _ctx, log ->
+      case Keywords.try_parse_kw_call(state, cursor, container_ctx, log) do
+        {:ok, kw_list, state, cursor, log} ->
+          {state, cursor} = EOE.skip(state, cursor)
 
-          case TokenAdapter.peek(state) do
-            {:ok, tok, state} when elem(tok, 0) == :")" ->
-              {:ok, {:kw_call, kw_list}, state, log}
+          case TokenAdapter.peek(state, cursor) do
+            {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+              {:ok, {:kw_call, kw_list}, state, cursor, log}
 
-            {:ok, comma_tok, state} when elem(comma_tok, 0) == :"," ->
+            {:ok, comma_tok, state, cursor} when elem(comma_tok, 0) == :"," ->
               meta = TokenAdapter.token_meta(comma_tok)
-              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, log}
+              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, cursor, log}
 
-            {:ok, tok, state} ->
-              {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, log}
+            {:ok, tok, state, cursor} ->
+              {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state} ->
-              {:error, diag, state, log}
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
           end
 
-        {:no_kw, state, log} ->
-          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+        {:no_kw, state, cursor, log} ->
+          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed inside paren calls
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_many_strict(expr), state, log}
+                {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
 
               _ ->
-                {:ok, {:expr, expr}, state, log}
+                {:ok, {:expr, expr}, state, cursor, log}
             end
           end
 
-        {:error, reason, state, log} ->
-          {:error, reason, state, log}
+        {:error, reason, state, cursor, log} ->
+          {:error, reason, state, cursor, log}
       end
     end
 
-    with {:ok, tagged_items, state, log} <-
-           Delimited.parse_comma_separated(state, container_ctx, log, :")", item_fun,
+    with {:ok, tagged_items, state, cursor, log} <-
+           Delimited.parse_comma_separated(state, cursor, container_ctx, log, :")", item_fun,
              allow_empty?: false,
              allow_trailing_comma?: false
            ) do
-      {:ok, finalize_call_args_parens_items(tagged_items), state, log}
+      {:ok, finalize_call_args_parens_items(tagged_items), state, cursor, log}
     end
   end
 

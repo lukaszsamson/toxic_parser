@@ -212,8 +212,12 @@ defmodule ToxicParser.TokenAdapter do
   """
   @spec next(State.t(), Cursor.t()) :: result()
   def next(%State{} = state, cursor) do
-    with {:ok, state} <- consume_fuel(state) do
-      fetch_next(state, cursor)
+    case consume_fuel(state) do
+      {:ok, state} ->
+        fetch_next(state, cursor)
+
+      {:error, :out_of_fuel, state} ->
+        {:error, :out_of_fuel, state, cursor}
     end
   end
 
@@ -367,7 +371,7 @@ defmodule ToxicParser.TokenAdapter do
         # - emit_events is enabled (for event metadata)
         # NOT for token_metadata - terminators are only needed for diagnostics/events.
         if is_delimiter(raw) and (state.mode == :tolerant or state.emit_events?) do
-          {:ok, raw, update_terminators(state), cursor}
+          {:ok, raw, update_terminators(state, cursor), cursor}
         else
           {:ok, raw, state, cursor}
         end
@@ -381,7 +385,7 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   defp handle_error(reason, cursor, state) do
-    {terminators, cursor} = Cursor.current_terminators(cursor)
+    terminators = Cursor.current_terminators(cursor)
     state = %{state | terminators: terminators}
 
     diagnostic = make_diagnostic(reason, state)
@@ -408,23 +412,16 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   defp update_terminators(state, cursor) do
-    {terms, cursor} = Cursor.current_terminators(cursor)
+    terms = Cursor.current_terminators(cursor)
     %{state | terminators: terms}
   end
 
   # Process tokens for peek_n - just extract error diagnostics
-  defp process_tokens_for_peek(tokens, state) do
-    Enum.map_reduce(tokens, state, fn raw, state ->
-      {raw, maybe_extract_error_diagnostic(raw, state)}
-    end)
-  end
-
-  # Extract diagnostics from error tokens (if present)
-  defp maybe_extract_error_diagnostic({:error_token, _meta, %Toxic.Error{} = err}, state) do
-    add_diagnostics(state, [err])
-  end
-
-  defp maybe_extract_error_diagnostic(_raw, state), do: state
+  # defp process_tokens_for_peek(tokens, state) do
+  #   Enum.map_reduce(tokens, state, fn raw, state ->
+  #     {raw, maybe_extract_error_diagnostic(raw, state)}
+  #   end)
+  # end
 
   defp synthetic_error_token(state, cursor, diagnostic) do
     {line, col} = Cursor.position(cursor)

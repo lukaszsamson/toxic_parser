@@ -5,11 +5,12 @@ defmodule ToxicParser.Grammar.DoBlocks do
   alias ToxicParser.Grammar.{Blocks, Keywords}
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
+          {:ok, Macro.t(), State.t(), ToxicParser.Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), ToxicParser.Cursor.t(), EventLog.t()}
 
-  @spec maybe_do_block(Macro.t(), State.t(), any(), EventLog.t(), keyword()) :: result
-  def maybe_do_block(ast, %State{} = state, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
+  @spec maybe_do_block(Macro.t(), State.t(), ToxicParser.Cursor.t(), any(), EventLog.t(), keyword()) ::
+          result
+  def maybe_do_block(ast, %State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     allow_do_block? = Context.allow_do_block?(ctx)
     clean_meta? = Keyword.get(opts, :clean_meta?, true)
     token = Keyword.get(opts, :token)
@@ -22,6 +23,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
         ast,
         token,
         state,
+        cursor,
         ctx,
         log,
         allow_do_block?,
@@ -31,11 +33,11 @@ defmodule ToxicParser.Grammar.DoBlocks do
       )
 
     case result do
-      {:ok, ast, state, log} ->
-        if is_function(after_fn, 3) do
-          after_fn.(ast, state, log)
+      {:ok, ast, state, cursor, log} ->
+        if is_function(after_fn, 4) do
+          after_fn.(ast, state, cursor, log)
         else
-          {:ok, ast, state, log}
+          {:ok, ast, state, cursor, log}
         end
 
       other ->
@@ -47,6 +49,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
          ast,
          token,
          state,
+         cursor,
          ctx,
          log,
          allow_do_block?,
@@ -60,6 +63,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
           ast,
           token,
           state,
+          cursor,
           ctx,
           log,
           allow_do_block?,
@@ -70,13 +74,14 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
       :op_identifier ->
         raise "dead code"
-        maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens)
+        maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
 
       :identifier ->
         handle_identifier(
           ast,
           token,
           state,
+          cursor,
           ctx,
           log,
           allow_do_block?,
@@ -86,7 +91,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
         )
 
       _ ->
-        attach_if_do(ast, state, ctx, log, allow_do_block?, clean_meta?)
+        attach_if_do(ast, state, cursor, ctx, log, allow_do_block?, clean_meta?)
     end
   end
 
@@ -94,6 +99,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
          ast,
          token,
          state,
+         cursor,
          ctx,
          log,
          allow_do_block?,
@@ -101,17 +107,17 @@ defmodule ToxicParser.Grammar.DoBlocks do
          parse_no_parens,
          clean_meta?
        ) do
-    case TokenAdapter.peek(state) do
-      {:ok, {:do, _meta}, _} ->
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:do, _meta}, _, _} ->
         if allow_do_block? do
-          attach_if_do(ast, state, ctx, log, allow_do_block?, clean_meta?)
+          attach_if_do(ast, state, cursor, ctx, log, allow_do_block?, clean_meta?)
         else
-          {:ok, ast, state, log}
+          {:ok, ast, state, cursor, log}
         end
 
       _ ->
         raise "dead code"
-        maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens)
+        maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
     end
   end
 
@@ -119,6 +125,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
          ast,
          token,
          state,
+         cursor,
          ctx,
          log,
          allow_do_block?,
@@ -126,31 +133,32 @@ defmodule ToxicParser.Grammar.DoBlocks do
          parse_no_parens,
          clean_meta?
        ) do
-    case TokenAdapter.peek(state) do
-      {:ok, {:do, _meta}, _} ->
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:do, _meta}, _, _} ->
         raise "dead code"
-        attach_if_do(ast, state, ctx, log, allow_do_block?, clean_meta?)
+        attach_if_do(ast, state, cursor, ctx, log, allow_do_block?, clean_meta?)
 
       _ ->
-        maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens)
+        maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
     end
   end
 
-  defp attach_if_do(ast, state, ctx, log, true, clean_meta?) do
-    case TokenAdapter.peek(state) do
-      {:ok, {:do, _meta}, _} ->
-        with {:ok, {block_meta, sections}, state, log} <- Blocks.parse_do_block(state, ctx, log) do
+  defp attach_if_do(ast, state, cursor, ctx, log, true, clean_meta?) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:do, _meta}, _, _} ->
+        with {:ok, {block_meta, sections}, state, cursor, log} <-
+               Blocks.parse_do_block(state, cursor, ctx, log) do
           ast = attach_do_block(ast, block_meta, sections, clean_meta?)
-          {:ok, ast, state, log}
+          {:ok, ast, state, cursor, log}
         end
 
       _ ->
-        {:ok, ast, state, log}
+        {:ok, ast, state, cursor, log}
     end
   end
 
-  defp attach_if_do(ast, state, _ctx, log, false, _clean_meta?) do
-    {:ok, ast, state, log}
+  defp attach_if_do(ast, state, cursor, _ctx, log, false, _clean_meta?) do
+    {:ok, ast, state, cursor, log}
   end
 
   defp attach_do_block(ast, block_meta, sections, clean_meta?) do
@@ -173,28 +181,28 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   defp clean_meta(meta, false), do: meta
 
-  defp maybe_parse_no_parens(ast, _token, state, _ctx, log, _min_bp, parse_no_parens)
-       when not is_function(parse_no_parens, 5) do
+  defp maybe_parse_no_parens(ast, _token, state, cursor, _ctx, log, _min_bp, parse_no_parens)
+       when not is_function(parse_no_parens, 6) do
     raise "dead code"
-    {:ok, ast, state, log}
+    {:ok, ast, state, cursor, log}
   end
 
-  defp maybe_parse_no_parens(ast, token, state, ctx, log, min_bp, parse_no_parens) do
-    case TokenAdapter.peek(state) do
-      {:ok, next_tok, _} ->
+  defp maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, next_tok, _, _} ->
         if allow_no_parens?(token, next_tok) do
           # For op_identifier calls, use min_bp=0 to include all operators
           # in the argument per lexer disambiguation.
           # Example: %{c!s|n => 1} should parse c!(s|n) not c!(s)
           raise "dead code"
           effective_min_bp = if TokenAdapter.kind(token) == :op_identifier, do: 0, else: min_bp
-          parse_no_parens.(token, state, ctx, log, effective_min_bp)
+          parse_no_parens.(token, state, cursor, ctx, log, effective_min_bp)
         else
-          {:ok, ast, state, log}
+          {:ok, ast, state, cursor, log}
         end
 
       _ ->
-        {:ok, ast, state, log}
+        {:ok, ast, state, cursor, log}
     end
   end
 

@@ -157,50 +157,50 @@ defmodule ToxicParser.Cursor do
   def eof?({[], _driver, [], [], _max_peek, 0}), do: true
   def eof?(_cursor), do: false
 
-  defp ensure_lookahead(cursor, n) do
-    cursor = maybe_flip(cursor)
+  # defp ensure_lookahead(cursor, n) do
+  #   cursor = maybe_flip(cursor)
 
-    case cursor do
-      {_rest, _driver, _front, _back, _max_peek, size} when size >= n ->
-        {:ok, cursor}
+  #   case cursor do
+  #     {_rest, _driver, _front, _back, _max_peek, size} when size >= n ->
+  #       {:ok, cursor}
 
-      _ ->
-        case fetch_one(cursor) do
-          {:ok, cursor} -> ensure_lookahead(cursor, n)
-          {:eof, cursor} -> {:eof, cursor}
-          {:error, reason, cursor} -> {:error, reason, cursor}
-        end
-    end
-  end
+  #     _ ->
+  #       case fetch_one(cursor) do
+  #         {:ok, cursor} -> ensure_lookahead(cursor, n)
+  #         {:eof, cursor} -> {:eof, cursor}
+  #         {:error, reason, cursor} -> {:error, reason, cursor}
+  #       end
+  #   end
+  # end
 
-  defp fetch_one({rest, driver, front, back, max_peek, size}) do
-    case Toxic.Driver.next(rest, driver) do
-      {:ok, tok, rest, driver} ->
-        {:ok, {rest, driver, front, [tok | back], max_peek, size + 1}}
+  # defp fetch_one({rest, driver, front, back, max_peek, size}) do
+  #   case Toxic.Driver.next(rest, driver) do
+  #     {:ok, tok, rest, driver} ->
+  #       {:ok, {rest, driver, front, [tok | back], max_peek, size + 1}}
 
-      {:eof, driver} ->
-        {:eof, {[], driver, front, back, max_peek, size}}
+  #     {:eof, driver} ->
+  #       {:eof, {[], driver, front, back, max_peek, size}}
 
-      {:error, reason, rest, driver} ->
-        {:error, reason, {rest, driver, front, back, max_peek, size}}
-    end
-  end
+  #     {:error, reason, rest, driver} ->
+  #       {:error, reason, {rest, driver, front, back, max_peek, size}}
+  #   end
+  # end
 
-  defp maybe_flip({rest, driver, [], back, max_peek, size}) when back != [] do
-    {rest, driver, Enum.reverse(back), [], max_peek, size}
-  end
+  # defp maybe_flip({rest, driver, [], back, max_peek, size}) when back != [] do
+  #   {rest, driver, Enum.reverse(back), [], max_peek, size}
+  # end
 
-  defp maybe_flip(cursor), do: cursor
+  # defp maybe_flip(cursor), do: cursor
 
-  defp take_queue(cursor, n) do
-    {_rest, _driver, front, back, _max_peek, _size} = maybe_flip(cursor)
+  # defp take_queue(cursor, n) do
+  #   {_rest, _driver, front, back, _max_peek, _size} = maybe_flip(cursor)
 
-    head = Enum.take(front, n)
+  #   head = Enum.take(front, n)
 
-    if length(head) == n do
-      head
-    else
-      head ++ (back |> Enum.reverse() |> Enum.take(n - length(head)))
-    end
-  end
+  #   if length(head) == n do
+  #     head
+  #   else
+  #     head ++ (back |> Enum.reverse() |> Enum.take(n - length(head)))
+  #   end
+  # end
 end

@@ -5,12 +5,12 @@ defmodule ToxicParser.Grammar do
   dispatcher; full grammar nonterminals land in later phases.
   """
 
-  alias ToxicParser.{Context, EventLog, Position, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, Position, Pratt, State, TokenAdapter}
   alias ToxicParser.Grammar.Expressions
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
+          {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
   @doc """
   Parses the given source string using the grammar dispatcher.
@@ -20,19 +20,19 @@ defmodule ToxicParser.Grammar do
   """
   @spec parse_string(String.t(), keyword()) :: result()
   def parse_string(source, opts \\ []) when is_binary(source) do
-    state = TokenAdapter.new(source, opts)
+    {state, cursor} = TokenAdapter.new(source, opts)
     log = EventLog.new() |> EventLog.start_node(:root, zero_meta())
 
-    with {:ok, ast, state, log} <- Expressions.expr_list(state, Context.expr(), log) do
+    with {:ok, ast, state, cursor, log} <- Expressions.expr_list(state, cursor, Context.expr(), log) do
       log = EventLog.end_node(log, :root, zero_meta())
-      {:ok, ast, state, log}
+      {:ok, ast, state, cursor, log}
     end
   end
 
   @doc "Entry point for already-initialized parser state."
-  @spec parse(State.t(), EventLog.t(), Pratt.context()) :: result()
-  def parse(%State{} = state, %EventLog{} = log, %Context{} = ctx \\ Context.expr()) do
-    Expressions.expr_list(state, ctx, log)
+  @spec parse(State.t(), Cursor.t(), EventLog.t(), Pratt.context()) :: result()
+  def parse(%State{} = state, cursor, %EventLog{} = log, %Context{} = ctx \\ Context.expr()) do
+    Expressions.expr_list(state, cursor, ctx, log)
   end
 
   defp zero_meta do

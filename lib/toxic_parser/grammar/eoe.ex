@@ -7,43 +7,47 @@ defmodule ToxicParser.Grammar.EOE do
   alias ToxicParser.{Layout, State, TokenAdapter}
   alias ToxicParser.Builder.Helpers
 
-  @spec skip(State.t()) :: State.t()
-  def skip(%State{} = state) do
-    case Layout.peek_sep(state) do
-      {:ok, _sep, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        skip(state)
+  @spec skip(State.t(), ToxicParser.Cursor.t()) :: {State.t(), ToxicParser.Cursor.t()}
+  def skip(%State{} = state, cursor) do
+    case Layout.peek_sep(state, cursor) do
+      {:ok, _sep, state, cursor} ->
+        {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
+        skip(state, cursor)
 
       :none ->
-        state
+        {state, cursor}
     end
   end
 
-  @spec skip_count_newlines(State.t(), non_neg_integer()) :: {State.t(), non_neg_integer()}
-  def skip_count_newlines(%State{} = state, count) when is_integer(count) and count >= 0 do
-    case Layout.peek_sep(state) do
-      {:ok, {_kind, {_, _, n}}, state} when is_integer(n) ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        skip_count_newlines(state, count + n)
+  @spec skip_count_newlines(State.t(), ToxicParser.Cursor.t(), non_neg_integer()) ::
+          {State.t(), ToxicParser.Cursor.t(), non_neg_integer()}
+  def skip_count_newlines(%State{} = state, cursor, count)
+      when is_integer(count) and count >= 0 do
+    case Layout.peek_sep(state, cursor) do
+      {:ok, {_kind, {_, _, n}}, state, cursor} when is_integer(n) ->
+        {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
+        skip_count_newlines(state, cursor, count + n)
 
-      {:ok, _sep, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
-        skip_count_newlines(state, count)
+      {:ok, _sep, state, cursor} ->
+        {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
+        skip_count_newlines(state, cursor, count)
 
       :none ->
-        {state, count}
+        {state, cursor, count}
     end
   end
 
   @doc """
   Skip ONLY newline tokens (`:eol`), not semicolons.
-  Returns the state and total newline count.
+  Returns the state, cursor, and total newline count.
   This implements Elixir's `stab_op_eol` which only allows newlines after `->`.
   """
-  @spec skip_newlines_only(State.t(), non_neg_integer()) :: {State.t(), non_neg_integer()}
-  def skip_newlines_only(%State{} = state, count) when is_integer(count) and count >= 0 do
+  @spec skip_newlines_only(State.t(), ToxicParser.Cursor.t(), non_neg_integer()) ::
+          {State.t(), ToxicParser.Cursor.t(), non_neg_integer()}
+  def skip_newlines_only(%State{} = state, cursor, count)
+      when is_integer(count) and count >= 0 do
     # Delegate to Layout which handles the :eol vs :";" distinction
-    Layout.skip_newlines_only(state, nil, count)
+    Layout.skip_newlines_only(state, cursor, nil, count)
   end
 
   @doc """
@@ -61,16 +65,17 @@ defmodule ToxicParser.Grammar.EOE do
     Helpers.token_meta(token)
   end
 
-  @spec skip_with_meta(State.t(), keyword() | nil) :: {State.t(), keyword()}
-  def skip_with_meta(%State{} = state, first_meta \\ nil) do
-    case Layout.peek_sep(state) do
-      {:ok, sep_tok, state} ->
-        {:ok, _tok, state} = TokenAdapter.next(state)
+  @spec skip_with_meta(State.t(), ToxicParser.Cursor.t(), keyword() | nil) ::
+          {State.t(), ToxicParser.Cursor.t(), keyword()}
+  def skip_with_meta(%State{} = state, cursor, first_meta \\ nil) do
+    case Layout.peek_sep(state, cursor) do
+      {:ok, sep_tok, state, cursor} ->
+        {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         new_meta = first_meta || Helpers.token_meta(sep_tok)
-        skip_with_meta(state, new_meta)
+        skip_with_meta(state, cursor, new_meta)
 
       :none ->
-        {state, first_meta || []}
+        {state, cursor, first_meta || []}
     end
   end
 

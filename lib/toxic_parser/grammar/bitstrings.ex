@@ -5,6 +5,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
   alias ToxicParser.{
     Context,
+    Cursor,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -17,13 +18,13 @@ defmodule ToxicParser.Grammar.Bitstrings do
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
+          {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
-  @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
-    with {:ok, ast, state, log} <- parse_base(state, ctx, log) do
-      Pratt.led(ast, state, log, min_bp, ctx)
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
+    with {:ok, ast, state, cursor, log} <- parse_base(state, cursor, ctx, log) do
+      Pratt.led(ast, state, cursor, log, min_bp, ctx)
     end
   end
 
@@ -31,80 +32,80 @@ defmodule ToxicParser.Grammar.Bitstrings do
   Parse bitstring base without calling Pratt.led.
   Used when caller controls led binding (e.g., in stab patterns).
   """
-  @spec parse_base(State.t(), Pratt.context(), EventLog.t()) :: result()
-  def parse_base(%State{} = state, %Context{} = _ctx, %EventLog{} = log) do
-    {:ok, open_tok, state} = TokenAdapter.next(state)
+  @spec parse_base(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
+  def parse_base(%State{} = state, cursor, %Context{} = _ctx, %EventLog{} = log) do
+    {:ok, open_tok, state, cursor} = TokenAdapter.next(state, cursor)
     open_meta = TokenAdapter.token_meta(open_tok)
 
     # Skip leading EOE and count newlines
-    {state, leading_newlines} = EOE.skip_count_newlines(state, 0)
+    {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
     container_ctx = Context.container_expr()
 
-    item_fun = fn state, _ctx, log ->
-      case Keywords.try_parse_kw_data(state, container_ctx, log) do
-        {:ok, kw_list, state, log} ->
+    item_fun = fn state, cursor, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, cursor, container_ctx, log) do
+        {:ok, kw_list, state, cursor, log} ->
           # container_args allows a keyword tail as the final element. We only
           # treat this as kw_data if the close bitstring delimiter follows.
-          {state, _newlines} = EOE.skip_count_newlines(state, 0)
+          {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-          case TokenAdapter.peek(state) do
-            {:ok, {:">>", _meta}, _} ->
-              {:ok, {:kw_data, kw_list}, state, log}
+          case TokenAdapter.peek(state, cursor) do
+            {:ok, {:">>", _meta}, _, cursor} ->
+              {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, tok, state} ->
-              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, log}
+            {:ok, tok, state, cursor} ->
+              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state} ->
-              {:error, diag, state, log}
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
           end
 
-        {:no_kw, state, log} ->
-          with {:ok, expr, state, log} <- Expressions.expr(state, container_ctx, log) do
+        {:no_kw, state, cursor, log} ->
+          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed in containers
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, log}
+                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor, log}
 
               _ ->
-                {:ok, {:expr, expr}, state, log}
+                {:ok, {:expr, expr}, state, cursor, log}
             end
           end
 
-        {:error, reason, state, log} ->
-          {:error, reason, state, log}
+        {:error, reason, state, cursor, log} ->
+          {:error, reason, state, cursor, log}
       end
     end
 
-    with {:ok, tagged_items, state, log} <-
-           Delimited.parse_comma_separated(state, container_ctx, log, :">>", item_fun,
+    with {:ok, tagged_items, state, cursor, log} <-
+           Delimited.parse_comma_separated(state, cursor, container_ctx, log, :">>", item_fun,
              allow_empty?: true
            ) do
       # Check for invalid keyword list at start of bitstring
       # <<foo: :bar>> is invalid - bitstrings cannot start with keyword data
       case tagged_items do
         [{:kw_data, _} | _] ->
-          {:error, :unexpected_keyword_list_in_binary, state, log}
+          {:error, :unexpected_keyword_list_in_binary, state, cursor, log}
 
         _ ->
-          case TokenAdapter.next(state) do
-            {:ok, {:">>", _meta} = close_tok, state} ->
+          case TokenAdapter.next(state, cursor) do
+            {:ok, {:">>", _meta} = close_tok, state, cursor} ->
               close_meta = TokenAdapter.token_meta(close_tok)
               meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
               ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
-              {:ok, ast, state, log}
+              {:ok, ast, state, cursor, log}
 
-            {:ok, tok, state} ->
-              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, log}
+            {:ok, tok, state, cursor} ->
+              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state} ->
-              {:error, diag, state, log}
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
           end
       end
     end

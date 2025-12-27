@@ -67,7 +67,7 @@ defmodule ToxicParser.State do
     ]
 
     cursor = Cursor.new(source, cursor_opts)
-    {terminators, cursor} = Cursor.current_terminators(cursor)
+    terminators = Cursor.current_terminators(cursor)
 
     ctx = Keyword.get(opts, :expression_context, Context.expr())
 

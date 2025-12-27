@@ -4,25 +4,25 @@ defmodule ToxicParser.Builder.Meta do
   alias ToxicParser.{State, TokenAdapter}
   alias ToxicParser.Grammar.EOE
 
-  @spec consume_closing(State.t(), atom()) ::
-          {:ok, keyword(), non_neg_integer(), State.t()}
-          | {:error, term(), State.t()}
-  def consume_closing(%State{} = state, expected_kind) when is_atom(expected_kind) do
-    {state, trailing_newlines} = EOE.skip_count_newlines(state, 0)
+  @spec consume_closing(State.t(), ToxicParser.Cursor.t(), atom()) ::
+          {:ok, keyword(), non_neg_integer(), State.t(), ToxicParser.Cursor.t()}
+          | {:error, term(), State.t(), ToxicParser.Cursor.t()}
+  def consume_closing(%State{} = state, cursor, expected_kind) when is_atom(expected_kind) do
+    {state, cursor, trailing_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-    case TokenAdapter.next(state) do
-      {:ok, tok, state} ->
+    case TokenAdapter.next(state, cursor) do
+      {:ok, tok, state, cursor} ->
         if TokenAdapter.kind(tok) == expected_kind do
-          {:ok, TokenAdapter.token_meta(tok), trailing_newlines, state}
+          {:ok, TokenAdapter.token_meta(tok), trailing_newlines, state, cursor}
         else
-          {:error, {:expected, expected_kind, got: TokenAdapter.kind(tok)}, state}
+          {:error, {:expected, expected_kind, got: TokenAdapter.kind(tok)}, state, cursor}
         end
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor}
 
-      {:error, diag, state} ->
-        {:error, diag, state}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor}
     end
   end
 

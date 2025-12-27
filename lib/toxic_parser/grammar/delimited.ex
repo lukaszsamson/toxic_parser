@@ -14,16 +14,16 @@ defmodule ToxicParser.Grammar.Delimited do
   measure/attach closing metadata themselves.
   """
 
-  alias ToxicParser.{Context, EventLog, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, State, TokenAdapter}
   alias ToxicParser.Grammar.EOE
 
   @type result(item) ::
-          {:ok, [item], State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
+          {:ok, [item], State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
-  @type item_fun(item) :: (State.t(), term(), EventLog.t() ->
-                             {:ok, item, State.t(), EventLog.t()}
-                             | {:no_item, State.t(), EventLog.t()}
+  @type item_fun(item) :: (State.t(), Cursor.t(), term(), EventLog.t() ->
+                             {:ok, item, State.t(), Cursor.t(), EventLog.t()}
+                             | {:no_item, State.t(), Cursor.t(), EventLog.t()}
                              | result(item))
 
   @type close_kind :: atom() | [atom()]
@@ -37,8 +37,8 @@ defmodule ToxicParser.Grammar.Delimited do
           allow_empty?: boolean(),
           allow_trailing_comma?: boolean(),
           stop_on_unexpected?: boolean(),
-          on_no_item_after_separator: (token(), State.t(), term(), EventLog.t() ->
-                                         {:error, term(), State.t(), EventLog.t()})
+          on_no_item_after_separator: (token(), State.t(), Cursor.t(), term(), EventLog.t() ->
+                                         {:error, term(), State.t(), Cursor.t(), EventLog.t()})
         ]
 
   @type token :: tuple()
@@ -58,16 +58,17 @@ defmodule ToxicParser.Grammar.Delimited do
   @doc """
   Parses a comma-separated sequence until `close_kind` is next.
 
-  `item_fun` must be an arity-3 function that parses a single item and returns:
+  `item_fun` must be an arity-4 function that parses a single item and returns:
 
-  - `{:ok, item, state, log}` on success
-  - `{:error, reason, state, log}` on failure
+  - `{:ok, item, state, cursor, log}` on success
+  - `{:error, reason, state, cursor, log}` on failure
 
   The close token is not consumed; parsing stops with `close_kind` still as the
   next token.
   """
   @spec parse_comma_separated(
           State.t(),
+          Cursor.t(),
           term(),
           EventLog.t(),
           close_kind(),
@@ -78,6 +79,7 @@ defmodule ToxicParser.Grammar.Delimited do
         when item: term()
   def parse_comma_separated(
         %State{} = state,
+        cursor,
         %Context{} = ctx,
         %EventLog{} = log,
         close_kind_or_kinds,
@@ -85,45 +87,46 @@ defmodule ToxicParser.Grammar.Delimited do
         opts \\ []
       )
       when (is_atom(close_kind_or_kinds) or is_list(close_kind_or_kinds)) and
-             is_function(item_fun, 3) do
+             is_function(item_fun, 4) do
     opts = Keyword.merge(@default_opts, opts)
     close_kinds = List.wrap(close_kind_or_kinds)
     eof_is_close? = :eof in close_kinds
-    state = maybe_skip_eoe(state, opts, :initial)
+    {state, cursor} = maybe_skip_eoe(state, cursor, opts, :initial)
 
-    case TokenAdapter.peek(state) do
-      {:ok, tok, state} ->
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, _, _} ->
         kind = TokenAdapter.kind(tok)
 
         if kind in close_kinds do
           if opts[:allow_empty?] do
-            {:ok, [], state, log}
+            {:ok, [], state, cursor, log}
           else
-            {:error, {:expected, :item, got: kind}, state, log}
+            {:error, {:expected, :item, got: kind}, state, cursor, log}
           end
         else
-          parse_items_rev([], state, ctx, log, close_kinds, item_fun, opts)
+          parse_items_rev([], state, cursor, ctx, log, close_kinds, item_fun, opts)
         end
 
-      {:eof, state} ->
+      {:eof, state, cursor} ->
         if eof_is_close? do
           if opts[:allow_empty?] do
-            {:ok, [], state, log}
+            {:ok, [], state, cursor, log}
           else
-            {:error, {:expected, :item, got: :eof}, state, log}
+            {:error, {:expected, :item, got: :eof}, state, cursor, log}
           end
         else
-          {:error, :unexpected_eof, state, log}
+          {:error, :unexpected_eof, state, cursor, log}
         end
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
   defp parse_items_rev(
          acc_rev,
          state,
+         cursor,
          ctx,
          log,
          close_kinds,
@@ -133,38 +136,39 @@ defmodule ToxicParser.Grammar.Delimited do
        ) do
     eof_is_close? = :eof in close_kinds
 
-    case item_fun.(state, ctx, log) do
-      {:ok, item, state, log} ->
-        state = maybe_skip_eoe(state, opts, :after_item)
+    case item_fun.(state, cursor, ctx, log) do
+      {:ok, item, state, cursor, log} ->
+        {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_item)
 
         separator = opts[:separator]
 
-        case TokenAdapter.peek(state) do
-          {:ok, tok, state} ->
+        case TokenAdapter.peek(state, cursor) do
+          {:ok, tok, _, _} ->
             kind = TokenAdapter.kind(tok)
 
             cond do
               kind in close_kinds ->
-                {:ok, Enum.reverse([item | acc_rev]), state, log}
+                {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
 
               kind == separator ->
-                {:ok, sep_tok, state} = TokenAdapter.next(state)
-                state = maybe_skip_eoe(state, opts, :after_separator)
+                {:ok, sep_tok, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_separator)
 
-                case TokenAdapter.peek(state) do
-                  {:ok, tok, state} ->
+                case TokenAdapter.peek(state, cursor) do
+                  {:ok, tok, _, _} ->
                     kind = TokenAdapter.kind(tok)
 
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
-                        {:ok, Enum.reverse([item | acc_rev]), state, log}
+                        {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
                       else
-                        {:error, {:trailing_comma, sep_tok}, state, log}
+                        {:error, {:trailing_comma, sep_tok}, state, cursor, log}
                       end
                     else
                       parse_items_rev(
                         [item | acc_rev],
                         state,
+                        cursor,
                         ctx,
                         log,
                         close_kinds,
@@ -174,16 +178,16 @@ defmodule ToxicParser.Grammar.Delimited do
                       )
                     end
 
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
+                  {:eof, state, cursor} ->
+                    {:error, :unexpected_eof, state, cursor, log}
 
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
+                  {:error, diag, state, cursor} ->
+                    {:error, diag, state, cursor, log}
                 end
 
               true ->
                 if opts[:stop_on_unexpected?] do
-                  {:ok, Enum.reverse([item | acc_rev]), state, log}
+                  {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
                 else
                   expected =
                     case close_kinds do
@@ -191,56 +195,56 @@ defmodule ToxicParser.Grammar.Delimited do
                       many -> many
                     end
 
-                  {:error, {:expected_comma_or, expected, got: kind}, state, log}
+                  {:error, {:expected_comma_or, expected, got: kind}, state, cursor, log}
                 end
             end
 
-          {:eof, state} ->
+          {:eof, state, cursor} ->
             if eof_is_close? do
-              {:ok, Enum.reverse([item | acc_rev]), state, log}
+              {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
             else
-              {:error, :unexpected_eof, state, log}
+              {:error, :unexpected_eof, state, cursor, log}
             end
 
-          {:error, diag, state} ->
-            {:error, diag, state, log}
+          {:error, diag, state, cursor} ->
+            {:error, diag, state, cursor, log}
         end
 
-      {:no_item, state, log} ->
+      {:no_item, state, cursor, log} ->
         case after_sep_tok do
           nil ->
-            case TokenAdapter.peek(state) do
-              {:ok, tok, state} ->
-                {:error, {:expected, :item, got: TokenAdapter.kind(tok)}, state, log}
+            case TokenAdapter.peek(state, cursor) do
+              {:ok, tok, _, _} ->
+                {:error, {:expected, :item, got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-              {:eof, state} ->
+              {:eof, state, cursor} ->
                 if eof_is_close? do
-                  {:error, {:expected, :item, got: :eof}, state, log}
+                  {:error, {:expected, :item, got: :eof}, state, cursor, log}
                 else
-                  {:error, :unexpected_eof, state, log}
+                  {:error, :unexpected_eof, state, cursor, log}
                 end
 
-              {:error, diag, state} ->
-                {:error, diag, state, log}
+              {:error, diag, state, cursor} ->
+                {:error, diag, state, cursor, log}
             end
 
           sep_tok ->
             case opts[:on_no_item_after_separator] do
-              fun when is_function(fun, 4) ->
-                fun.(sep_tok, state, ctx, log)
+              fun when is_function(fun, 5) ->
+                fun.(sep_tok, state, cursor, ctx, log)
 
               _ ->
                 {:error, {:expected, :item_after_separator, separator: opts[:separator]}, state,
-                 log}
+                 cursor, log}
             end
         end
 
-      {:error, _reason, _state, _log} = err ->
+      {:error, _reason, _state, _cursor, _log} = err ->
         err
     end
   end
 
-  defp maybe_skip_eoe(state, opts, phase) do
+  defp maybe_skip_eoe(state, cursor, opts, phase) do
     override =
       case phase do
         :initial -> opts[:skip_eoe_initial?]
@@ -258,10 +262,10 @@ defmodule ToxicParser.Grammar.Delimited do
     if enabled? do
       # Only skip newlines, not semicolons - semicolons are separators
       # and should not be silently skipped in argument lists
-      {state, _newlines} = EOE.skip_newlines_only(state, 0)
-      state
+      {state, cursor, _count} = EOE.skip_newlines_only(state, cursor, 0)
+      {state, cursor}
     else
-      state
+      {state, cursor}
     end
   end
 end

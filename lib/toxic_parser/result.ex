@@ -3,7 +3,7 @@ defmodule ToxicParser.Result do
   Structured output for parser entry points.
   """
 
-  alias ToxicParser.{Error, EventLog, State}
+  alias ToxicParser.{Cursor, Error, EventLog, State}
 
   @type mode :: :strict | :tolerant
 
@@ -35,14 +35,23 @@ defmodule ToxicParser.Result do
   @type error_tuple ::
           {:error, term(), State.t()}
           | {:error, term(), State.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
-  @spec normalize_error(error_tuple | term(), EventLog.t()) ::
-          {:error, term(), State.t(), EventLog.t()} | term()
-  def normalize_error({:error, diag, %State{} = state, %EventLog{} = log}, _),
-    do: {:error, diag, state, log}
+  @spec normalize_error(error_tuple | term(), Cursor.t(), EventLog.t()) ::
+          {:error, term(), State.t(), Cursor.t(), EventLog.t()} | term()
+  def normalize_error({:error, diag, %State{} = state, cursor, %EventLog{} = log}, _, _),
+    do: {:error, diag, state, cursor, log}
 
-  def normalize_error({:error, diag, %State{} = state}, %EventLog{} = log),
-    do: {:error, diag, state, log}
+  def normalize_error({:error, diag, %State{} = state, %EventLog{} = log}, cursor, _),
+    do: {:error, diag, state, cursor, log}
 
-  def normalize_error(other, _), do: other
+  def normalize_error({:error, diag, %State{} = state}, cursor, %EventLog{} = log),
+    do: {:error, diag, state, cursor, log}
+
+  # Handle 4-element error with cursor but no log (e.g., from expect_token)
+  def normalize_error({:error, diag, %State{} = state, cursor}, _, %EventLog{} = log)
+      when not is_struct(cursor, EventLog),
+      do: {:error, diag, state, cursor, log}
+
+  def normalize_error(other, _, _), do: other
 end

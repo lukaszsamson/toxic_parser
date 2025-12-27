@@ -41,13 +41,13 @@ defmodule ToxicParser do
     emit_env? = Keyword.get(opts, :emit_env, false)
     ctx = Keyword.get(opts, :expression_context, Context.expr())
 
-    state = TokenAdapter.new(source, opts)
+    {state, cursor} = TokenAdapter.new(source, opts)
     log = EventLog.new()
 
-    case Grammar.parse(state, log, ctx) do
-      {:ok, ast, state, log} ->
+    case Grammar.parse(state, cursor, log, ctx) do
+      {:ok, ast, state, cursor, log} ->
         # In strict mode, ensure all tokens were consumed
-        case check_remaining_tokens(state, mode) do
+        case check_remaining_tokens(state, cursor, mode) do
           :ok ->
             result =
               build_result(%{
@@ -82,7 +82,7 @@ defmodule ToxicParser do
             {:error, result}
         end
 
-      {:error, reason, state, log} ->
+      {:error, reason, state, _cursor, log} ->
         parser_diag = parser_error(reason, state)
 
         result =
@@ -187,21 +187,21 @@ defmodule ToxicParser do
   end
 
   # Check for remaining tokens after parsing in strict mode
-  defp check_remaining_tokens(state, :strict) do
-    case TokenAdapter.peek(state) do
-      {:eof, _state} ->
+  defp check_remaining_tokens(state, cursor, :strict) do
+    case TokenAdapter.peek(state, cursor) do
+      {:eof, _state, _cursor} ->
         :ok
 
-      {:ok, token, _state} ->
+      {:ok, token, _state, _cursor} ->
         {:error, {:syntax_error_before, format_token(token)}, state}
 
-      {:error, _diag, _state} ->
+      {:error, _diag, _state, _cursor} ->
         # Lexer error on remaining input - already an error state
         :ok
     end
   end
 
-  defp check_remaining_tokens(_state, _mode), do: :ok
+  defp check_remaining_tokens(_state, _cursor, _mode), do: :ok
 
   # Format a token for error messages
   # Tokens are raw tuples: {kind, meta}, {kind, meta, value}, or {kind, meta, v1, v2}

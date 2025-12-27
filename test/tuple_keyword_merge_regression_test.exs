@@ -20,14 +20,15 @@ defmodule ToxicParser.TupleKeywordMergeRegressionTest do
   test "merges keyword tail with quoted keys" do
     code = "{1, foo: 1, 'bar': 2}"
 
-    st0 = ToxicParser.TokenAdapter.new(code, token_metadata: true, max_peek: 64)
-    {:ok, _open, st1} = ToxicParser.TokenAdapter.next(st0)
-    {:ok, _one, st2} = ToxicParser.TokenAdapter.next(st1)
-    {:ok, _comma, st3} = ToxicParser.TokenAdapter.next(st2)
+    {st0, cursor0} = ToxicParser.TokenAdapter.new(code, token_metadata: true, max_peek: 64)
+    {:ok, _open, st1, cursor1} = ToxicParser.TokenAdapter.next(st0, cursor0)
+    {:ok, _one, st2, cursor2} = ToxicParser.TokenAdapter.next(st1, cursor1)
+    {:ok, _comma, st3, cursor3} = ToxicParser.TokenAdapter.next(st2, cursor2)
 
-    assert {:ok, [foo: 1, bar: 2], _st4, _log} =
+    assert {:ok, [foo: 1, bar: 2], _st4, _cursor, _log} =
              ToxicParser.Grammar.Keywords.parse_kw_data(
                st3,
+               cursor3,
                ToxicParser.Context.unmatched_expr(),
                ToxicParser.EventLog.new()
              )

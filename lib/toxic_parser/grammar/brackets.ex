@@ -1,12 +1,12 @@
 defmodule ToxicParser.Grammar.Brackets do
   @moduledoc false
 
-  alias ToxicParser.{Context, EventLog, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, State, TokenAdapter}
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
+          {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
   @too_many_access_syntax_message "too many arguments when accessing a value. " <>
                                     "The value[key] notation in Elixir expects either a single argument or a keyword list. " <>
@@ -19,59 +19,59 @@ defmodule ToxicParser.Grammar.Brackets do
                                     "    value[one, two, three]\n\n" <>
                                     "Syntax error after: "
 
-  @spec parse_bracket_arg_no_skip(State.t(), EventLog.t()) :: result()
-  def parse_bracket_arg_no_skip(%State{} = state, %EventLog{} = log) do
+  @spec parse_bracket_arg_no_skip(State.t(), Cursor.t(), EventLog.t()) :: result()
+  def parse_bracket_arg_no_skip(%State{} = state, cursor, %EventLog{} = log) do
     ctx = Context.container_expr()
 
-    case Keywords.try_parse_kw_data(state, ctx, log) do
-      {:ok, kw_list, state, log} ->
-        {:ok, kw_list, state, log}
+    case Keywords.try_parse_kw_data(state, cursor, ctx, log) do
+      {:ok, kw_list, state, cursor, log} ->
+        {:ok, kw_list, state, cursor, log}
 
-      {:no_kw, state, log} ->
-        parse_single_container_expr(state, ctx, log)
+      {:no_kw, state, cursor, log} ->
+        parse_single_container_expr(state, cursor, ctx, log)
 
-      {:error, reason, state, log} ->
-        {:error, reason, state, log}
+      {:error, reason, state, cursor, log} ->
+        {:error, reason, state, cursor, log}
     end
   end
 
-  defp parse_single_container_expr(state, ctx, log) do
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state)
+  defp parse_single_container_expr(state, cursor, ctx, log) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-    item_fun = fn state, ctx, log -> Expressions.expr(state, ctx, log) end
+    item_fun = fn state, cursor, ctx, log -> Expressions.expr(state, cursor, ctx, log) end
 
-    case Delimited.parse_comma_separated(checkpoint_state, ctx, log, :"]", item_fun,
+    case Delimited.parse_comma_separated(checkpoint_state, cursor, ctx, log, :"]", item_fun,
            allow_empty?: false,
            allow_trailing_comma?: true,
            skip_eoe?: true
          ) do
-      {:ok, [expr], state, log} ->
-        {:ok, expr, TokenAdapter.drop_checkpoint(state, ref), log}
+      {:ok, [expr], state, cursor, log} ->
+        {:ok, expr, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
-      {:ok, [_first, _second | _rest], state, log} ->
-        state = TokenAdapter.rewind(state, ref)
+      {:ok, [_first, _second | _rest], state, cursor, log} ->
+        {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
 
-        with {:ok, _first_expr, state, log} <- Expressions.expr(state, ctx, log) do
-          {state, _newlines} = EOE.skip_count_newlines(state, 0)
+        with {:ok, _first_expr, state, cursor, log} <- Expressions.expr(state, cursor, ctx, log) do
+          {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-          case TokenAdapter.next(state) do
-            {:ok, {:",", _meta} = comma_tok, state} ->
+          case TokenAdapter.next(state, cursor) do
+            {:ok, {:",", _meta} = comma_tok, state, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
-              {:error, {meta, @too_many_access_syntax_message, "','"}, state, log}
+              {:error, {meta, @too_many_access_syntax_message, "','"}, state, cursor, log}
 
-            {:ok, tok, state} ->
-              {:error, {:expected, :",", got: TokenAdapter.kind(tok)}, state, log}
+            {:ok, tok, state, cursor} ->
+              {:error, {:expected, :",", got: TokenAdapter.kind(tok)}, state, cursor, log}
 
-            {:eof, state} ->
-              {:error, :unexpected_eof, state, log}
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state} ->
-              {:error, diag, state, log}
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
           end
         end
 
-      {:error, reason, state, log} ->
-        {:error, reason, TokenAdapter.drop_checkpoint(state, ref), log}
+      {:error, reason, state, cursor, log} ->
+        {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
     end
   end
 end

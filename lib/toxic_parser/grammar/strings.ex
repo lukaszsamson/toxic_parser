@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Strings do
   Parsing for strings, charlists, heredocs, sigils, and quoted atoms from Toxic token streams.
   """
 
-  alias ToxicParser.{Builder, Context, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Expressions
 
@@ -17,45 +17,45 @@ defmodule ToxicParser.Grammar.Strings do
   @max_atom_length 255
 
   @type result ::
-          {:ok, Macro.t(), State.t(), EventLog.t()}
-          | {:error, term(), State.t(), EventLog.t()}
-          | {:no_string, State.t()}
-          | {:keyword_key, atom(), keyword(), State.t(), EventLog.t()}
-          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
+          {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
+          | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
+          | {:no_string, State.t(), Cursor.t()}
+          | {:keyword_key, atom(), keyword(), State.t(), Cursor.t(), EventLog.t()}
+          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(), Cursor.t(),
              EventLog.t()}
 
-  @spec parse(State.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, _, _} ->
         case TokenAdapter.kind(tok) do
           kind when kind in @simple_string_start ->
-            parse_simple_string(state, ctx, log, min_bp, opts)
+            parse_simple_string(state, cursor, ctx, log, min_bp, opts)
 
           kind when kind in @heredoc_start ->
-            parse_heredoc(state, ctx, log, min_bp, opts)
+            parse_heredoc(state, cursor, ctx, log, min_bp, opts)
 
           kind when kind in @sigil_start ->
-            parse_sigil(state, ctx, log, min_bp, opts)
+            parse_sigil(state, cursor, ctx, log, min_bp, opts)
 
           kind when kind in @atom_start ->
-            parse_quoted_atom(state, ctx, kind, log, min_bp, opts)
+            parse_quoted_atom(state, cursor, ctx, kind, log, min_bp, opts)
 
           _ ->
-            {:no_string, state}
+            {:no_string, state, cursor}
         end
 
-      {:eof, state} ->
-        {:no_string, state}
+      {:eof, state, cursor} ->
+        {:no_string, state, cursor}
 
-      {:error, _diag, state} ->
-        {:no_string, state}
+      {:error, _diag, state, cursor} ->
+        {:no_string, state, cursor}
     end
   end
 
   # Parse simple strings (not heredocs)
-  defp parse_simple_string(state, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state} = TokenAdapter.next(state)
+  defp parse_simple_string(state, cursor, ctx, log, min_bp, opts) do
+    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
     start_tok_kind = TokenAdapter.kind(start_tok)
     kind = string_kind(start_tok_kind)
@@ -64,25 +64,25 @@ defmodule ToxicParser.Grammar.Strings do
     # Get delimiter for metadata
     delimiter = string_delimiter(start_tok_kind)
 
-    with {:ok, parts, actual_end, end_tok, state, log} <-
-           collect_parts([], state, target_ends, kind, log),
-         {:ok, _close, state} <- TokenAdapter.next(state) do
+    with {:ok, parts, actual_end, end_tok, state, cursor, log} <-
+           collect_parts([], state, cursor, target_ends, kind, log),
+         {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
       # If string ended with kw_identifier_unsafe_end, it's a keyword key (atom)
       if actual_end in [:kw_identifier_unsafe_end, :kw_identifier_safe_end] do
         # Check if there's any interpolation in the parts
         if has_interpolations?(parts) do
           # Build binary_to_atom call for interpolated keyword
-          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, log}
+          {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor, log}
         else
           content = merge_fragments(parts)
 
           if byte_size(content) > @max_atom_length do
-            {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, log}
+            {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor, log}
           else
             atom = String.to_atom(content)
             # Include delimiter and format: :keyword for quoted keyword keys
             key_meta = [{:delimiter, delimiter}, {:format, :keyword} | start_meta]
-            {:keyword_key, atom, key_meta, state, log}
+            {:keyword_key, atom, key_meta, state, cursor, log}
           end
         end
       else
@@ -93,6 +93,7 @@ defmodule ToxicParser.Grammar.Strings do
           delimiter,
           end_tok,
           state,
+          cursor,
           ctx,
           log,
           min_bp,
@@ -103,16 +104,16 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   # Parse heredocs with indentation handling
-  defp parse_heredoc(state, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state} = TokenAdapter.next(state)
+  defp parse_heredoc(state, cursor, ctx, log, min_bp, opts) do
+    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
     start_tok_kind = TokenAdapter.kind(start_tok)
     kind = string_kind(start_tok_kind)
     target_ends = closing_for(start_tok_kind)
 
-    with {:ok, parts, _actual_end, end_tok, state, log} <-
-           collect_parts([], state, target_ends, kind, log),
-         {:ok, _close, state} <- TokenAdapter.next(state) do
+    with {:ok, parts, _actual_end, end_tok, state, cursor, log} <-
+           collect_parts([], state, cursor, target_ends, kind, log),
+         {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
       # Extract indentation from end token
       indentation = get_heredoc_indentation(end_tok)
 
@@ -125,6 +126,7 @@ defmodule ToxicParser.Grammar.Strings do
         start_meta,
         indentation,
         state,
+        cursor,
         ctx,
         log,
         min_bp,
@@ -133,31 +135,31 @@ defmodule ToxicParser.Grammar.Strings do
     end
   end
 
-  defp parse_sigil(state, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state} = TokenAdapter.next(state)
+  defp parse_sigil(state, cursor, ctx, log, min_bp, opts) do
+    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
     # sigil_start is a 4-tuple: {:sigil_start, meta, sigil_atom, delimiter}
     sigil = TokenAdapter.value(start_tok)
     delimiter = TokenAdapter.value2(start_tok)
 
-    with {:ok, parts, _actual_end, end_tok, state, log} <-
-           collect_parts([], state, [:sigil_end], :sigil, log),
-         {:ok, _close, state} <- TokenAdapter.next(state) do
+    with {:ok, parts, _actual_end, end_tok, state, cursor, log} <-
+           collect_parts([], state, cursor, [:sigil_end], :sigil, log),
+         {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
       # Check for sigil_modifiers token
-      {modifiers, state} =
-        case TokenAdapter.peek(state) do
-          {:ok, tok, _} ->
+      {modifiers, state, cursor} =
+        case TokenAdapter.peek(state, cursor) do
+          {:ok, tok, _, _} ->
             case TokenAdapter.kind(tok) do
               :sigil_modifiers ->
-                {:ok, mod_tok, state} = TokenAdapter.next(state)
-                {TokenAdapter.value(mod_tok), state}
+                {:ok, mod_tok, state, cursor} = TokenAdapter.next(state, cursor)
+                {TokenAdapter.value(mod_tok), state, cursor}
 
               _ ->
-                {[], state}
+                {[], state, cursor}
             end
 
           _ ->
-            {[], state}
+            {[], state, cursor}
         end
 
       # Get indentation from end token (for heredoc sigils)
@@ -189,13 +191,13 @@ defmodule ToxicParser.Grammar.Strings do
       content_ast = {:<<>>, content_meta, build_sigil_parts(parts)}
 
       ast = {sigil, meta_with_delimiter, [content_ast, modifiers]}
-      Pratt.led(ast, state, log, min_bp, ctx, opts)
+      Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
     end
   end
 
   # Parse quoted atoms: :"foo", :"foo bar", :""
-  defp parse_quoted_atom(state, ctx, kind, log, min_bp, opts) do
-    {:ok, start_tok, state} = TokenAdapter.next(state)
+  defp parse_quoted_atom(state, cursor, ctx, kind, log, min_bp, opts) do
+    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
     # Use delimiter from token value (39 = ', 34 = ")
     delimiter = if TokenAdapter.value(start_tok) == 39, do: "'", else: "\""
@@ -208,9 +210,9 @@ defmodule ToxicParser.Grammar.Strings do
         :atom_safe_end
       end
 
-    with {:ok, parts, _actual_end, _end_tok, state, log} <-
-           collect_parts([], state, [end_token_kind], :atom, log),
-         {:ok, _close, state} <- TokenAdapter.next(state) do
+    with {:ok, parts, _actual_end, _end_tok, state, cursor, log} <-
+           collect_parts([], state, cursor, [end_token_kind], :atom, log),
+         {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
       # Check if there are any interpolations
       if has_interpolations?(parts) do
         # Build interpolated atom AST with delimiter metadata
@@ -220,188 +222,188 @@ defmodule ToxicParser.Grammar.Strings do
           {{:., start_meta, [:erlang, :binary_to_atom]}, meta_with_delimiter,
            [{:<<>>, start_meta, args}, :utf8]}
 
-        Pratt.led(ast, state, log, min_bp, ctx, opts)
+        Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
       else
         content = merge_fragments(parts)
 
         if byte_size(content) > @max_atom_length do
-          {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, log}
+          {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor, log}
         else
           atom = String.to_atom(content)
           # Include delimiter in metadata for literal_encoder
           ast = Builder.Helpers.literal(atom, meta_with_delimiter, state)
-          Pratt.led(ast, state, log, min_bp, ctx, opts)
+          Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
         end
       end
     end
   end
 
   # Collect parts (fragments and interpolations)
-  # Returns {:ok, parts, actual_end_kind, end_token, state, log}
+  # Returns {:ok, parts, actual_end_kind, end_token, state, cursor, log}
   # For sigils, do not unescape content (no_unescape: true)
-  defp collect_parts(acc, state, target_ends, kind, log) do
+  defp collect_parts(acc, state, cursor, target_ends, kind, log) do
     # Sigils should not unescape content
     # Heredocs should not unescape here - unescaping happens after indentation trimming
     # (because line continuation \\\n affects indentation stripping)
     should_unescape = kind not in [:sigil, :heredoc_binary, :heredoc_charlist]
 
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, _, _} ->
         end_kind = TokenAdapter.kind(tok)
 
         if end_kind in target_ends do
-          {:ok, Enum.reverse(acc), end_kind, tok, state, log}
+          {:ok, Enum.reverse(acc), end_kind, tok, state, cursor, log}
         else
           case end_kind do
             :string_fragment ->
-              {:ok, frag_tok, state} = TokenAdapter.next(state)
+              {:ok, frag_tok, state, cursor} = TokenAdapter.next(state, cursor)
               fragment = TokenAdapter.value(frag_tok)
 
               if should_unescape do
                 case safe_unescape(fragment) do
                   {:ok, content} ->
-                    collect_parts([{:fragment, content} | acc], state, target_ends, kind, log)
+                    collect_parts([{:fragment, content} | acc], state, cursor, target_ends, kind, log)
 
                   {:error, reason} ->
                     {:error, {:unescape_error, reason, TokenAdapter.token_meta(frag_tok)}, state,
-                     log}
+                     cursor, log}
                 end
               else
-                collect_parts([{:fragment, fragment} | acc], state, target_ends, kind, log)
+                collect_parts([{:fragment, fragment} | acc], state, cursor, target_ends, kind, log)
               end
 
             :begin_interpolation ->
-              with {:ok, interp_ast, state, log} <- parse_interpolation(state, kind, log) do
-                collect_parts([{:interpolation, interp_ast} | acc], state, target_ends, kind, log)
+              with {:ok, interp_ast, state, cursor, log} <- parse_interpolation(state, cursor, kind, log) do
+                collect_parts([{:interpolation, interp_ast} | acc], state, cursor, target_ends, kind, log)
               end
 
             _ ->
-              {:error, {:unexpected_string_token, end_kind}, state, log}
+              {:error, {:unexpected_string_token, end_kind}, state, cursor, log}
           end
         end
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
   # Parse an interpolation: #{expr}
-  defp parse_interpolation(state, kind, log) do
-    {:ok, begin_tok, state} = TokenAdapter.next(state)
+  defp parse_interpolation(state, cursor, kind, log) do
+    {:ok, begin_tok, state, cursor} = TokenAdapter.next(state, cursor)
     open_meta = TokenAdapter.token_meta(begin_tok)
 
     # Check for empty interpolation #{} first
-    case TokenAdapter.peek(state) do
-      {:ok, tok, _} ->
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, tok, _, _} ->
         case TokenAdapter.kind(tok) do
           :end_interpolation ->
             # Empty interpolation - use empty block
-            {:ok, _end, state} = TokenAdapter.next(state)
+            {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = TokenAdapter.token_meta(tok)
             empty_block = {:__block__, [], []}
             interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
-            {:ok, interp_ast, state, log}
+            {:ok, interp_ast, state, cursor, log}
 
           k when k in [:eol, :";"] ->
             # Interpolation starting with separator (e.g., #{;})
             # In Elixir grammar: grammar -> eoe : {'__block__', meta_from_token('$1'), []}.
-            {:ok, sep_tok, state} = TokenAdapter.next(state)
+            {:ok, sep_tok, state, cursor} = TokenAdapter.next(state, cursor)
             sep_meta = TokenAdapter.token_meta(sep_tok)
             # Skip any additional EOE
             alias ToxicParser.Grammar.EOE
-            state = EOE.skip(state)
+            {state, cursor} = EOE.skip(state, cursor)
 
-            case TokenAdapter.peek(state) do
-              {:ok, end_tok, _} ->
+            case TokenAdapter.peek(state, cursor) do
+              {:ok, end_tok, _, _} ->
                 case TokenAdapter.kind(end_tok) do
                   :end_interpolation ->
                     # Just EOE before close - empty block with EOE metadata
-                    {:ok, _end, state} = TokenAdapter.next(state)
+                    {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                     close_meta = TokenAdapter.token_meta(end_tok)
                     empty_block = {:__block__, sep_meta, []}
                     interp_ast = build_interpolation_ast(empty_block, open_meta, close_meta, kind)
-                    {:ok, interp_ast, state, log}
+                    {:ok, interp_ast, state, cursor, log}
 
                   _ ->
                     # EOE followed by content - parse the content as expr_list
-                    case Expressions.expr_list(state, Context.expr(), log) do
-                      {:ok, expr, state, log} ->
-                        case TokenAdapter.peek(state) do
-                          {:ok, interp_end_tok, _} ->
+                    case Expressions.expr_list(state, cursor, Context.expr(), log) do
+                      {:ok, expr, state, cursor, log} ->
+                        case TokenAdapter.peek(state, cursor) do
+                          {:ok, interp_end_tok, _, _} ->
                             if TokenAdapter.kind(interp_end_tok) == :end_interpolation do
-                              {:ok, _end, state} = TokenAdapter.next(state)
+                              {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                               close_meta = TokenAdapter.token_meta(interp_end_tok)
 
                               interp_ast =
                                 build_interpolation_ast(expr, open_meta, close_meta, kind)
 
-                              {:ok, interp_ast, state, log}
+                              {:ok, interp_ast, state, cursor, log}
                             else
                               {:error,
                                {:expected_end_interpolation, TokenAdapter.kind(interp_end_tok)},
-                               state, log}
+                               state, cursor, log}
                             end
 
-                          {:eof, state} ->
-                            {:error, :unexpected_eof, state, log}
+                          {:eof, state, cursor} ->
+                            {:error, :unexpected_eof, state, cursor, log}
 
-                          {:error, diag, state} ->
-                            {:error, diag, state, log}
+                          {:error, diag, state, cursor} ->
+                            {:error, diag, state, cursor, log}
                         end
 
-                      {:error, reason, state, log} ->
-                        {:error, reason, state, log}
+                      {:error, reason, state, cursor, log} ->
+                        {:error, reason, state, cursor, log}
                     end
                 end
 
-              {:eof, state} ->
-                {:error, :unexpected_eof, state, log}
+              {:eof, state, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
 
-              {:error, diag, state} ->
-                {:error, diag, state, log}
+              {:error, diag, state, cursor} ->
+                {:error, diag, state, cursor, log}
             end
 
           _ ->
             # Parse the expression inside interpolation
             # Use :unmatched context so do-blocks are consumed by inner calls
             # (e.g., "foo#{K.'a' do :ok end}bar" - the do belongs to the 'a' call)
-            case Expressions.expr_list(state, Context.expr(), log) do
-              {:ok, expr, state, log} ->
+            case Expressions.expr_list(state, cursor, Context.expr(), log) do
+              {:ok, expr, state, cursor, log} ->
                 # Consume end_interpolation
-                case TokenAdapter.peek(state) do
-                  {:ok, end_tok, _} ->
+                case TokenAdapter.peek(state, cursor) do
+                  {:ok, end_tok, _, _} ->
                     if TokenAdapter.kind(end_tok) == :end_interpolation do
-                      {:ok, _end, state} = TokenAdapter.next(state)
+                      {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                       close_meta = TokenAdapter.token_meta(end_tok)
 
                       # Build interpolation AST based on kind
                       interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
-                      {:ok, interp_ast, state, log}
+                      {:ok, interp_ast, state, cursor, log}
                     else
                       {:error, {:expected_end_interpolation, TokenAdapter.kind(end_tok)}, state,
-                       log}
+                       cursor, log}
                     end
 
-                  {:eof, state} ->
-                    {:error, :unexpected_eof, state, log}
+                  {:eof, state, cursor} ->
+                    {:error, :unexpected_eof, state, cursor, log}
 
-                  {:error, diag, state} ->
-                    {:error, diag, state, log}
+                  {:error, diag, state, cursor} ->
+                    {:error, diag, state, cursor, log}
                 end
 
-              {:error, reason, state, log} ->
-                {:error, reason, state, log}
+              {:error, reason, state, cursor, log} ->
+                {:error, reason, state, cursor, log}
             end
         end
 
-      {:eof, state} ->
-        {:error, :unexpected_eof, state, log}
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state} ->
-        {:error, diag, state, log}
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -432,6 +434,7 @@ defmodule ToxicParser.Grammar.Strings do
          delimiter,
          _end_tok,
          state,
+         cursor,
          ctx,
          log,
          min_bp,
@@ -453,7 +456,7 @@ defmodule ToxicParser.Grammar.Strings do
             {{:., start_meta, [List, :to_charlist]}, meta_with_delimiter, [args]}
         end
 
-      Pratt.led(ast, state, log, min_bp, ctx, opts)
+      Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
     else
       content = merge_fragments(parts)
 
@@ -466,13 +469,13 @@ defmodule ToxicParser.Grammar.Strings do
       # Include delimiter in metadata for literal_encoder (token_metadata compatibility)
       meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
       ast = Builder.Helpers.literal(value, meta_with_delimiter, state)
-      Pratt.led(ast, state, log, min_bp, ctx, opts)
+      Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
     end
   end
 
   # Build AST for heredocs
   # Note: For heredocs, parts are NOT unescaped yet (to allow proper line continuation handling)
-  defp build_heredoc_ast(parts, kind, start_meta, indentation, state, ctx, log, min_bp, opts) do
+  defp build_heredoc_ast(parts, kind, start_meta, indentation, state, cursor, ctx, log, min_bp, opts) do
     delimiter =
       case kind do
         :heredoc_binary -> ~s|"""|
@@ -495,10 +498,10 @@ defmodule ToxicParser.Grammar.Strings do
                 {{:., start_meta, [List, :to_charlist]}, meta_with_indent, [args]}
             end
 
-          Pratt.led(ast, state, log, min_bp, ctx, opts)
+          Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
 
         {:error, reason} ->
-          {:error, {:unescape_error, reason, start_meta}, state, log}
+          {:error, {:unescape_error, reason, start_meta}, state, cursor, log}
       end
     else
       # Unescape and merge fragments
@@ -512,10 +515,10 @@ defmodule ToxicParser.Grammar.Strings do
 
           # Include delimiter and indentation in metadata for literal_encoder
           ast = Builder.Helpers.literal(value, meta_with_indent, state)
-          Pratt.led(ast, state, log, min_bp, ctx, opts)
+          Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
 
         {:error, reason} ->
-          {:error, {:unescape_error, reason, start_meta}, state, log}
+          {:error, {:unescape_error, reason, start_meta}, state, cursor, log}
       end
     end
   end
