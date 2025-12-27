@@ -1086,6 +1086,12 @@ defmodule ToxicParser.Grammar.Stabs do
         tok_kind = TokenAdapter.kind(tok)
 
         cond do
+          top? and tok_kind == :stab_op and boundary? ->
+            # If we've already hit an EOE boundary, `->` belongs to the next stab_expr,
+            # not the current item (which should be parsed as a plain expr).
+            {state2, cursor2} = TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
+            {:expr, state2, cursor2}
+
           top? and tok_kind == :stab_op ->
             {state2, cursor2} = TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
             {:clause, state2, cursor2}
