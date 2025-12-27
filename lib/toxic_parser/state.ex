@@ -20,7 +20,6 @@ defmodule ToxicParser.State do
         }
 
   @type t :: %__MODULE__{
-          cursor: Cursor.t(),
           diagnostics: [Error.t()],
           warnings: [ToxicParser.Warning.t()],
           mode: mode(),
@@ -36,8 +35,7 @@ defmodule ToxicParser.State do
           event_log: ToxicParser.EventLog.t()
         }
 
-  defstruct cursor: nil,
-            diagnostics: [],
+  defstruct diagnostics: [],
             warnings: [],
             mode: :strict,
             emit_events?: false,
@@ -54,7 +52,7 @@ defmodule ToxicParser.State do
   @doc """
   Builds an initial state from source with parser options.
   """
-  @spec new(binary() | charlist(), keyword()) :: t()
+  @spec new(binary() | charlist(), keyword()) :: {t(), Cursor.t()}
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
     mode = Keyword.get(opts, :mode, :strict)
     source_bin = if is_binary(source), do: source, else: List.to_string(source)
@@ -73,8 +71,7 @@ defmodule ToxicParser.State do
 
     ctx = Keyword.get(opts, :expression_context, Context.expr())
 
-    %__MODULE__{
-      cursor: cursor,
+    {%__MODULE__{
       mode: mode,
       emit_events?: emit_events?,
       opts: opts,
@@ -85,7 +82,7 @@ defmodule ToxicParser.State do
       max_peek: max_peek,
       source: source_bin,
       event_log: EventLog.new()
-    }
+    }, cursor}
   end
 
   @doc """

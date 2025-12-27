@@ -91,19 +91,19 @@ defmodule ToxicParser.Cursor do
     end
   end
 
-  @spec peek_n(t(), pos_integer()) ::
-          {:ok, [token()], t()} | {:eof, [token()], t()} | {:error, term(), [token()], t()}
-  def peek_n({_rest, _driver, _front, _back, max, _size} = _cursor, n) when n > max do
-    raise ArgumentError, "peek_n/2 capped at #{max}"
-  end
+  # @spec peek_n(t(), pos_integer()) ::
+  #         {:ok, [token()], t()} | {:eof, [token()], t()} | {:error, term(), [token()], t()}
+  # def peek_n({_rest, _driver, _front, _back, max, _size} = _cursor, n) when n > max do
+  #   raise ArgumentError, "peek_n/2 capped at #{max}"
+  # end
 
-  def peek_n(cursor, n) when is_integer(n) and n > 0 do
-    case ensure_lookahead(cursor, n) do
-      {:ok, cursor} -> {:ok, take_queue(cursor, n), cursor}
-      {:eof, cursor} -> {:eof, take_queue(cursor, n), cursor}
-      {:error, reason, cursor} -> {:error, reason, take_queue(cursor, n), cursor}
-    end
-  end
+  # def peek_n(cursor, n) when is_integer(n) and n > 0 do
+  #   case ensure_lookahead(cursor, n) do
+  #     {:ok, cursor} -> {:ok, take_queue(cursor, n), cursor}
+  #     {:eof, cursor} -> {:eof, take_queue(cursor, n), cursor}
+  #     {:error, reason, cursor} -> {:error, reason, take_queue(cursor, n), cursor}
+  #   end
+  # end
 
   @doc """
   Push a token back to the front of the lookahead.
@@ -140,17 +140,16 @@ defmodule ToxicParser.Cursor do
   def rewind(_cursor, mark), do: mark
 
   @doc "Pay-for-play terminator snapshot (does not run on every token)."
-  @spec current_terminators(t()) :: {[term()], t()}
-  def current_terminators({rest, driver, front, back, max_peek, size}) do
-    terms = Toxic.Driver.current_terminators(driver)
-    {terms, {rest, driver, front, back, max_peek, size}}
+  @spec current_terminators(t()) :: [term()]
+  def current_terminators({_rest, driver, _front, _back, _max_peek, _size}) do
+    Toxic.Driver.current_terminators(driver)
   end
 
   @doc "Get current position (line, column) from the driver."
-  @spec position(t()) :: {{pos_integer(), pos_integer()}, t()}
-  def position({rest, driver, front, back, max_peek, size}) do
+  @spec position(t()) :: {pos_integer(), pos_integer()}
+  def position({_rest, driver, _front, _back, _max_peek, _size}) do
     # Driver has line/column fields directly
-    {{driver.line, driver.column}, {rest, driver, front, back, max_peek, size}}
+    {driver.line, driver.column}
   end
 
   @doc "Check if cursor is at EOF (no more tokens in lookahead or source)."

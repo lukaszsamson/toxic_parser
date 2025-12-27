@@ -31,9 +31,9 @@ defmodule ToxicParser.TokenAdapter do
   @type token :: raw_token()
 
   @type result ::
-          {:ok, token(), State.t()}
-          | {:eof, State.t()}
-          | {:error, Error.t(), State.t()}
+          {:ok, token(), State.t(), Cursor.t()}
+          | {:eof, State.t(), Cursor.t()}
+          | {:error, Error.t(), State.t(), Cursor.t()}
 
   # Only update terminators when we encounter tokens that change the terminator stack.
   # This is a critical performance optimization - terminators only change on delimiters.
@@ -188,17 +188,17 @@ defmodule ToxicParser.TokenAdapter do
   @doc """
   Initializes parser state and stream.
   """
-  @spec new(binary() | charlist(), keyword()) :: State.t()
+  @spec new(binary() | charlist(), keyword()) :: {State.t(), Cursor.t()}
   def new(source, opts \\ []), do: State.new(source, opts)
 
   @doc """
   Returns the current terminator snapshot without consuming tokens.
   Pay-for-play: only called when needed, not on every token.
   """
-  @spec current_terminators(State.t()) :: {[term()], State.t()}
-  def current_terminators(%State{cursor: cursor} = state) do
-    {terms, cursor} = Cursor.current_terminators(cursor)
-    {terms, %{state | cursor: cursor, terminators: terms}}
+  @spec current_terminators(State.t(), Cursor.t()) :: {[term()], State.t()}
+  def current_terminators(%State{} = state, cursor) do
+    terms = Cursor.current_terminators(cursor)
+    {terms, %{state | terminators: terms}}
   end
 
   # ============================================================================
@@ -210,29 +210,26 @@ defmodule ToxicParser.TokenAdapter do
 
   Returns raw tokens from the lexer unchanged.
   """
-  @spec next(State.t()) :: result()
-  def next(%State{} = state) do
+  @spec next(State.t(), Cursor.t()) :: result()
+  def next(%State{} = state, cursor) do
     with {:ok, state} <- consume_fuel(state) do
-      fetch_next(state)
+      fetch_next(state, cursor)
     end
   end
 
   @doc """
   Peek the next token without consuming it.
   """
-  @spec peek(State.t()) :: result()
-  def peek(%State{cursor: cursor} = state) do
+  @spec peek(State.t(), Cursor.t()) :: result()
+  def peek(%State{} = state, cursor) do
     case Cursor.peek(cursor) do
-      {:ok, raw, ^cursor} ->
-        {:ok, raw, state}
-
       {:ok, raw, cursor} ->
         # Return raw token unchanged.
         # Per LEXER_REFACTOR_V3.md item 6: do NOT update terminators on peek.
-        {:ok, raw, %{state | cursor: cursor}}
+        {:ok, raw, state, cursor}
 
       {:eof, cursor} ->
-        {:eof, %{state | cursor: cursor}}
+        {:eof, state, cursor}
 
       {:error, reason, cursor} ->
         handle_error(reason, cursor, state)
@@ -242,9 +239,9 @@ defmodule ToxicParser.TokenAdapter do
   @doc """
   Push a previously consumed token back into the lookahead buffer.
   """
-  @spec pushback(State.t(), token()) :: State.t()
-  def pushback(%State{cursor: cursor} = state, token) when is_tuple(token) do
-    %{state | cursor: Cursor.pushback(cursor, token)}
+  @spec pushback(State.t(), Cursor.t(), token()) :: {State.t(), Cursor.t()}
+  def pushback(%State{} = state, cursor, token) when is_tuple(token) do
+    {state, Cursor.pushback(cursor, token)}
   end
 
   @doc """
@@ -252,41 +249,41 @@ defmodule ToxicParser.TokenAdapter do
 
   Tokens must be in source order (the first token in the list will be the next token returned).
   """
-  @spec pushback_many(State.t(), [token()]) :: State.t()
-  def pushback_many(%State{cursor: cursor} = state, tokens) when is_list(tokens) do
-    %{state | cursor: Cursor.pushback_many(cursor, tokens)}
+  @spec pushback_many(State.t(), Cursor.t(), [token()]) :: {State.t(), Cursor.t()}
+  def pushback_many(%State{} = state, cursor, tokens) when is_list(tokens) do
+    {state, Cursor.pushback_many(cursor, tokens)}
   end
 
-  @doc """
-  Peek at the next N tokens (bounded by `state.max_peek`).
-  """
-  @spec peek_n(State.t(), pos_integer()) ::
-          {:ok, [token()], State.t()}
-          | {:eof, [token()], State.t()}
-          | {:error, Error.t(), [token()], State.t()}
-  def peek_n(%State{max_peek: max} = _state, n) when n > max do
-    raise ArgumentError, "peek_n/2 capped at #{max}"
-  end
+  # @doc """
+  # Peek at the next N tokens (bounded by `state.max_peek`).
+  # """
+  # @spec peek_n(State.t(), pos_integer()) ::
+  #         {:ok, [token()], State.t()}
+  #         | {:eof, [token()], State.t()}
+  #         | {:error, Error.t(), [token()], State.t()}
+  # def peek_n(%State{max_peek: max} = _state, n) when n > max do
+  #   raise ArgumentError, "peek_n/2 capped at #{max}"
+  # end
 
-  def peek_n(%State{cursor: cursor} = state, n) do
-    case Cursor.peek_n(cursor, n) do
-      {:ok, tokens, cursor} ->
-        state = %{state | cursor: cursor}
-        {tokens, state} = process_tokens_for_peek(tokens, state)
-        {:ok, tokens, state}
+  # def peek_n(%State{cursor: cursor} = state, n) do
+  #   case Cursor.peek_n(cursor, n) do
+  #     {:ok, tokens, cursor} ->
+  #       state = %{state | cursor: cursor}
+  #       {tokens, state} = process_tokens_for_peek(tokens, state)
+  #       {:ok, tokens, state}
 
-      {:eof, tokens, cursor} ->
-        state = %{state | cursor: cursor}
-        {tokens, state} = process_tokens_for_peek(tokens, state)
-        {:eof, tokens, state}
+  #     {:eof, tokens, cursor} ->
+  #       state = %{state | cursor: cursor}
+  #       {tokens, state} = process_tokens_for_peek(tokens, state)
+  #       {:eof, tokens, state}
 
-      {:error, reason, tokens, cursor} ->
-        state = %{state | cursor: cursor}
-        {tokens, state} = process_tokens_for_peek(tokens, state)
-        diagnostic = make_diagnostic(reason, state)
-        {:error, diagnostic, tokens, %{state | diagnostics: [diagnostic | state.diagnostics]}}
-    end
-  end
+  #     {:error, reason, tokens, cursor} ->
+  #       state = %{state | cursor: cursor}
+  #       {tokens, state} = process_tokens_for_peek(tokens, state)
+  #       diagnostic = make_diagnostic(reason, state)
+  #       {:error, diagnostic, tokens, %{state | diagnostics: [diagnostic | state.diagnostics]}}
+  #   end
+  # end
 
   # ============================================================================
   # Checkpointing
@@ -296,13 +293,13 @@ defmodule ToxicParser.TokenAdapter do
   Create a checkpoint for backtracking.
   Saves cursor state plus diagnostics/event_log for full rollback.
   """
-  @spec checkpoint(State.t()) :: {reference(), State.t()}
-  def checkpoint(%State{} = state) do
+  @spec checkpoint(State.t(), Cursor.t()) :: {reference(), State.t()}
+  def checkpoint(%State{} = state, cursor) do
     ref = make_ref()
 
     saved = %{
       ref: ref,
-      cursor: Cursor.mark(state.cursor),
+      cursor: Cursor.mark(cursor),
       diagnostics: state.diagnostics,
       terminators: state.terminators,
       event_log: state.event_log
@@ -314,18 +311,17 @@ defmodule ToxicParser.TokenAdapter do
   @doc """
   Rewind to a previously created checkpoint.
   """
-  @spec rewind(State.t(), reference()) :: State.t()
-  def rewind(%State{} = state, ref) do
+  @spec rewind(State.t(), Cursor.t(), reference()) :: {State.t(), Cursor.t()}
+  def rewind(%State{} = state, cursor, ref) do
     checkpoint = Map.fetch!(state.checkpoints, ref)
 
-    %{
+    {%{
       state
-      | cursor: Cursor.rewind(state.cursor, checkpoint.cursor),
-        diagnostics: checkpoint.diagnostics,
+      | diagnostics: checkpoint.diagnostics,
         terminators: checkpoint.terminators,
         event_log: checkpoint.event_log,
         checkpoints: Map.delete(state.checkpoints, ref)
-    }
+    }, Cursor.rewind(cursor, checkpoint.cursor)}
   end
 
   @doc """
@@ -353,10 +349,9 @@ defmodule ToxicParser.TokenAdapter do
 
   defguard is_delimiter(token) when elem(token, 0) in @delimiter_tokens
 
-  defp fetch_next(%State{cursor: cursor} = state) do
+  defp fetch_next(%State{} = state, cursor) do
     case Cursor.next(cursor) do
       {:ok, raw, cursor} ->
-        state = %{state | cursor: cursor}
         # Extract diagnostics from error tokens
         state =
           case raw do
@@ -372,13 +367,13 @@ defmodule ToxicParser.TokenAdapter do
         # - emit_events is enabled (for event metadata)
         # NOT for token_metadata - terminators are only needed for diagnostics/events.
         if is_delimiter(raw) and (state.mode == :tolerant or state.emit_events?) do
-          {:ok, raw, update_terminators(state)}
+          {:ok, raw, update_terminators(state), cursor}
         else
-          {:ok, raw, state}
+          {:ok, raw, state, cursor}
         end
 
       {:eof, cursor} ->
-        {:eof, %{state | cursor: cursor}}
+        {:eof, state, cursor}
 
       {:error, reason, cursor} ->
         handle_error(reason, cursor, state)
@@ -387,15 +382,15 @@ defmodule ToxicParser.TokenAdapter do
 
   defp handle_error(reason, cursor, state) do
     {terminators, cursor} = Cursor.current_terminators(cursor)
-    state = %{state | cursor: cursor, terminators: terminators}
+    state = %{state | terminators: terminators}
 
     diagnostic = make_diagnostic(reason, state)
 
     if state.mode == :tolerant do
-      {token, state} = synthetic_error_token(state, diagnostic)
-      {:ok, token, state}
+      {token, state} = synthetic_error_token(state, cursor, diagnostic)
+      {:ok, token, state, cursor}
     else
-      {:error, diagnostic, %{state | diagnostics: [diagnostic | state.diagnostics]}}
+      {:error, diagnostic, %{state | diagnostics: [diagnostic | state.diagnostics]}, cursor}
     end
   end
 
@@ -412,9 +407,9 @@ defmodule ToxicParser.TokenAdapter do
     %{state | diagnostics: Enum.reverse(diagnostics) ++ state.diagnostics}
   end
 
-  defp update_terminators(state) do
-    {terms, cursor} = Cursor.current_terminators(state.cursor)
-    %{state | cursor: cursor, terminators: terms}
+  defp update_terminators(state, cursor) do
+    {terms, cursor} = Cursor.current_terminators(cursor)
+    %{state | terminators: terms}
   end
 
   # Process tokens for peek_n - just extract error diagnostics
@@ -431,8 +426,8 @@ defmodule ToxicParser.TokenAdapter do
 
   defp maybe_extract_error_diagnostic(_raw, state), do: state
 
-  defp synthetic_error_token(state, diagnostic) do
-    {{line, col}, cursor} = Cursor.position(state.cursor)
+  defp synthetic_error_token(state, cursor, diagnostic) do
+    {line, col} = Cursor.position(cursor)
 
     meta = {
       {line, col},
@@ -444,8 +439,7 @@ defmodule ToxicParser.TokenAdapter do
 
     state = %{
       state
-      | cursor: cursor,
-        diagnostics: [diagnostic | state.diagnostics]
+      | diagnostics: [diagnostic | state.diagnostics]
     }
 
     {token, state}
