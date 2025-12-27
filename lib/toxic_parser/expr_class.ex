@@ -62,6 +62,7 @@ defmodule ToxicParser.ExprClass do
     # carry `:delimiter` metadata and must be treated as matched.
     cond do
       Keyword.has_key?(meta, :do) -> :unmatched
+      Keyword.has_key?(meta, :parens) -> :matched
       Keyword.has_key?(meta, :delimiter) -> :matched
       Keyword.has_key?(meta, :closing) -> :matched
       length(args) > 1 -> :no_parens

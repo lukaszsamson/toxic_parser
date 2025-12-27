@@ -3688,6 +3688,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 163" do
       assert_conforms("%//...{}")
     end
+
+    test "repro 164" do
+      assert_conforms("alpha spam, (\n(qux).\nspam delta, beta)\n")
+    end
   end
 
   # =============================================================================
