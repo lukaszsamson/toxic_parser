@@ -2927,6 +2927,7 @@ defmodule ToxicParser.Generator do
           end
 
         {tok, pos} = materialize_token(raw, pos)
+        tok = normalize_token(tok)
         acc = if is_nil(tok), do: acc, else: [tok | acc]
         {acc, pos, raw}
       end)
@@ -2935,6 +2936,11 @@ defmodule ToxicParser.Generator do
   end
 
   defp coalesce_eols(raw_tokens), do: do_coalesce_eols(raw_tokens, [])
+
+  defp normalize_token(nil), do: nil
+  defp normalize_token({kind, meta}), do: {kind, meta, nil}
+  defp normalize_token({kind, meta, value}), do: {kind, meta, value}
+  defp normalize_token({kind, meta, v1, v2}), do: {kind, meta, {v1, v2}}
 
   defp do_coalesce_eols([{:eol, a}, {:eol, b} | rest], acc),
     do: do_coalesce_eols([{:eol, a + b} | rest], acc)

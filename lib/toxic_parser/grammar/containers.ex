@@ -26,22 +26,22 @@ defmodule ToxicParser.Grammar.Containers do
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:"(", _meta}, _, cursor} ->
+      {:ok, {:"(", _meta, _value}, _, cursor} ->
         parse_paren(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:"[", _meta}, _, cursor} ->
+      {:ok, {:"[", _meta, _value}, _, cursor} ->
         parse_list(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:"{", _meta}, _, cursor} ->
+      {:ok, {:"{", _meta, _value}, _, cursor} ->
         parse_tuple(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:%{}, _meta}, _, cursor} ->
+      {:ok, {:%{}, _meta, _value}, _, cursor} ->
         Maps.parse_map(state, cursor, ctx, log, min_bp)
 
-      {:ok, {:%, _meta}, _, cursor} ->
+      {:ok, {:%, _meta, _value}, _, cursor} ->
         Maps.parse_map(state, cursor, ctx, log, min_bp)
 
-      {:ok, {:"<<", _meta}, _, cursor} ->
+      {:ok, {:"<<", _meta, _value}, _, cursor} ->
         Bitstrings.parse(state, cursor, ctx, log, min_bp)
 
       {:eof, state, cursor} ->
@@ -62,13 +62,13 @@ defmodule ToxicParser.Grammar.Containers do
   @spec parse_container_base(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_container_base(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:"[", _meta}, _, cursor} ->
+      {:ok, {:"[", _meta, _value}, _, cursor} ->
         parse_list_base(state, cursor, ctx, log)
 
-      {:ok, {:"{", _meta}, _, cursor} ->
+      {:ok, {:"{", _meta, _value}, _, cursor} ->
         parse_tuple_base(state, cursor, ctx, log)
 
-      {:ok, {:"<<", _meta}, _, cursor} ->
+      {:ok, {:"<<", _meta, _value}, _, cursor} ->
         Bitstrings.parse_base(state, cursor, ctx, log)
 
       {:eof, state, cursor} ->
@@ -131,7 +131,7 @@ defmodule ToxicParser.Grammar.Containers do
     case TokenAdapter.peek(state, cursor) do
       # Empty parens: () -> {:__block__, [parens: ...], []}
       # NOTE: parens: metadata doesn't include newlines (only line, column, closing)
-      {:ok, {:")", _close_meta} = close_tok, _, cursor} ->
+      {:ok, {:")", _close_meta, _value} = close_tok, _, cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
         close_meta_kw = TokenAdapter.token_meta(close_tok)
 
@@ -161,11 +161,11 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, count}
         else
           case tok do
-            {:eol, {_, _, n}} when is_integer(n) ->
+            {:eol, {_, _, n}, _value} when is_integer(n) ->
               {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
               skip_eoe_not_semicolon_with_count(state, cursor, count + n)
 
-            {:eol, _meta} ->
+            {:eol, _meta, _value} ->
               {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
               skip_eoe_not_semicolon_with_count(state, cursor, count)
 
@@ -179,7 +179,7 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp semicolon?({:";", _meta}), do: true
+  defp semicolon?({:";", _meta, _value}), do: true
   defp semicolon?(_), do: false
 
   defp parse_list(state, cursor, ctx, log, min_bp, opts) do
@@ -208,11 +208,11 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, {:"]", _meta}, _, cursor} ->
+            {:ok, {:"]", _meta, _value}, _, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :"]", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :"]", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
@@ -244,7 +244,7 @@ defmodule ToxicParser.Grammar.Containers do
              skip_eoe_initial?: false
            ) do
       case TokenAdapter.next(state, cursor) do
-        {:ok, {:"]", _meta} = close_tok, state, cursor} ->
+        {:ok, {:"]", _meta, _value} = close_tok, state, cursor} ->
           close_meta = TokenAdapter.token_meta(close_tok)
 
           # Build list metadata with closing location and newlines (for token_metadata compatibility)
@@ -254,8 +254,8 @@ defmodule ToxicParser.Grammar.Containers do
           encoded_list = Builder.Helpers.literal(list_ast, list_meta, state)
           {:ok, encoded_list, state, cursor, log}
 
-        {:ok, tok, state, cursor} ->
-          {:error, {:expected, :"]", got: TokenAdapter.kind(tok)}, state, cursor, log}
+        {:ok, {kind, _meta, _value}, state, cursor} ->
+          {:error, {:expected, :"]", got: kind}, state, cursor, log}
 
         {:eof, state, cursor} ->
           {:error, :unexpected_eof, state, cursor, log}
@@ -330,11 +330,11 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, {:"}", _meta}, _, cursor} ->
+            {:ok, {:"}", _meta, _value}, _, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
@@ -372,12 +372,12 @@ defmodule ToxicParser.Grammar.Containers do
 
         _ ->
           case TokenAdapter.next(state, cursor) do
-            {:ok, {:"}", _meta} = close_tok, state, cursor} ->
+            {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
               close_meta = TokenAdapter.token_meta(close_tok)
               {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}

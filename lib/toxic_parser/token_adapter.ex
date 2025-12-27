@@ -23,9 +23,7 @@ defmodule ToxicParser.TokenAdapter do
            when is_tuple(token) and elem(token, 0) == expected_kind
 
   # Raw token types from Toxic lexer:
-  # - 2-tuple: {kind, meta} - punctuation, keywords
-  # - 3-tuple: {kind, meta, value} - literals, operators, identifiers
-  # - 4-tuple: {kind, meta, v1, v2} - special tokens like "not in"
+  # - 3-tuple: {kind, meta, value} - punctuation, keywords, literals, operators, identifiers
 
   @type raw_token :: tuple()
   @type token :: raw_token()
@@ -101,42 +99,38 @@ defmodule ToxicParser.TokenAdapter do
 
   @compile {:inline, kind: 1}
 
-  @doc "Extract value from a raw token. Returns nil for 2-tuple tokens."
+  @doc "Extract value from a raw token."
   @spec value(token()) :: term()
-  def value({_kind, _meta}), do: nil
   def value({_kind, _meta, value}), do: value
-  def value({_kind, _meta, v1, _v2}), do: v1
+  def value(_), do: nil
 
-  @doc "Extract second value from a 4-tuple token. Returns nil otherwise."
+  @doc "Extract second value from a tuple payload. Returns nil otherwise."
   @spec value2(token()) :: term()
-  def value2({_kind, _meta, _v1, v2}), do: v2
+  def value2({_kind, _meta, {_v1, v2}}), do: v2
   def value2(_), do: nil
 
   @doc "Extract meta from a raw token"
   @spec meta(token()) :: tuple()
-  def meta({_kind, meta}), do: meta
   def meta({_kind, meta, _value}), do: meta
-  def meta({_kind, meta, _v1, _v2}), do: meta
 
   @doc "Extract start line from token"
   @spec line(token()) :: pos_integer()
-  def line(token), do: token |> meta() |> elem(0) |> elem(0)
+  def line({_kind, {{line, _}, _, _}, _value}), do: line
 
   @doc "Extract start column from token"
   @spec column(token()) :: pos_integer()
-  def column(token), do: token |> meta() |> elem(0) |> elem(1)
+  def column({_kind, {{_, column}, _, _}, _value}), do: column
 
   @doc "Extract newline count from token (for :eol, :\";\", operators)"
   @spec newlines(token()) :: non_neg_integer()
-  def newlines({kind, {_, _, count}}) when kind in [:eol, :";", :","] and is_integer(count),
+  def newlines({kind, {_, _, count}, _value})
+      when kind in [:eol, :";", :","] and is_integer(count),
     do: count
 
   # Literals encode parsed values in extra, not newline counts
   def newlines({kind, _meta, _value}) when kind in [:int, :flt, :char], do: 0
-  # 3-tuple tokens with newline count in extra
+  # 3-tuple tokens with newline count in meta
   def newlines({_kind, {_, _, count}, _value}) when is_integer(count), do: count
-  # 4-tuple tokens with newline count in extra
-  def newlines({_kind, {_, _, count}, _v1, _v2}) when is_integer(count), do: count
   def newlines(_), do: 0
 
   @doc """
@@ -144,8 +138,8 @@ defmodule ToxicParser.TokenAdapter do
   This is the common AST metadata format.
   """
   @spec token_meta(token()) :: keyword()
-  def token_meta(token) do
-    [line: line(token), column: column(token)]
+  def token_meta({_, {{line, column}, _, _}, _}) do
+    [line: line, column: column]
   end
 
   @doc """
@@ -171,14 +165,14 @@ defmodule ToxicParser.TokenAdapter do
 
   defp synthesized?({{sl, sc}, {el, ec}, _extra}), do: sl == el and sc == ec
 
-  defp delimiter({token, _meta}) when token in [:"(", :")"], do: {:paren, {"(", ")"}}
-  defp delimiter({token, _meta}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
-  defp delimiter({token, _meta}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
-  defp delimiter({token, _meta}) when token in [:"<<", :">>"], do: {:bitstring, {"<<", ">>"}}
+  defp delimiter({token, _meta, _value}) when token in [:"(", :")"], do: {:paren, {"(", ")"}}
+  defp delimiter({token, _meta, _value}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
+  defp delimiter({token, _meta, _value}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
+  defp delimiter({token, _meta, _value}) when token in [:"<<", :">>"], do: {:bitstring, {"<<", ">>"}}
   defp delimiter(_), do: nil
 
-  defp delimiter_role({token, _meta}) when token in [:"(", :"[", :"{", :"<<"], do: :open
-  defp delimiter_role({token, _meta}) when token in [:")", :"]", :"}", :">>"], do: :close
+  defp delimiter_role({token, _meta, _value}) when token in [:"(", :"[", :"{", :"<<"], do: :open
+  defp delimiter_role({token, _meta, _value}) when token in [:")", :"]", :"}", :">>"], do: :close
   defp delimiter_role(_), do: :none
 
   # ============================================================================

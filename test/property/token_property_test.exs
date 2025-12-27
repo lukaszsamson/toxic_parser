@@ -132,11 +132,11 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:int, _meta, chars}), do: {:int, chars}
   defp normalize_token({:flt, _meta, chars}), do: {:flt, chars}
   defp normalize_token({:char, _meta, cp}), do: {:char, cp}
-  defp normalize_token({:eol, meta}), do: {:eol, elem(meta, 2)}
+  defp normalize_token({:eol, meta, _value}), do: {:eol, elem(meta, 2)}
   defp normalize_token({:range_op, meta, op}), do: {:range_op, op, elem(meta, 2) || 0}
   defp normalize_token({:ellipsis_op, meta, op}), do: {:ellipsis_op, op, elem(meta, 2) || 0}
-  defp normalize_token({:%{}, _meta}), do: :map_op
-  defp normalize_token({:%, _meta}), do: :percent
+  defp normalize_token({:%{}, _meta, _value}), do: :map_op
+  defp normalize_token({:%, _meta, _value}), do: :percent
   defp normalize_token({:assoc_op, meta, op}), do: {:assoc_op, op, elem(meta, 2) || 0}
   defp normalize_token({:pipe_op, meta, op}), do: {:pipe_op, op, elem(meta, 2) || 0}
   defp normalize_token({:unary_op, _meta, op}), do: {:unary_op, op}
@@ -157,22 +157,22 @@ defmodule ToxicParser.TokenPropertyTest do
   defp normalize_token({:comp_op, meta, op}), do: {:comp_op, op, elem(meta, 2) || 0}
   defp normalize_token({:rel_op, meta, op}), do: {:rel_op, op, elem(meta, 2) || 0}
   defp normalize_token({:arrow_op, meta, op}), do: {:arrow_op, op, elem(meta, 2) || 0}
-  defp normalize_token({:"[", _meta}), do: :lbracket
-  defp normalize_token({:"]", meta}), do: {:rbracket, elem(meta, 2) || 0}
-  defp normalize_token({:"<<", _meta}), do: :open_bit
-  defp normalize_token({:">>", meta}), do: {:close_bit, elem(meta, 2) || 0}
-  defp normalize_token({:"{", _meta}), do: :lcurly
-  defp normalize_token({:"}", meta}), do: {:rcurly, elem(meta, 2) || 0}
-  defp normalize_token({:",", _meta}), do: :comma
-  defp normalize_token({:";", _meta}), do: {:";"}
-  defp normalize_token({:., _meta}), do: :dot
+  defp normalize_token({:"[", _meta, _value}), do: :lbracket
+  defp normalize_token({:"]", meta, _value}), do: {:rbracket, elem(meta, 2) || 0}
+  defp normalize_token({:"<<", _meta, _value}), do: :open_bit
+  defp normalize_token({:">>", meta, _value}), do: {:close_bit, elem(meta, 2) || 0}
+  defp normalize_token({:"{", _meta, _value}), do: :lcurly
+  defp normalize_token({:"}", meta, _value}), do: {:rcurly, elem(meta, 2) || 0}
+  defp normalize_token({:",", _meta, _value}), do: :comma
+  defp normalize_token({:";", _meta, _value}), do: {:";"}
+  defp normalize_token({:., _meta, _value}), do: :dot
   defp normalize_token({:dot_call_op, _meta, :.}), do: :dot_call_op
-  defp normalize_token({:"(", _meta}), do: {:"("}
-  defp normalize_token({:")", _meta}), do: {:")"}
-  defp normalize_token({:fn, _meta}), do: :fn
-  defp normalize_token({:end, _meta}), do: :end
-  defp normalize_token({true, _meta}), do: true
-  defp normalize_token({false, _meta}), do: false
-  defp normalize_token({nil, _meta}), do: nil
+  defp normalize_token({:"(", _meta, _value}), do: {:"("}
+  defp normalize_token({:")", _meta, _value}), do: {:")"}
+  defp normalize_token({:fn, _meta, _value}), do: :fn
+  defp normalize_token({:end, _meta, _value}), do: :end
+  defp normalize_token({true, _meta, _value}), do: true
+  defp normalize_token({false, _meta, _value}), do: false
+  defp normalize_token({nil, _meta, _value}), do: nil
   defp normalize_token(other), do: other
 end

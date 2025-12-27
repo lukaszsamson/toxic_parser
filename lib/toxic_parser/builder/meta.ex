@@ -11,11 +11,11 @@ defmodule ToxicParser.Builder.Meta do
     {state, cursor, trailing_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
     case TokenAdapter.next(state, cursor) do
-      {:ok, tok, state, cursor} ->
-        if TokenAdapter.kind(tok) == expected_kind do
+      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+        if kind == expected_kind do
           {:ok, TokenAdapter.token_meta(tok), trailing_newlines, state, cursor}
         else
-          {:error, {:expected, expected_kind, got: TokenAdapter.kind(tok)}, state, cursor}
+          {:error, {:expected, expected_kind, got: kind}, state, cursor}
         end
 
       {:eof, state, cursor} ->

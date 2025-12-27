@@ -9,10 +9,11 @@ defmodule ToxicParser.LayoutTest do
     {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
 
     # Raw eol token with newline count in third element
-    assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}}, state, cursor} = Layout.peek_sep(state, cursor)
+    assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}, _value}, state, cursor} =
+             Layout.peek_sep(state, cursor)
     {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
     # Raw semicolon token
-    assert {:ok, {:";", _meta}, _, _} = Layout.peek_sep(state, cursor)
+    assert {:ok, {:";", _meta, _value}, _, _} = Layout.peek_sep(state, cursor)
   end
 
   test "skip_newlines_only counts only newline tokens, stops at semicolon" do
@@ -22,6 +23,6 @@ defmodule ToxicParser.LayoutTest do
     {state, cursor, count} = Layout.skip_newlines_only(state, cursor, nil, 0)
     assert count == 2
     # Semicolon remains - not consumed by skip_newlines_only
-    assert {:ok, {:";", _meta}, _, _} = TokenAdapter.peek(state, cursor)
+    assert {:ok, {:";", _meta, _value}, _, _} = TokenAdapter.peek(state, cursor)
   end
 end

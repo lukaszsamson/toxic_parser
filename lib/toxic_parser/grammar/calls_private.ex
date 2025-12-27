@@ -24,7 +24,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
     {state, cursor} = EOE.skip(state, cursor)
 
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+      {:ok, {:")", _meta, _value}, state, cursor} ->
         {:ok, acc, state, cursor, log}
 
       {:ok, _tok, state, cursor} ->
@@ -47,11 +47,11 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         {state, cursor} = EOE.skip(state, cursor)
 
         case TokenAdapter.peek(state, cursor) do
-          {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+          {:ok, {:")", _meta, _value}, state, cursor} ->
             {:ok, [kw_list], state, cursor, log}
 
-          {:ok, tok, state, cursor} ->
-            {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, cursor, log}
+          {:ok, {kind, _meta, _value}, state, cursor} ->
+            {:error, {:expected, :")", got: kind}, state, cursor, log}
 
           {:eof, state, cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
@@ -78,7 +78,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         {state, cursor} = EOE.skip(state, cursor)
 
         case TokenAdapter.peek(state, cursor) do
-          {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+          {:ok, {:")", _meta, _value}, state, cursor} ->
             {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
           _ ->
@@ -99,15 +99,15 @@ defmodule ToxicParser.Grammar.CallsPrivate do
           {state, cursor} = EOE.skip(state, cursor)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, tok, state, cursor} when elem(tok, 0) == :")" ->
+            {:ok, {:")", _meta, _value}, state, cursor} ->
               {:ok, {:kw_call, kw_list}, state, cursor, log}
 
-            {:ok, comma_tok, state, cursor} when elem(comma_tok, 0) == :"," ->
+            {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
               {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :")", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :")", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}

@@ -28,7 +28,7 @@ defmodule ToxicParser.Grammar.Blocks do
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:fn, _meta} = tok, state, cursor} ->
+      {:ok, {:fn, _meta, _value} = tok, state, cursor} ->
         parse_fn(tok, state, cursor, ctx, log)
 
       {:eof, state, cursor} ->
@@ -51,19 +51,19 @@ defmodule ToxicParser.Grammar.Blocks do
     # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
     {state, cursor, newlines} =
       case TokenAdapter.peek(state, cursor) do
-        {:ok, {:eol, {_, _, n}}, _, cursor} when is_integer(n) ->
+        {:ok, {:eol, {_, _, n}, _value}, _, cursor} when is_integer(n) ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:eol, _meta}, _, cursor} ->
+        {:ok, {:eol, _meta, _value}, _, cursor} ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
-        {:ok, {:";", {_, _, n}}, _, cursor} when is_integer(n) ->
+        {:ok, {:";", {_, _, n}, _value}, _, cursor} when is_integer(n) ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:";", _meta}, _, cursor} ->
+        {:ok, {:";", _meta, _value}, _, cursor} ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
@@ -94,7 +94,7 @@ defmodule ToxicParser.Grammar.Blocks do
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
   def parse_do_block(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.next(state, cursor) do
-      {:ok, {:do, do_meta} = do_tok, state, cursor} ->
+      {:ok, {:do, do_meta, _value} = do_tok, state, cursor} ->
         log = enter_scope(log, :do_block, TokenAdapter.full_metadata(do_tok, state))
         do_location = meta_to_location(do_meta)
 
@@ -108,8 +108,8 @@ defmodule ToxicParser.Grammar.Blocks do
           {:ok, {block_meta, sections}, state, cursor, log}
         end
 
-      {:ok, token, state, cursor} ->
-        {:error, {:expected, :do, got: TokenAdapter.kind(token)}, state, cursor, log}
+      {:ok, {got_kind, _meta, _value}, state, cursor} ->
+        {:error, {:expected, :do, got: got_kind}, state, cursor, log}
 
       {:eof, state, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
@@ -125,11 +125,11 @@ defmodule ToxicParser.Grammar.Blocks do
 
   defp expect_kind_with_meta(state, cursor, kind, log) do
     case TokenAdapter.next(state, cursor) do
-      {:ok, {^kind, meta}, state, cursor} ->
+      {:ok, {^kind, meta, _value}, state, cursor} ->
         {:ok, meta, state, cursor, log}
 
-      {:ok, token, state, cursor} ->
-        {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, cursor, log}
+      {:ok, {got_kind, _meta, _value}, state, cursor} ->
+        {:error, {:expected, kind, got: got_kind}, state, cursor, log}
 
       {:eof, state, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}

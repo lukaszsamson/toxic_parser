@@ -27,8 +27,8 @@ defmodule ToxicParser.Grammar.Strings do
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, _} ->
-        case TokenAdapter.kind(tok) do
+      {:ok, {kind, _meta, _value}, _, _} ->
+        case kind do
           kind when kind in @simple_string_start ->
             parse_simple_string(state, cursor, ctx, log, min_bp, opts)
 
@@ -55,9 +55,9 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Parse simple strings (not heredocs)
   defp parse_simple_string(state, cursor, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {start_tok_kind, _meta, _value} = start_tok, state, cursor} =
+      TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
-    start_tok_kind = TokenAdapter.kind(start_tok)
     kind = string_kind(start_tok_kind)
     target_ends = closing_for(start_tok_kind)
 
@@ -105,9 +105,9 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Parse heredocs with indentation handling
   defp parse_heredoc(state, cursor, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {start_tok_kind, _meta, _value} = start_tok, state, cursor} =
+      TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
-    start_tok_kind = TokenAdapter.kind(start_tok)
     kind = string_kind(start_tok_kind)
     target_ends = closing_for(start_tok_kind)
 
@@ -136,11 +136,9 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   defp parse_sigil(state, cursor, ctx, log, min_bp, opts) do
-    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {:sigil_start, _meta, {sigil, delimiter}} = start_tok, state, cursor} =
+      TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
-    # sigil_start is a 4-tuple: {:sigil_start, meta, sigil_atom, delimiter}
-    sigil = TokenAdapter.value(start_tok)
-    delimiter = TokenAdapter.value2(start_tok)
 
     with {:ok, parts, _actual_end, end_tok, state, cursor, log} <-
            collect_parts([], state, cursor, [:sigil_end], :sigil, log),
@@ -148,11 +146,13 @@ defmodule ToxicParser.Grammar.Strings do
       # Check for sigil_modifiers token
       {modifiers, state, cursor} =
         case TokenAdapter.peek(state, cursor) do
-          {:ok, tok, _, _} ->
-            case TokenAdapter.kind(tok) do
+          {:ok, {kind, _meta, _value}, _, _} ->
+            case kind do
               :sigil_modifiers ->
-                {:ok, mod_tok, state, cursor} = TokenAdapter.next(state, cursor)
-                {TokenAdapter.value(mod_tok), state, cursor}
+                {:ok, {:sigil_modifiers, _mod_meta, modifiers}, state, cursor} =
+                  TokenAdapter.next(state, cursor)
+
+                {modifiers, state, cursor}
 
               _ ->
                 {[], state, cursor}
@@ -197,10 +197,11 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Parse quoted atoms: :"foo", :"foo bar", :""
   defp parse_quoted_atom(state, cursor, ctx, kind, log, min_bp, opts) do
-    {:ok, start_tok, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {^kind, _meta, delimiter} = start_tok, state, cursor} =
+      TokenAdapter.next(state, cursor)
     start_meta = TokenAdapter.token_meta(start_tok)
     # Use delimiter from token value (39 = ', 34 = ")
-    delimiter = if TokenAdapter.value(start_tok) == 39, do: "'", else: "\""
+    delimiter = if delimiter == 39, do: "'", else: "\""
     meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
 
     end_token_kind =
@@ -248,16 +249,14 @@ defmodule ToxicParser.Grammar.Strings do
     should_unescape = kind not in [:sigil, :heredoc_binary, :heredoc_charlist]
 
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, _} ->
-        end_kind = TokenAdapter.kind(tok)
-
+      {:ok, {end_kind, _meta, _value} = tok, _, _} ->
         if end_kind in target_ends do
           {:ok, Enum.reverse(acc), end_kind, tok, state, cursor, log}
         else
           case end_kind do
             :string_fragment ->
-              {:ok, frag_tok, state, cursor} = TokenAdapter.next(state, cursor)
-              fragment = TokenAdapter.value(frag_tok)
+              {:ok, {:string_fragment, _frag_meta, fragment} = frag_tok, state, cursor} =
+                TokenAdapter.next(state, cursor)
 
               if should_unescape do
                 case safe_unescape(fragment) do
@@ -297,8 +296,8 @@ defmodule ToxicParser.Grammar.Strings do
 
     # Check for empty interpolation #{} first
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, _} ->
-        case TokenAdapter.kind(tok) do
+      {:ok, {peek_kind, _meta, _value} = tok, _, _} ->
+        case peek_kind do
           :end_interpolation ->
             # Empty interpolation - use empty block
             {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
@@ -317,8 +316,8 @@ defmodule ToxicParser.Grammar.Strings do
             {state, cursor} = EOE.skip(state, cursor)
 
             case TokenAdapter.peek(state, cursor) do
-              {:ok, end_tok, _, _} ->
-                case TokenAdapter.kind(end_tok) do
+              {:ok, {end_kind, _meta, _value} = end_tok, _, _} ->
+                case end_kind do
                   :end_interpolation ->
                     # Just EOE before close - empty block with EOE metadata
                     {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
@@ -332,8 +331,8 @@ defmodule ToxicParser.Grammar.Strings do
                     case Expressions.expr_list(state, cursor, Context.expr(), log) do
                       {:ok, expr, state, cursor, log} ->
                         case TokenAdapter.peek(state, cursor) do
-                          {:ok, interp_end_tok, _, _} ->
-                            if TokenAdapter.kind(interp_end_tok) == :end_interpolation do
+                          {:ok, {interp_end_kind, _meta, _value} = interp_end_tok, _, _} ->
+                            if interp_end_kind == :end_interpolation do
                               {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                               close_meta = TokenAdapter.token_meta(interp_end_tok)
 
@@ -343,7 +342,7 @@ defmodule ToxicParser.Grammar.Strings do
                               {:ok, interp_ast, state, cursor, log}
                             else
                               {:error,
-                               {:expected_end_interpolation, TokenAdapter.kind(interp_end_tok)},
+                               {:expected_end_interpolation, interp_end_kind},
                                state, cursor, log}
                             end
 
@@ -374,8 +373,8 @@ defmodule ToxicParser.Grammar.Strings do
               {:ok, expr, state, cursor, log} ->
                 # Consume end_interpolation
                 case TokenAdapter.peek(state, cursor) do
-                  {:ok, end_tok, _, _} ->
-                    if TokenAdapter.kind(end_tok) == :end_interpolation do
+                  {:ok, {end_kind, _meta, _value} = end_tok, _, _} ->
+                    if end_kind == :end_interpolation do
                       {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                       close_meta = TokenAdapter.token_meta(end_tok)
 
@@ -383,7 +382,7 @@ defmodule ToxicParser.Grammar.Strings do
                       interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
                       {:ok, interp_ast, state, cursor, log}
                     else
-                      {:error, {:expected_end_interpolation, TokenAdapter.kind(end_tok)}, state,
+                      {:error, {:expected_end_interpolation, end_kind}, state,
                        cursor, log}
                     end
 
@@ -600,10 +599,9 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Extract indentation from heredoc end token
   defp get_heredoc_indentation(tok) do
-    # heredoc_end is a 4-tuple: {:bin_heredoc_end, meta, delimiter, indent}
-    # TokenAdapter.value2/1 returns the indent (4th element)
-    case TokenAdapter.value2(tok) do
-      indentation when is_integer(indentation) -> indentation
+    # heredoc_end is a 3-tuple: {:bin_heredoc_end, meta, {delimiter, indent}}
+    case tok do
+      {_kind, _meta, {_delim, indentation}} when is_integer(indentation) -> indentation
       _ -> 0
     end
   end
@@ -611,11 +609,12 @@ defmodule ToxicParser.Grammar.Strings do
   # Extract indentation from sigil end token (for heredoc sigils)
   # Returns nil for non-heredoc sigils, integer for heredoc sigils
   defp get_sigil_indentation(tok) do
-    # sigil_end is a 4-tuple: {:sigil_end, meta, delim, indent}
-    # TokenAdapter.value2/1 returns the indent (4th element)
+    # sigil_end is a 3-tuple: {:sigil_end, meta, {delim, indent}}
     # Note: indentation of 0 is valid for heredoc sigils and should be included in metadata
-    case TokenAdapter.value2(tok) do
-      indentation when is_integer(indentation) and indentation >= 0 -> indentation
+    case tok do
+      {_kind, _meta, {_delim, indentation}} when is_integer(indentation) and indentation >= 0 ->
+        indentation
+
       _ -> nil
     end
   end

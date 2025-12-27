@@ -16,8 +16,12 @@ defmodule ToxicParser.Property.TokenCompiler do
     layout = TokenLayout.new()
 
     {tokens, _layout} = do_to_tokens(tree, layout, opts)
-    tokens
+    Enum.map(tokens, &normalize_token/1)
   end
+
+  defp normalize_token({kind, meta}), do: {kind, meta, nil}
+  defp normalize_token({kind, meta, value}), do: {kind, meta, value}
+  defp normalize_token(other), do: other
 
   # ===========================================================================
   # Token compiler: do_to_tokens/3

@@ -94,8 +94,7 @@ defmodule ToxicParser.Grammar.Delimited do
     {state, cursor} = maybe_skip_eoe(state, cursor, opts, :initial)
 
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, _} ->
-        kind = TokenAdapter.kind(tok)
+      {:ok, {kind, _meta, _value}, _, _} ->
 
         if kind in close_kinds do
           if opts[:allow_empty?] do
@@ -143,8 +142,7 @@ defmodule ToxicParser.Grammar.Delimited do
         separator = opts[:separator]
 
         case TokenAdapter.peek(state, cursor) do
-          {:ok, tok, _, _} ->
-            kind = TokenAdapter.kind(tok)
+          {:ok, {kind, _meta, _value}, _, _} ->
 
             cond do
               kind in close_kinds ->
@@ -155,8 +153,7 @@ defmodule ToxicParser.Grammar.Delimited do
                 {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_separator)
 
                 case TokenAdapter.peek(state, cursor) do
-                  {:ok, tok, _, _} ->
-                    kind = TokenAdapter.kind(tok)
+                  {:ok, {kind, _meta, _value}, _, _} ->
 
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
@@ -214,8 +211,8 @@ defmodule ToxicParser.Grammar.Delimited do
         case after_sep_tok do
           nil ->
             case TokenAdapter.peek(state, cursor) do
-              {:ok, tok, _, _} ->
-                {:error, {:expected, :item, got: TokenAdapter.kind(tok)}, state, cursor, log}
+              {:ok, {kind, _meta, _value}, _, _} ->
+                {:error, {:expected, :item, got: kind}, state, cursor, log}
 
               {:eof, state, cursor} ->
                 if eof_is_close? do

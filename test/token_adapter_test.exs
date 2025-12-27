@@ -19,7 +19,7 @@ defmodule ToxicParser.TokenAdapterTest do
     assert Enum.map(tokens, &TokenAdapter.kind/1) == [:int, :eol, :int]
 
     # Raw eol token has newlines in third element of meta tuple
-    [{:eol, meta}] = Enum.filter(tokens, &(TokenAdapter.kind(&1) == :eol))
+    [{:eol, meta, _value}] = Enum.filter(tokens, &(TokenAdapter.kind(&1) == :eol))
 
     # Raw meta format: {{start_line, start_col}, {end_line, end_col}, newlines}
     {{start_line, _}, {end_line, _}, newlines} = meta
@@ -84,7 +84,7 @@ defmodule ToxicParser.TokenAdapterTest do
 
     {ref, state} = TokenAdapter.checkpoint(state, cursor)
     # Raw semicolon token
-    {:ok, {:";", _}, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {:";", _meta, _value}, state, cursor} = TokenAdapter.next(state, cursor)
 
     state = TokenAdapter.drop_checkpoint(state, ref)
     assert state.checkpoints == %{}
@@ -99,7 +99,7 @@ defmodule ToxicParser.TokenAdapterTest do
     {:ok, {:identifier, _, :a}, state, cursor} = TokenAdapter.next(state, cursor)
     {ref, state} = TokenAdapter.checkpoint(state, cursor)
     # Raw semicolon token
-    {:ok, {:";", _}, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {:";", _meta, _value}, state, cursor} = TokenAdapter.next(state, cursor)
     {:ok, {:identifier, _, :b}, state, cursor} = TokenAdapter.next(state, cursor)
 
     dropped_state = TokenAdapter.drop_checkpoint(state, ref)
@@ -110,7 +110,7 @@ defmodule ToxicParser.TokenAdapterTest do
     {state, cursor} = TokenAdapter.new("a;b;c")
     {:ok, {:identifier, _, :a}, state, cursor} = TokenAdapter.next(state, cursor)
     {ref, state} = TokenAdapter.checkpoint(state, cursor)
-    {:ok, {:";", _}, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {:";", _meta, _value}, state, cursor} = TokenAdapter.next(state, cursor)
     {:ok, {:identifier, _, :b}, state, cursor} = TokenAdapter.next(state, cursor)
 
     {rewound_state, cursor} = TokenAdapter.rewind(state, cursor, ref)

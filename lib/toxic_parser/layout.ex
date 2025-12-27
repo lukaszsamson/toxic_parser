@@ -8,9 +8,9 @@ defmodule ToxicParser.Layout do
   alias ToxicParser.{Cursor, State, TokenAdapter}
 
   # Raw separator tokens from lexer:
-  # - {:eol, meta} where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
-  # - {:";", meta} where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
-  @type sep_token :: {:eol, tuple()} | {:";", tuple()}
+  # - {:eol, meta, value} where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
+  # - {:";", meta, value} where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
+  @type sep_token :: {:eol, tuple(), term()} | {:";", tuple(), term()}
 
   @doc """
   Peeks at the next separator (`:eol` or `:";"``) without consuming it.
@@ -19,8 +19,8 @@ defmodule ToxicParser.Layout do
   @spec peek_sep(State.t(), Cursor.t(), term()) :: {:ok, sep_token(), State.t(), Cursor.t()} | :none
   def peek_sep(%State{} = state, cursor, _ctx \\ nil) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:eol, _meta} = tok, state, cursor} -> {:ok, tok, state, cursor}
-      {:ok, {:";", _meta} = tok, state, cursor} -> {:ok, tok, state, cursor}
+      {:ok, {:eol, _meta, _value} = tok, state, cursor} -> {:ok, tok, state, cursor}
+      {:ok, {:";", _meta, _value} = tok, state, cursor} -> {:ok, tok, state, cursor}
       _ -> :none
     end
   end
@@ -48,15 +48,15 @@ defmodule ToxicParser.Layout do
   @spec skip_newlines_only(State.t(), Cursor.t(), term(), non_neg_integer()) :: {State.t(), Cursor.t(), non_neg_integer()}
   def skip_newlines_only(%State{} = state, cursor, ctx \\ nil, count \\ 0) when count >= 0 do
     case peek_sep(state, cursor, ctx) do
-      {:ok, {:";", _meta}, _state, _cursor} ->
+      {:ok, {:";", _meta, _value}, _state, _cursor} ->
         # Stop at semicolon - don't consume it
         {state, cursor, count}
 
-      {:ok, {:eol, {_, _, n}}, state, cursor} when is_integer(n) ->
+      {:ok, {:eol, {_, _, n}, _value}, state, cursor} when is_integer(n) ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_newlines_only(state, cursor, ctx, count + n)
 
-      {:ok, {:eol, _meta}, state, cursor} ->
+      {:ok, {:eol, _meta, _value}, state, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_newlines_only(state, cursor, ctx, count)
 

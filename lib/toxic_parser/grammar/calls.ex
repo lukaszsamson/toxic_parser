@@ -39,8 +39,8 @@ defmodule ToxicParser.Grammar.Calls do
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, cursor} ->
-        case Identifiers.classify(TokenAdapter.kind(tok)) do
+      {:ok, {kind, _meta, _value} = tok, _, cursor} ->
+        case Identifiers.classify(kind) do
           :other ->
             Pratt.parse(state, cursor, ctx, log)
 
@@ -62,10 +62,10 @@ defmodule ToxicParser.Grammar.Calls do
       # Only treat as paren call if the identifier was :paren_identifier
       # (tokenized without space before the paren, e.g., "foo(a)" not "foo (a)")
       # Plain :identifier followed by ( means the ( is a separate parenthesized expression
-      {:ok, next_tok, _, cursor} when elem(next_tok, 0) == :"(" and kind == :paren_identifier ->
+      {:ok, {:"(", _meta, _value}, _, cursor} when kind == :paren_identifier ->
         parse_paren_call(tok, state, cursor, ctx, log)
 
-      {:ok, open_tok, _, cursor} when elem(open_tok, 0) == :"[" and kind == :bracket_identifier ->
+      {:ok, {:"[", _meta, _value} = open_tok, _, cursor} when kind == :bracket_identifier ->
         # bracket_identifier followed by [ is bracket access: foo[:bar]
         # Grammar: bracket_expr -> dot_bracket_identifier bracket_arg
         parse_bracket_access(tok, open_tok, state, cursor, ctx, log)
@@ -73,12 +73,11 @@ defmodule ToxicParser.Grammar.Calls do
       # Alias followed by [ is bracket access: A[d]
       # Grammar: bracket_expr -> access_expr bracket_arg
       # Push back the alias token and let Pratt.parse handle it (led_bracket will process [)
-      {:ok, next_tok, _, cursor} when elem(next_tok, 0) == :"[" and kind == :alias ->
+      {:ok, {:"[", _meta, _value}, _, cursor} when kind == :alias ->
         {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
         Pratt.parse(state, cursor, ctx, log)
 
-      {:ok, next_tok, _, cursor} ->
-        next_kind = TokenAdapter.kind(next_tok)
+      {:ok, {next_kind, _meta, _value} = next_tok, _, cursor} ->
 
         cond do
           # op_identifier means tokenizer determined this is a no-parens call
@@ -131,17 +130,16 @@ defmodule ToxicParser.Grammar.Calls do
   # The tokenizer has determined this is a call, not a binary expression
   # Grammar: no_parens_many_expr -> op_identifier call_args_no_parens_ambig
   #          no_parens_one_ambig -> op_identifier call_args_no_parens_ambig
-  defp parse_op_identifier_call(callee_tok, state, cursor, ctx, log) do
+  defp parse_op_identifier_call({_, _, callee} = callee_tok, state, cursor, ctx, log) do
     # Parse first arg as no_parens_expr (elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr)
     with {:ok, first_arg, state, cursor, log} <- Expressions.expr(state, cursor, Context.no_parens_expr(), log) do
       # Check for comma to see if there are more args
       case TokenAdapter.peek(state, cursor) do
-        {:ok, comma_tok, _, cursor} when elem(comma_tok, 0) == :"," ->
+        {:ok, {:",", _meta, _value}, _, cursor} ->
           # Multiple args - continue parsing
           {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
 
           with {:ok, args, state, cursor, log} <- parse_no_parens_args([first_arg], state, cursor, ctx, log) do
-            callee = TokenAdapter.value(callee_tok)
             # No ambiguous_op metadata when multiple args
             meta = TokenAdapter.token_meta(callee_tok)
             ast = {callee, meta, args}
@@ -155,7 +153,6 @@ defmodule ToxicParser.Grammar.Calls do
 
         _ ->
           # Single arg - add ambiguous_op: nil metadata
-          callee = TokenAdapter.value(callee_tok)
           meta = [ambiguous_op: nil] ++ TokenAdapter.token_meta(callee_tok)
           ast = {callee, meta, [first_arg]}
 
@@ -221,9 +218,8 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   # Parse a no-parens call like `foo 1`, `foo 1, 2`, or `foo a: 1`.
-  defp parse_no_parens_call(callee_tok, state, cursor, ctx, log) do
+  defp parse_no_parens_call({_, _, callee} = callee_tok, state, cursor, ctx, log) do
     with {:ok, args, state, cursor, log} <- parse_no_parens_args([], state, cursor, ctx, log) do
-      callee = TokenAdapter.value(callee_tok)
       meta = TokenAdapter.token_meta(callee_tok)
       ast = {callee, meta, args}
 
@@ -235,7 +231,7 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_paren_call(callee_tok, state, cursor, ctx, log) do
+  defp parse_paren_call({_, _, callee} = callee_tok, state, cursor, ctx, log) do
     {:ok, _open_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
     # Skip leading EOE and count newlines
@@ -247,7 +243,7 @@ defmodule ToxicParser.Grammar.Calls do
       callee_meta = TokenAdapter.token_meta(callee_tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
-      ast = {TokenAdapter.value(callee_tok), meta, Enum.reverse(args)}
+      ast = {callee, meta, Enum.reverse(args)}
       # Check for nested call: foo()() - another paren call on the result
       maybe_nested_call(ast, state, cursor, ctx, log)
     else
@@ -259,7 +255,7 @@ defmodule ToxicParser.Grammar.Calls do
   # Rule: parens_call -> dot_call_identifier call_args_parens call_args_parens
   defp maybe_nested_call(ast, state, cursor, ctx, log) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, cursor} when elem(tok, 0) == :"(" ->
+      {:ok, {:"(", _meta, _value}, _, cursor} ->
         parse_nested_paren_call(ast, state, cursor, ctx, log)
 
       _ ->
@@ -297,8 +293,8 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp expect_token(state, cursor, kind) do
     case TokenAdapter.next(state, cursor) do
-      {:ok, token, state, cursor} when elem(token, 0) == kind -> {:ok, token, state, cursor}
-      {:ok, token, state, cursor} -> {:error, {:expected, kind, got: TokenAdapter.kind(token)}, state, cursor}
+      {:ok, {^kind, _meta, _value} = token, state, cursor} -> {:ok, token, state, cursor}
+      {:ok, {got_kind, _meta, _value}, state, cursor} -> {:error, {:expected, kind, got: got_kind}, state, cursor}
       {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor}
       {:error, diag, state, cursor} -> {:error, diag, state, cursor}
     end
@@ -323,8 +319,7 @@ defmodule ToxicParser.Grammar.Calls do
         opts \\ []
       ) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, cursor} ->
-        kind = TokenAdapter.kind(tok)
+      {:ok, {kind, _meta, _value}, _, cursor} ->
 
         case kind do
           k when k in [:eol, :";", :")", :"]", :"}", :do] ->
@@ -398,7 +393,7 @@ defmodule ToxicParser.Grammar.Calls do
       {:error, NoParensErrors.error_no_parens_many_strict(arg), state, cursor, log}
     else
       case TokenAdapter.peek(state, cursor) do
-        {:ok, comma_tok, _, cursor} when elem(comma_tok, 0) == :"," ->
+        {:ok, {:",", _meta, _value}, _, cursor} ->
           if Keyword.get(opts, :stop_at_comma, false) do
             {:ok, Enum.reverse([arg | acc]), state, cursor, log}
           else
@@ -406,9 +401,7 @@ defmodule ToxicParser.Grammar.Calls do
             {state, cursor} = EOE.skip(state, cursor)
 
             case TokenAdapter.peek(state, cursor) do
-              {:ok, tok, _, cursor} ->
-                kind = TokenAdapter.kind(tok)
-
+              {:ok, {kind, _meta, _value}, _, cursor} ->
                 if kind in [:eol, :";", :")", :"]", :"}", :do] do
                   meta = TokenAdapter.token_meta(comma_tok)
 
@@ -459,8 +452,8 @@ defmodule ToxicParser.Grammar.Calls do
         opts \\ []
       ) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, _, cursor} ->
-        case Identifiers.classify(TokenAdapter.kind(tok)) do
+      {:ok, {kind, _meta, _value} = tok, _, cursor} ->
+        case Identifiers.classify(kind) do
           :other ->
             Pratt.parse_with_min_bp(state, cursor, ctx, log, min_bp)
 
@@ -480,17 +473,16 @@ defmodule ToxicParser.Grammar.Calls do
   # Parse identifier without calling led at the end
   defp parse_identifier_no_led(kind, tok, state, cursor, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, next_tok, _, cursor} when elem(next_tok, 0) == :"(" and kind == :paren_identifier ->
+      {:ok, {:"(", _meta, _value}, _, cursor} when kind == :paren_identifier ->
         raise "dead code"
         parse_paren_call_no_led(tok, state, cursor, ctx, log)
 
-      {:ok, open_tok, _, cursor} when elem(open_tok, 0) == :"[" and kind == :bracket_identifier ->
+      {:ok, {:"[", _meta, _value} = open_tok, _, cursor} when kind == :bracket_identifier ->
         # bracket_identifier followed by [ is bracket access
         # Note: bracket access calls led internally for chaining, need special handling
         parse_bracket_access_no_led(tok, open_tok, state, cursor, ctx, log)
 
-      {:ok, next_tok, _, cursor} ->
-        next_kind = TokenAdapter.kind(next_tok)
+      {:ok, {next_kind, _meta, _value} = next_tok, _, cursor} ->
 
         cond do
           kind == :op_identifier ->
@@ -527,7 +519,7 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_paren_call_no_led(callee_tok, state, cursor, ctx, log) do
+  defp parse_paren_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log) do
     {:ok, _open_tok, state, cursor} = TokenAdapter.next(state, cursor)
     {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
@@ -536,7 +528,7 @@ defmodule ToxicParser.Grammar.Calls do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = TokenAdapter.token_meta(callee_tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
-      ast = {TokenAdapter.value(callee_tok), meta, Enum.reverse(args)}
+      ast = {callee, meta, Enum.reverse(args)}
       # Return without calling led
       {:ok, ast, state, cursor, log}
     else
@@ -565,7 +557,7 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_op_identifier_call_no_led(callee_tok, state, cursor, ctx, log, _min_bp, opts) do
+  defp parse_op_identifier_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log, _min_bp, opts) do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
@@ -573,20 +565,18 @@ defmodule ToxicParser.Grammar.Calls do
     with {:ok, first_arg, state, cursor, log} <-
            Pratt.parse_with_min_bp(state, cursor, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
       case TokenAdapter.peek(state, cursor) do
-        {:ok, comma_tok, _, cursor} when elem(comma_tok, 0) == :"," ->
+        {:ok, {:",", _meta, _value}, _, cursor} ->
           # raise "dead code"
           {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
 
           with {:ok, args, state, cursor, log} <-
                  parse_no_parens_args([first_arg], state, cursor, ctx, log, 0, opts) do
-            callee = TokenAdapter.value(callee_tok)
             meta = TokenAdapter.token_meta(callee_tok)
             ast = {callee, meta, args}
             DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
           end
 
         _ ->
-          callee = TokenAdapter.value(callee_tok)
           meta = [ambiguous_op: nil] ++ TokenAdapter.token_meta(callee_tok)
           ast = {callee, meta, [first_arg]}
           DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
@@ -594,9 +584,8 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_no_parens_call_no_led(callee_tok, state, cursor, ctx, log, min_bp, opts) do
+  defp parse_no_parens_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log, min_bp, opts) do
     with {:ok, args, state, cursor, log} <- parse_no_parens_args([], state, cursor, ctx, log, min_bp, opts) do
-      callee = TokenAdapter.value(callee_tok)
       meta = TokenAdapter.token_meta(callee_tok)
       ast = {callee, meta, args}
       DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)

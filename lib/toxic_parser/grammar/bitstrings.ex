@@ -50,11 +50,11 @@ defmodule ToxicParser.Grammar.Bitstrings do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, {:">>", _meta}, _, cursor} ->
+            {:ok, {:">>", _meta, _value}, _, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :">>", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
@@ -92,14 +92,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
 
         _ ->
           case TokenAdapter.next(state, cursor) do
-            {:ok, {:">>", _meta} = close_tok, state, cursor} ->
+            {:ok, {:">>", _meta, _value} = close_tok, state, cursor} ->
               close_meta = TokenAdapter.token_meta(close_tok)
               meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
               ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
               {:ok, ast, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :">>", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :">>", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}

@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   alias ToxicParser.{Context, Cursor, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.{Helpers, Meta}
-  alias ToxicParser.Grammar.{EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Brackets, EOE, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -22,14 +22,14 @@ defmodule ToxicParser.Grammar.Maps do
   # Parse map without calling Pratt.led - internal implementation
   defp parse_map_base(state, cursor, ctx, log) do
     case TokenAdapter.next(state, cursor) do
-      {:ok, {:%{}, _meta} = tok, state, cursor} ->
+      {:ok, {:%{}, _meta, _value} = tok, state, cursor} ->
         # map -> map_op map_args where map_op is '%{}'
         # The tokenizer emits %{} as three tokens: :%{}, :"{", :"}"
         # We need to consume the "{" token (the "}" will be consumed by parse_map_args_body)
         percent_meta = Helpers.token_meta(tok)
         # Consume the opening brace token
         case TokenAdapter.next(state, cursor) do
-          {:ok, {:"{", _}, state, cursor} ->
+          {:ok, {:"{", _meta, _value}, state, cursor} ->
             # For %{} maps, use percent_meta for position (not brace position)
             # Use a tuple sentinel that can never be a valid struct name
             parse_map_args_after_brace(
@@ -42,8 +42,8 @@ defmodule ToxicParser.Grammar.Maps do
               log
             )
 
-          {:ok, tok, state, cursor} ->
-            {:error, {:expected, :"{", got: TokenAdapter.kind(tok)}, state, cursor, log}
+          {:ok, {got_kind, _meta, _value}, state, cursor} ->
+            {:error, {:expected, :"{", got: got_kind}, state, cursor, log}
 
           {:eof, state, cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
@@ -52,7 +52,7 @@ defmodule ToxicParser.Grammar.Maps do
             {:error, diag, state, cursor, log}
         end
 
-      {:ok, {:%, _meta} = tok, state, cursor} ->
+      {:ok, {:%, _meta, _value} = tok, state, cursor} ->
         # map -> '%' map_base_expr map_args (struct)
         percent_meta = Helpers.token_meta(tok)
         # Skip optional EOE after %
@@ -81,58 +81,61 @@ defmodule ToxicParser.Grammar.Maps do
     case TokenAdapter.peek(state, cursor) do
       # Special case for @ (at_op): precedence 320 > dot 310
       # So @0.a should be (@0).a - @ takes just the base, then . applies
-      {:ok, {:at_op, _, _} = _tok, state, cursor} ->
-        {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+      {:ok, {:at_op, _meta, _value}, state, cursor} ->
+        {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
+          TokenAdapter.next(state, cursor)
         {state, cursor} = EOE.skip(state, cursor)
 
         with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, Context.matched_expr(), log) do
           op_meta = Helpers.token_meta(op_tok)
-          ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
+          ast = {op_value, op_meta, [operand]}
           # Continue with dots/calls to handle trailing .foo or .Bar
           Pratt.led_dots_and_calls(ast, state, cursor, log, Context.matched_expr())
         end
 
       # Other unary ops (^, !, not, +, -): precedence < dot 310
       # So ^t.d should be ^(t.d) - dots are part of the operand
-      {:ok, tok, state, cursor} ->
-        tok_kind = TokenAdapter.kind(tok)
+      {:ok, {tok_kind, _tok_meta, tok_value}, state, cursor} ->
 
         cond do
           tok_kind in [:unary_op, :dual_op] ->
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+            {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
             # Parse operand with dots applied (since dot binds tighter)
             with {:ok, operand, state, cursor, log} <-
                    parse_unary_operand_with_dots(state, cursor, Context.matched_expr(), log) do
               op_meta = Helpers.token_meta(op_tok)
-              ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
+              ast = {op_value, op_meta, [operand]}
               {:ok, ast, state, cursor, log}
             end
 
           # ellipsis_op can also be nullary (elixir_parser.yrl: sub_matched_expr -> ellipsis_op)
           # as in `%...{}`. If the next token is `{`, treat it as nullary.
           tok_kind == :ellipsis_op ->
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+            {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
             op_meta = Helpers.token_meta(op_tok)
 
             case TokenAdapter.peek(state, cursor) do
-              {:ok, {:"{", _}, state, cursor} ->
-                {:ok, {TokenAdapter.value(op_tok), op_meta, []}, state, cursor, log}
+              {:ok, {:"{", _meta, _value}, state, cursor} ->
+                {:ok, {op_value, op_meta, []}, state, cursor, log}
 
               _ ->
                 {state, cursor} = EOE.skip(state, cursor)
 
                 with {:ok, operand, state, cursor, log} <-
                        parse_unary_operand_with_dots(state, cursor, Context.matched_expr(), log) do
-                  {:ok, {TokenAdapter.value(op_tok), op_meta, [operand]}, state, cursor, log}
+                  {:ok, {op_value, op_meta, [operand]}, state, cursor, log}
                 end
             end
 
           # ternary_op :"//" used as unary prefix (e.g., %//foo{})
           # Also has precedence < dot 310, so dots are part of the operand
-          tok_kind == :ternary_op and TokenAdapter.value(tok) == :"//" ->
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+          tok_kind == :ternary_op and tok_value == :"//" ->
+            {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
             with {:ok, operand, state, cursor, log} <-
@@ -200,37 +203,59 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_unary_operand(state, cursor, ctx, log) do
     case TokenAdapter.peek(state, cursor) do
       # For nested @ operator, continue without dots since @ (320) > dot (310)
-      {:ok, {:at_op, _, _} = _tok, state, cursor} ->
-        {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+      {:ok, {:at_op, _meta, _value}, state, cursor} ->
+        {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
+          TokenAdapter.next(state, cursor)
         {state, cursor} = EOE.skip(state, cursor)
 
         with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, ctx, log) do
           op_meta = Helpers.token_meta(op_tok)
-          ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
-          {:ok, ast, state, cursor, log}
+          ast = {op_value, op_meta, [operand]}
+          maybe_parse_bracket_access(ast, state, cursor, log)
         end
 
       # For other unary operators (precedence < dot 310), use parse_unary_operand_with_dots
       # so that dots are included in their operand.
       # E.g., %@+a.i{} should be @(+(a.i)){} not (@(+a)).i{}
-      {:ok, tok, state, cursor} ->
-        tok_kind = TokenAdapter.kind(tok)
+      {:ok, {tok_kind, _tok_meta, tok_value} = tok, state, cursor} ->
 
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
-            {state, cursor} = EOE.skip(state, cursor)
+            {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
+            op_meta = Helpers.token_meta(op_tok)
 
-            with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
-              op_meta = Helpers.token_meta(op_tok)
-              ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
-              {:ok, ast, state, cursor, log}
+            case tok_kind do
+              :ellipsis_op ->
+                case TokenAdapter.peek(state, cursor) do
+                  {:ok, {:"{", _meta, _value}, _state, _cursor} ->
+                    {:ok, {op_value, op_meta, []}, state, cursor, log}
+
+                  _ ->
+                    {state, cursor} = EOE.skip(state, cursor)
+
+                    with {:ok, operand, state, cursor, log} <-
+                           parse_unary_operand_with_dots(state, cursor, ctx, log) do
+                      ast = {op_value, op_meta, [operand]}
+                      {:ok, ast, state, cursor, log}
+                    end
+                end
+
+              _ ->
+                {state, cursor} = EOE.skip(state, cursor)
+
+                with {:ok, operand, state, cursor, log} <-
+                       parse_unary_operand_with_dots(state, cursor, ctx, log) do
+                  ast = {op_value, op_meta, [operand]}
+                  {:ok, ast, state, cursor, log}
+                end
             end
 
           # ternary_op :"//" used as unary prefix (precedence < dot 310)
-          tok_kind == :ternary_op and TokenAdapter.value(tok) == :"//" ->
+          tok_kind == :ternary_op and tok_value == :"//" ->
             raise "dead code"
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+            {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
             with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
@@ -272,42 +297,113 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
+  defp maybe_parse_bracket_access(base, state, cursor, log) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:"[", _meta, _value}, _state, _cursor} ->
+        parse_bracket_access_chain(base, state, cursor, log)
+
+      _ ->
+        {:ok, base, state, cursor, log}
+    end
+  end
+
+  defp parse_bracket_access_chain(base, state, cursor, log) do
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:"[", _meta, _value}, _state, _cursor} ->
+        {:ok, open_tok, state, cursor} = TokenAdapter.next(state, cursor)
+
+        {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+
+        with {:ok, arg, state, cursor, log} <- Brackets.parse_bracket_arg_no_skip(state, cursor, log) do
+          {state, cursor, _trailing_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+
+          case TokenAdapter.next(state, cursor) do
+            {:ok, {:"]", _meta, _value} = close_tok, state, cursor} ->
+              open_meta = TokenAdapter.token_meta(open_tok)
+              close_meta = TokenAdapter.token_meta(close_tok)
+
+              bracket_meta =
+                Meta.closing_meta(open_meta, close_meta, leading_newlines, from_brackets: true)
+
+              combined =
+                {{:., bracket_meta, [Access, :get]}, bracket_meta, [base, arg]}
+
+              parse_bracket_access_chain(combined, state, cursor, log)
+
+            {:ok, {got_kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :"]", got: got_kind}, state, cursor, log}
+
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
+
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
+          end
+        end
+
+      _ ->
+        {:ok, base, state, cursor, log}
+    end
+  end
+
   # Parse a unary operand with dots applied (for unary ops with precedence < dot).
   # Similar to parse_unary_operand but applies dots to the base expression.
   # Used for operators like ^, !, not where %^t.d{} should parse as %^(t.d){}.
   defp parse_unary_operand_with_dots(state, cursor, ctx, log) do
     case TokenAdapter.peek(state, cursor) do
       # Nested @ - special handling since @ binds tighter than dot
-      {:ok, {:at_op, _, _} = _tok, state, cursor} ->
-        {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+      {:ok, {:at_op, _meta, _value}, state, cursor} ->
+        {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
+          TokenAdapter.next(state, cursor)
         {state, cursor} = EOE.skip(state, cursor)
 
         with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, ctx, log) do
           op_meta = Helpers.token_meta(op_tok)
-          ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
+          ast = {op_value, op_meta, [operand]}
           # Apply dots after @ since @ binds tighter
           Pratt.led_dots_and_calls(ast, state, cursor, log, ctx)
         end
 
       # Other unary ops - recurse with dots
-      {:ok, tok, state, cursor} ->
-        tok_kind = TokenAdapter.kind(tok)
+      {:ok, {tok_kind, _tok_meta, tok_value}, state, cursor} ->
 
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
-            {state, cursor} = EOE.skip(state, cursor)
+            {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
+            op_meta = Helpers.token_meta(op_tok)
 
-            with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
-              op_meta = Helpers.token_meta(op_tok)
-              ast = {TokenAdapter.value(op_tok), op_meta, [operand]}
-              {:ok, ast, state, cursor, log}
+            case tok_kind do
+              :ellipsis_op ->
+                case TokenAdapter.peek(state, cursor) do
+                  {:ok, {:"{", _meta, _value}, _state, _cursor} ->
+                    {:ok, {op_value, op_meta, []}, state, cursor, log}
+
+                  _ ->
+                    {state, cursor} = EOE.skip(state, cursor)
+
+                    with {:ok, operand, state, cursor, log} <-
+                           parse_unary_operand_with_dots(state, cursor, ctx, log) do
+                      ast = {op_value, op_meta, [operand]}
+                      {:ok, ast, state, cursor, log}
+                    end
+                end
+
+              _ ->
+                {state, cursor} = EOE.skip(state, cursor)
+
+                with {:ok, operand, state, cursor, log} <-
+                       parse_unary_operand_with_dots(state, cursor, ctx, log) do
+                  ast = {op_value, op_meta, [operand]}
+                  {:ok, ast, state, cursor, log}
+                end
             end
 
           # ternary_op :"//" used as unary prefix
-          tok_kind == :ternary_op and TokenAdapter.value(tok) == :"//" ->
+          tok_kind == :ternary_op and tok_value == :"//" ->
             raise "dead code"
-            {:ok, op_tok, state, cursor} = TokenAdapter.next(state, cursor)
+            {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
+              TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
             with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
@@ -352,15 +448,15 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_args(base, percent_meta, state, cursor, ctx, log) do
     # Consume the opening brace
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:"{", _} = open_tok, state, cursor} ->
+      {:ok, {:"{", _meta, _value} = open_tok, state, cursor} ->
         {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
         brace_meta = Helpers.token_meta(open_tok)
         # Skip leading EOE and count newlines
         {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
         parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, cursor, ctx, log)
 
-      {:ok, tok, state, cursor} ->
-        {:error, {:expected, :"{", got: TokenAdapter.kind(tok)}, state, cursor, log}
+      {:ok, {got_kind, _meta, _value}, state, cursor} ->
+        {:error, {:expected, :"{", got: got_kind}, state, cursor, log}
 
       {:eof, state, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
@@ -380,7 +476,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, cursor, ctx, log) do
     case TokenAdapter.peek(state, cursor) do
       # Empty map: map_args -> open_curly '}'
-      {:ok, {:"}", _} = close_tok, state, cursor} ->
+      {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
         close_meta = Helpers.token_meta(close_tok)
         map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
@@ -458,8 +554,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_update_candidate(state, cursor, _ctx, log) do
     starts_with_quoted_kw_key? =
       case TokenAdapter.peek(state, cursor) do
-        {:ok, tok, _state, _cursor} ->
-          tok_kind = TokenAdapter.kind(tok)
+        {:ok, {tok_kind, _meta, _value}, _state, _cursor} ->
           tok_kind in [:bin_string_start, :list_string_start]
 
         _ ->
@@ -522,13 +617,13 @@ defmodule ToxicParser.Grammar.Maps do
         {state, cursor} = EOE.skip(state, cursor)
 
         case TokenAdapter.peek(state, cursor) do
-          {:ok, {:"}", _} = close_tok, state, cursor} ->
+          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
             {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = Helpers.token_meta(close_tok)
             update_ast = {:|, pipe_meta, [base, rhs_entries]}
             {:ok, update_ast, close_meta, state, cursor, log}
 
-          {:ok, {:",", _}, state, cursor} ->
+          {:ok, {:",", _meta, _value}, state, cursor} ->
             {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
             parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, cursor, log)
@@ -688,7 +783,7 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_update_trailing_entries(base, pipe_meta, initial_entries, state, cursor, log) do
     case TokenAdapter.peek(state, cursor) do
       # Trailing comma case: %{base | k => v,}
-      {:ok, {:"}", _} = close_tok, state, cursor} ->
+      {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
         close_meta = Helpers.token_meta(close_tok)
         update_ast = {:|, pipe_meta, [base, initial_entries]}
@@ -758,7 +853,7 @@ defmodule ToxicParser.Grammar.Maps do
         {state, cursor} = EOE.skip(state, cursor)
 
         case TokenAdapter.peek(state, cursor) do
-          {:ok, {:"}", _} = close_tok, state, cursor} ->
+          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
             {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = Helpers.token_meta(close_tok)
             update_ast = {:|, pipe_meta, [base, kw_list]}
@@ -788,19 +883,19 @@ defmodule ToxicParser.Grammar.Maps do
           {state, cursor} = EOE.skip(state, cursor)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, {:"}", _} = close_tok, state, cursor} ->
+            {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
               {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
               close_meta = Helpers.token_meta(close_tok)
               entries = Enum.reverse([{key, value} | acc])
               update_ast = {:|, pipe_meta, [base, entries]}
               {:ok, update_ast, close_meta, state, cursor, log}
 
-            {:ok, {:",", _}, state, cursor} ->
+            {:ok, {:",", _meta, _value}, state, cursor} ->
               {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
               {state, cursor} = EOE.skip(state, cursor)
 
               case TokenAdapter.peek(state, cursor) do
-                {:ok, {:"}", _} = close_tok, state, cursor} ->
+                {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
                   # Trailing comma
                   {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
                   close_meta = Helpers.token_meta(close_tok)
@@ -889,12 +984,12 @@ defmodule ToxicParser.Grammar.Maps do
         {state, cursor} = EOE.skip(state, cursor)
 
         case TokenAdapter.next(state, cursor) do
-          {:ok, {:"}", _} = close_tok, state, cursor} ->
+          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
             close_meta = Helpers.token_meta(close_tok)
             {:ok, kw_list, close_meta, state, cursor, log}
 
-          {:ok, tok, state, cursor} ->
-            {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, cursor, log}
+          {:ok, {got_kind, _meta, _value}, state, cursor} ->
+            {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
 
           {:eof, state, cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
@@ -919,18 +1014,18 @@ defmodule ToxicParser.Grammar.Maps do
       {state, cursor} = EOE.skip(state, cursor)
 
       case TokenAdapter.peek(state, cursor) do
-        {:ok, {:"}", _} = close_tok, state, cursor} ->
+        {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
           # End of assoc list
           {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
           close_meta = Helpers.token_meta(close_tok)
           {:ok, Enum.reverse([entry | acc]), close_meta, state, cursor, log}
 
-        {:ok, {:",", _}, state, cursor} ->
+        {:ok, {:",", _meta, _value}, state, cursor} ->
           {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor} = EOE.skip(state, cursor)
 
           case TokenAdapter.peek(state, cursor) do
-            {:ok, {:"}", _} = close_tok, state, cursor} ->
+            {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
               # Trailing comma
               {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
               close_meta = Helpers.token_meta(close_tok)
@@ -943,14 +1038,14 @@ defmodule ToxicParser.Grammar.Maps do
                   {state, cursor} = EOE.skip(state, cursor)
 
                   case TokenAdapter.next(state, cursor) do
-                    {:ok, {:"}", _} = close_tok, state, cursor} ->
+                    {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
                       close_meta = Helpers.token_meta(close_tok)
                       # kw_list is already a list of keyword tuples, don't wrap in another list
                       entries = Enum.reverse([entry | acc]) ++ kw_list
                       {:ok, entries, close_meta, state, cursor, log}
 
-                    {:ok, tok, state, cursor} ->
-                      {:error, {:expected, :"}", got: TokenAdapter.kind(tok)}, state, cursor, log}
+                    {:ok, {got_kind, _meta, _value}, state, cursor} ->
+                      {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
 
                     {:eof, state, cursor} ->
                       {:error, :unexpected_eof, state, cursor, log}

@@ -3681,9 +3681,13 @@ defmodule ToxicParser.ConformanceTest do
       )
     end
 
-    # test "repro 162" do
-    #   assert_conforms("%-%{}{}")
-    # end
+    test "repro 162" do
+      assert_conforms("%@@i[a]{}")
+    end
+
+    test "repro 163" do
+      assert_conforms("%//...{}")
+    end
   end
 
   # =============================================================================

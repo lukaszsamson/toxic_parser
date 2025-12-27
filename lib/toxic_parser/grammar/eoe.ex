@@ -24,7 +24,7 @@ defmodule ToxicParser.Grammar.EOE do
   def skip_count_newlines(%State{} = state, cursor, count)
       when is_integer(count) and count >= 0 do
     case Layout.peek_sep(state, cursor) do
-      {:ok, {_kind, {_, _, n}}, state, cursor} when is_integer(n) ->
+      {:ok, {_kind, {_, _, n}, _value}, state, cursor} when is_integer(n) ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_count_newlines(state, cursor, count + n)
 
@@ -52,16 +52,16 @@ defmodule ToxicParser.Grammar.EOE do
 
   @doc """
   Build metadata for a separator token.
-  Separator tokens are 2-tuples: {:eol, meta} or {:";", meta}
+  Separator tokens are 3-tuples: {:eol, meta, value} or {:";", meta, value}
   where meta = {{start_line, start_col}, {end_line, end_col}, newline_count}
   """
   @spec build_sep_meta(tuple()) :: keyword()
-  def build_sep_meta({kind, {_, _, newlines}} = token)
+  def build_sep_meta({kind, {_, _, newlines}, _value} = token)
       when kind in [:eol, :";"] and is_integer(newlines) do
     [newlines: newlines] ++ Helpers.token_meta(token)
   end
 
-  def build_sep_meta({kind, _meta} = token) when kind in [:eol, :";"] do
+  def build_sep_meta({kind, _meta, _value} = token) when kind in [:eol, :";"] do
     Helpers.token_meta(token)
   end
 

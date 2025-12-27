@@ -120,7 +120,7 @@ defmodule ToxicParser.Builder.Helpers do
     {:__aliases__, [last: m] ++ m, [name]}
   end
 
-  def from_token({kind, _meta}) when kind in [true, false, nil] do
+  def from_token({kind, _meta, _value}) when kind in [true, false, nil] do
     kind
   end
 
@@ -146,26 +146,13 @@ defmodule ToxicParser.Builder.Helpers do
     value
   end
 
-  # Fallback for 2-tuple tokens (rare to call from_token on these)
-  def from_token({_kind, _meta}) do
-    nil
-  end
-
   @doc """
   Extracts [line: L, column: C] metadata from a raw token.
 
   Token meta format: {{start_line, start_col}, {end_line, end_col}, extra}
   """
   @spec token_meta(tuple()) :: keyword()
-  def token_meta({_kind, {{line, column}, _, _}}) do
-    [line: line, column: column]
-  end
-
   def token_meta({_kind, {{line, column}, _, _}, _value}) do
-    [line: line, column: column]
-  end
-
-  def token_meta({_kind, {{line, column}, _, _}, _v1, _v2}) do
     [line: line, column: column]
   end
 

@@ -77,7 +77,7 @@ defmodule ToxicParser.CursorTest do
   test "current_terminators/1 is available on-demand" do
     c = Cursor.new("(1", mode: :tolerant)
 
-    assert {:ok, {:"(", _meta}, c} = Cursor.next(c)
+    assert {:ok, {:"(", _meta, _value}, c} = Cursor.next(c)
     assert {:ok, _int, c} = Cursor.peek(c)
 
     terms = Cursor.current_terminators(c)

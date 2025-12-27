@@ -55,12 +55,12 @@ defmodule ToxicParser.Grammar.Brackets do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case TokenAdapter.next(state, cursor) do
-            {:ok, {:",", _meta} = comma_tok, state, cursor} ->
+            {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
               {:error, {meta, @too_many_access_syntax_message, "','"}, state, cursor, log}
 
-            {:ok, tok, state, cursor} ->
-              {:error, {:expected, :",", got: TokenAdapter.kind(tok)}, state, cursor, log}
+            {:ok, {kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :",", got: kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
