@@ -3692,6 +3692,15 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 164" do
       assert_conforms("alpha spam, (\n(qux).\nspam delta, beta)\n")
     end
+
+    test "repro 165" do
+      assert_conforms("(\#{\nunquote_splicing  defp)")
+    end
+
+    test "repro 166" do
+      assert_conforms("receive do ('c') -> :ok after 0 -> :timeout end")
+      assert_conforms("case x do ('c') -> :ok end")
+    end
   end
 
   # =============================================================================

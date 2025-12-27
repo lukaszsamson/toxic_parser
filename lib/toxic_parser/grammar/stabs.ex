@@ -121,9 +121,10 @@ defmodule ToxicParser.Grammar.Stabs do
          [{:unquote_splicing, _meta, [_]} = single],
          open_meta,
          close_meta,
-         newlines
+         _newlines
        ) do
-    {:__block__, Meta.closing_meta(open_meta, close_meta, newlines), [single]}
+    # Elixir does not attach newline metadata for this paren form.
+    {:__block__, Meta.closing_meta(open_meta, close_meta, 0), [single]}
   end
 
   defp unwrap_single_non_stab_with_parens([{name, meta, args}], open_meta, close_meta, _newlines)
@@ -364,7 +365,13 @@ defmodule ToxicParser.Grammar.Stabs do
         {[pattern_with_parens], stab_meta}
 
       _ when is_list(single_pattern) ->
-        {[single_pattern], parens_meta ++ stab_meta}
+        if is_keyword_list(single_pattern) do
+          # Keyword lists (including interpolated keys) keep parens metadata on the stab arrow.
+          {[single_pattern], parens_meta ++ stab_meta}
+        else
+          # Literal lists drop parens metadata in Elixir.
+          {[single_pattern], stab_meta}
+        end
 
       _ ->
         {[single_pattern], stab_meta}
