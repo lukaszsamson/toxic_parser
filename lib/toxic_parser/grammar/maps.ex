@@ -710,10 +710,6 @@ defmodule ToxicParser.Grammar.Maps do
       case classify_pipe_rhs_for_map_update(rhs) do
         {:valid, entries} ->
           {:update, base, pipe_meta, entries}
-
-        :invalid ->
-          raise "dead code"
-          :not_update
       end
     end
   end

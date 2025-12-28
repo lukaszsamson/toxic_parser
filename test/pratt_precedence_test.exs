@@ -4,19 +4,15 @@ defmodule ToxicParser.PrattPrecedenceTest do
   alias ToxicParser.{Context, Precedence, Pratt, TokenAdapter, EventLog}
   alias ToxicParser.Grammar
 
-  test "binary binding powers are ordered and include dot/not_in" do
+  test "binary binding powers include dot/not_in" do
     table = Precedence.binary_table()
-    assert {:., _, _} = List.keyfind(table, :., 0)
+    assert {_, _} = Map.get(table, :.)
     assert Precedence.not_in() == elem(Precedence.binary(:in_op), 0)
-
-    # Ensure ordering is ascending by binding power
-    bps = Enum.map(table, fn {_, bp, _} -> bp end)
-    assert bps == Enum.sort(bps)
   end
 
   test "binary entries carry associativity" do
-    assert {:match_op, _bp, :right} = List.keyfind(Precedence.binary_table(), :match_op, 0)
-    assert {:dual_op, _bp, :left} = List.keyfind(Precedence.binary_table(), :dual_op, 0)
+    assert {_bp, :right} = Map.get(Precedence.binary_table(), :match_op)
+    assert {_bp, :left} = Map.get(Precedence.binary_table(), :dual_op)
   end
 
   test "unary binding powers include not and capture" do

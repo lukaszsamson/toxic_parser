@@ -491,16 +491,12 @@ defmodule ToxicParser.Grammar.Calls do
   # Parse identifier without calling led at the end
   defp parse_identifier_no_led(kind, tok, state, cursor, ctx, log, min_bp, opts) do
     case TokenAdapter.peek(state, cursor) do
-      {:ok, {:"(", _meta, _value}, _, cursor} when kind == :paren_identifier ->
-        raise "dead code"
-        parse_paren_call_no_led(tok, state, cursor, ctx, log)
-
       {:ok, {:"[", _meta, _value} = open_tok, _, cursor} when kind == :bracket_identifier ->
         # bracket_identifier followed by [ is bracket access
         # Note: bracket access calls led internally for chaining, need special handling
         parse_bracket_access_no_led(tok, open_tok, state, cursor, ctx, log)
 
-      {:ok, {next_kind, _meta, _value} = next_tok, _, cursor} ->
+      {:ok, {_next_kind, _meta, _value} = next_tok, _, cursor} ->
         cond do
           kind == :op_identifier ->
             parse_op_identifier_call_no_led(tok, state, cursor, ctx, log, min_bp, opts)
@@ -513,44 +509,14 @@ defmodule ToxicParser.Grammar.Calls do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             parse_no_parens_call_no_led(tok, state, cursor, ctx, log, min_bp, opts)
 
-          Pratt.bp(next_kind) != nil or next_kind in [:., :dot_call_op] ->
-            raise "dead code"
-            # Binary operator follows - return as bare identifier, caller will handle
-            ast = Builder.Helpers.from_token(tok)
-            {:ok, ast, state, cursor, log}
-
-          kind == :do_identifier and not Context.allow_do_block?(ctx) ->
-            raise "dead code"
-            ast = Builder.Helpers.from_token(tok)
-            {:ok, ast, state, cursor, log}
-
           true ->
             ast = Builder.Helpers.from_token(tok)
             DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
         end
 
       _ ->
-        raise "dead code"
         ast = Builder.Helpers.from_token(tok)
         DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
-    end
-  end
-
-  defp parse_paren_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log) do
-    {:ok, _open_tok, state, cursor} = TokenAdapter.next(state, cursor)
-    {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-
-    with {:ok, args, state, cursor, log} <- parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <-
-           Meta.consume_closing(state, cursor, :")") do
-      total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
-      callee_meta = TokenAdapter.token_meta(callee_tok)
-      meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
-      ast = {callee, meta, Enum.reverse(args)}
-      # Return without calling led
-      {:ok, ast, state, cursor, log}
-    else
-      other -> Result.normalize_error(other, cursor, log)
     end
   end
 

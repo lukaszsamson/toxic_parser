@@ -85,11 +85,11 @@ defmodule ToxicParser.Precedence do
   def dot, do: binary(:.)
 
   @doc "Returns the full binary precedence list."
-  @spec binary_table() :: [{atom(), bp(), assoc()}]
+  @spec binary_table() :: %{atom() => {bp(), assoc()}}
   def binary_table, do: @binary_bp
 
   @doc "Returns the full unary precedence list."
-  @spec unary_table() :: [{atom(), bp(), assoc()}]
+  @spec unary_table() :: %{atom() => {bp(), assoc()}}
   def unary_table, do: @unary_bp
 
   defp bp_from_binary(kind) do

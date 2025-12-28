@@ -130,7 +130,6 @@ defmodule ToxicParser.Grammar.DoBlocks do
         end
 
       _ ->
-        raise "dead code"
         maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
     end
   end
@@ -142,19 +141,12 @@ defmodule ToxicParser.Grammar.DoBlocks do
          cursor,
          ctx,
          log,
-         allow_do_block?,
+         _allow_do_block?,
          min_bp,
          parse_no_parens,
-         clean_meta?
+         _clean_meta?
        ) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:do, _meta, _value}, _, _} ->
-        raise "dead code"
-        attach_if_do(ast, state, cursor, ctx, log, allow_do_block?, clean_meta?)
-
-      _ ->
-        maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
-    end
+    maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
   end
 
   defp attach_if_do(ast, state, cursor, ctx, log, true, clean_meta?) do
@@ -195,13 +187,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   defp clean_meta(meta, false), do: meta
 
-  defp maybe_parse_no_parens(ast, _token, state, cursor, _ctx, log, _min_bp, parse_no_parens)
-       when not is_function(parse_no_parens, 6) do
-    raise "dead code"
-    {:ok, ast, state, cursor, log}
-  end
-
-  defp maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens) do
+  defp maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
+       when is_function(parse_no_parens, 6) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, next_tok, _, _} ->
         if allow_no_parens?(token, next_tok) do
@@ -225,12 +212,6 @@ defmodule ToxicParser.Grammar.DoBlocks do
       {:dual_op, _next_meta, _next_value} -> false
       _ -> starts_no_parens_arg?(next_tok)
     end
-  end
-
-  defp allow_no_parens?({kind, _meta, _value}, next_tok)
-       when kind in [:do_identifier, :op_identifier] do
-    raise "dead code"
-    starts_no_parens_arg?(next_tok)
   end
 
   defp starts_no_parens_arg?(next_tok) do

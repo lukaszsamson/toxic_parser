@@ -1344,7 +1344,6 @@ defmodule ToxicParser.Grammar.Stabs do
   defp scan_open?(tok, %{percent_pending?: true}) do
     case tok do
       {kind, _meta, _value} -> kind in [:identifier, :alias]
-      _ -> false
     end
   end
 

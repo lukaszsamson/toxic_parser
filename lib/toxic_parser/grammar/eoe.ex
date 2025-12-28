@@ -80,12 +80,6 @@ defmodule ToxicParser.Grammar.EOE do
   end
 
   @spec annotate_eoe(Macro.t(), keyword()) :: Macro.t()
-  def annotate_eoe({:->, stab_meta, [stab_args, {left, meta, right}]}, eoe_meta)
-      when is_list(meta) do
-    raise "dead code"
-    {:->, stab_meta, [stab_args, {left, [{:end_of_expression, eoe_meta} | meta], right}]}
-  end
-
   def annotate_eoe({left, meta, right}, eoe_meta) when is_list(meta) and left != :-> do
     {left, [{:end_of_expression, eoe_meta} | meta], right}
   end
