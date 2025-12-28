@@ -276,7 +276,7 @@ defmodule ToxicParser.Grammar.Stabs do
                     case Cursor.peek(cursor) do
                       {:ok, {:stab_op, _, _}, _cursor} ->
                         {patterns, parens_meta} =
-                          if length(patterns) == 1 and parens_meta != [] do
+                          if match?([_], patterns) and parens_meta != [] do
                             unwrapped = unwrap_splice(patterns)
 
                             {patterns_with_parens, _stab_meta} =
@@ -442,7 +442,7 @@ defmodule ToxicParser.Grammar.Stabs do
     {init, [last]} = Enum.split(patterns, -1)
 
     case last do
-      {:when, when_meta, when_args} when is_list(when_args) and length(when_args) >= 2 ->
+      {:when, when_meta, when_args = [_, _ | _]} ->
         # Last pattern is a `when` expression - extract it
         # when_args = [pattern1, pattern2, ..., guard]
         {when_patterns, [guard]} = Enum.split(when_args, -1)
@@ -515,8 +515,7 @@ defmodule ToxicParser.Grammar.Stabs do
             # Potentially a quoted keyword like ('x': 1 -> body)
             # Parse as expression and check if it's a keyword list
             case parse_stab_pattern_exprs(acc, state, cursor, ctx, log) do
-              {:ok, [kw_list], state, cursor, log}
-              when is_list(kw_list) and length(kw_list) > 0 ->
+              {:ok, [kw_list = [_ | _]], state, cursor, log} ->
                 # It was a keyword list - return it wrapped
                 {:ok, [kw_list], state, cursor, log}
 
@@ -682,7 +681,7 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # Check if result is a keyword list (from quoted keyword parsing)
-  defp is_keyword_list(list) when is_list(list) and length(list) > 0 do
+  defp is_keyword_list(list = [_ | _]) do
     Enum.all?(list, &keyword_pair?/1)
   end
 
@@ -701,7 +700,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp parse_call_args_parens_quoted_kw_continuation(acc_kw, acc, state, cursor, ctx, log) do
     # Parse the quoted keyword via expression
     case Expressions.expr(state, cursor, Context.matched_expr(), log) do
-      {:ok, expr, state, cursor, log} when is_list(expr) and length(expr) > 0 ->
+      {:ok, expr = [_ | _], state, cursor, log} ->
         {state, cursor} = EOE.skip(state, cursor)
 
         case Cursor.peek(cursor) do
@@ -819,7 +818,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp parse_stab_pattern_exprs_quoted_kw_continuation(acc_kw, acc, state, cursor, log) do
     # Parse the quoted keyword via expression
     case parse_stab_pattern_expr(state, cursor, log) do
-      {:ok, expr, state, cursor, log} when is_list(expr) and length(expr) > 0 ->
+      {:ok, expr = [_ | _], state, cursor, log} ->
         {state_after_eoe, cursor} = EOE.skip(state, cursor)
 
         case Cursor.peek(cursor) do

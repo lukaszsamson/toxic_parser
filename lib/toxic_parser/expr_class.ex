@@ -65,8 +65,8 @@ defmodule ToxicParser.ExprClass do
       Keyword.has_key?(meta, :parens) -> :matched
       Keyword.has_key?(meta, :delimiter) -> :matched
       Keyword.has_key?(meta, :closing) -> :matched
-      length(args) > 1 -> :no_parens
-      length(args) == 1 -> classify(hd(args))
+      match?([_, _ | _], args) -> :no_parens
+      match?([_], args) -> classify(hd(args))
       true -> :matched
     end
   end
@@ -210,25 +210,25 @@ defmodule ToxicParser.ExprClass do
         :matched
 
       # Operators with 1 arg - check if operand propagates no_parens
-      name in @unary_operators and length(args) == 1 ->
+      name in @unary_operators and match?([_], args) ->
         classify_operands(args)
 
       # Operators with 2 args - check if operands propagate no_parens
       # Includes both known operators and custom operators (symbol-based names)
-      length(args) == 2 and (name in @binary_operators or is_operator_name?(name)) ->
+      match?([_, _], args) and (name in @binary_operators or is_operator_name?(name)) ->
         classify_operands(args)
 
       # Ternary operator :..// (range with step) has 3 args
-      name == :..// and length(args) == 3 ->
+      name == :..// and match?([_, _, _], args) ->
         classify_operands(args)
 
       # Multi-arg call without closing -> no_parens_many
-      length(args) > 1 ->
+      match?([_, _ | _], args) ->
         :no_parens
 
       # Single-arg call without closing -> check if arg is no_parens
       # This handles no_parens_one_ambig_expr: f g a, b
-      length(args) == 1 ->
+      match?([_], args) ->
         case classify(hd(args)) do
           # no_parens_one (safe)
           :matched -> :matched

@@ -543,7 +543,7 @@ defmodule ToxicParser.Pratt do
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
       # Don't add it when there's a do-block because then there's no ambiguity
       meta =
-        if callee_kind == :op_identifier and length(args) == 1 and
+        if callee_kind == :op_identifier and match?([_], args) and
              not has_do_block do
           [{:ambiguous_op, nil} | base_meta]
         else
