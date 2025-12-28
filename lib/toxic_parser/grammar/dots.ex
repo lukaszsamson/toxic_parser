@@ -78,8 +78,8 @@ defmodule ToxicParser.Grammar.Dots do
             # Alias needs to be wrapped as __aliases__
             alias_ast = Helpers.from_token(tok)
 
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {:"[", _meta, _value}, _, _} ->
+            case Cursor.peek(cursor) do
+              {:ok, {:"[", _meta, _value}, _cursor} ->
                 {:ok, {alias_ast, :allows_bracket}, state, cursor, log}
 
               _ ->
@@ -173,17 +173,17 @@ defmodule ToxicParser.Grammar.Dots do
         {:ok, kw_list, state, cursor, log} ->
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-          case TokenAdapter.peek(state, cursor) do
-            {:ok, {:"}", _meta, _value}, _, _} ->
+          case Cursor.peek(cursor) do
+            {:ok, {:"}", _meta, _value}, _cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, state, cursor} ->
+            {:ok, {kind, _meta, _value}, _cursor} ->
               {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
-            {:eof, state, cursor} ->
+            {:eof, _cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state, cursor} ->
+            {:error, diag, _cursor} ->
               {:error, diag, state, cursor, log}
           end
 
@@ -204,11 +204,11 @@ defmodule ToxicParser.Grammar.Dots do
   end
 
   defp reject_initial_kw_data(state, cursor, container_ctx, log) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:"}", _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:"}", _meta, _value}, _cursor} ->
         {:ok, state, cursor, log}
 
-      {:ok, {_kind, _meta, tok_value} = tok, _, _} ->
+      {:ok, {_kind, _meta, tok_value} = tok, _cursor} ->
         cond do
           # Definite kw_data start - no need to checkpoint/parse.
           Keywords.starts_kw?(tok) ->
@@ -239,10 +239,10 @@ defmodule ToxicParser.Grammar.Dots do
             {:ok, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -318,7 +318,7 @@ defmodule ToxicParser.Grammar.Dots do
 
         # quoted_paren_identifier_end or ( immediately follows: D."foo"()
         end_kind == :quoted_paren_identifier_end or
-            match?({:ok, {:"(", _, _}, _, _}, TokenAdapter.peek(state, cursor)) ->
+            match?({:ok, {:"(", _, _}, _}, Cursor.peek(cursor)) ->
           {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
 
           # Skip leading EOE and count newlines
@@ -365,8 +365,8 @@ defmodule ToxicParser.Grammar.Dots do
   ]
 
   defp collect_fragments(acc, state, cursor, target_end, log) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {tok_kind, _meta, fragment}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {tok_kind, _meta, fragment}, _cursor} ->
         cond do
           tok_kind == target_end ->
             {:ok, acc, target_end, state, cursor, log}
@@ -383,10 +383,10 @@ defmodule ToxicParser.Grammar.Dots do
             {:error, {:unexpected_string_token, tok_kind}, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end

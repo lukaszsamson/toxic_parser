@@ -14,8 +14,8 @@ defmodule ToxicParser.Recovery do
   end
 
   defp skip_until(state, cursor, kinds, log) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, _cursor} ->
         if kind in kinds do
           {:ok, state, cursor, log}
         else
@@ -26,10 +26,10 @@ defmodule ToxicParser.Recovery do
           end
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:ok, state, cursor, log}
 
-      {:error, _diag, state, cursor} ->
+      {:error, _reason, _cursor} ->
         {:ok, state, cursor, log}
     end
   end

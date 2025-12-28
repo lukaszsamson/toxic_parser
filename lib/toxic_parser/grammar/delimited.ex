@@ -15,6 +15,7 @@ defmodule ToxicParser.Grammar.Delimited do
   """
 
   alias ToxicParser.{Context, Cursor, EventLog, State, TokenAdapter}
+  # TokenAdapter used for TokenAdapter.next
   alias ToxicParser.Grammar.EOE
 
   @type result(item) ::
@@ -93,8 +94,8 @@ defmodule ToxicParser.Grammar.Delimited do
     eof_is_close? = :eof in close_kinds
     {state, cursor} = maybe_skip_eoe(state, cursor, opts, :initial)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, _cursor} ->
         if kind in close_kinds do
           if opts[:allow_empty?] do
             {:ok, [], state, cursor, log}
@@ -105,7 +106,7 @@ defmodule ToxicParser.Grammar.Delimited do
           parse_items_rev([], state, cursor, ctx, log, close_kinds, item_fun, opts)
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         if eof_is_close? do
           if opts[:allow_empty?] do
             {:ok, [], state, cursor, log}
@@ -116,7 +117,7 @@ defmodule ToxicParser.Grammar.Delimited do
           {:error, :unexpected_eof, state, cursor, log}
         end
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -140,8 +141,8 @@ defmodule ToxicParser.Grammar.Delimited do
 
         separator = opts[:separator]
 
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {kind, _meta, _value}, _, _} ->
+        case Cursor.peek(cursor) do
+          {:ok, {kind, _meta, _value}, _cursor} ->
             cond do
               kind in close_kinds ->
                 {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
@@ -150,8 +151,8 @@ defmodule ToxicParser.Grammar.Delimited do
                 {:ok, sep_tok, state, cursor} = TokenAdapter.next(state, cursor)
                 {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_separator)
 
-                case TokenAdapter.peek(state, cursor) do
-                  {:ok, {kind, _meta, _value}, _, _} ->
+                case Cursor.peek(cursor) do
+                  {:ok, {kind, _meta, _value}, _cursor} ->
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
                         {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
@@ -172,10 +173,10 @@ defmodule ToxicParser.Grammar.Delimited do
                       )
                     end
 
-                  {:eof, state, cursor} ->
+                  {:eof, _cursor} ->
                     {:error, :unexpected_eof, state, cursor, log}
 
-                  {:error, diag, state, cursor} ->
+                  {:error, diag, _cursor} ->
                     {:error, diag, state, cursor, log}
                 end
 
@@ -193,32 +194,32 @@ defmodule ToxicParser.Grammar.Delimited do
                 end
             end
 
-          {:eof, state, cursor} ->
+          {:eof, _cursor} ->
             if eof_is_close? do
               {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
             else
               {:error, :unexpected_eof, state, cursor, log}
             end
 
-          {:error, diag, state, cursor} ->
+          {:error, diag, _cursor} ->
             {:error, diag, state, cursor, log}
         end
 
       {:no_item, state, cursor, log} ->
         case after_sep_tok do
           nil ->
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {kind, _meta, _value}, _, _} ->
+            case Cursor.peek(cursor) do
+              {:ok, {kind, _meta, _value}, _cursor} ->
                 {:error, {:expected, :item, got: kind}, state, cursor, log}
 
-              {:eof, state, cursor} ->
+              {:eof, _cursor} ->
                 if eof_is_close? do
                   {:error, {:expected, :item, got: :eof}, state, cursor, log}
                 else
                   {:error, :unexpected_eof, state, cursor, log}
                 end
 
-              {:error, diag, state, cursor} ->
+              {:error, diag, _cursor} ->
                 {:error, diag, state, cursor, log}
             end
 

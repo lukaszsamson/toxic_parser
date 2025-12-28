@@ -10,7 +10,7 @@ defmodule ToxicParser.Grammar.EOE do
   @spec skip(State.t(), ToxicParser.Cursor.t()) :: {State.t(), ToxicParser.Cursor.t()}
   def skip(%State{} = state, cursor) do
     case Layout.peek_sep(state, cursor) do
-      {:ok, _sep, state, cursor} ->
+      {:ok, _sep, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip(state, cursor)
 
@@ -24,11 +24,11 @@ defmodule ToxicParser.Grammar.EOE do
   def skip_count_newlines(%State{} = state, cursor, count)
       when is_integer(count) and count >= 0 do
     case Layout.peek_sep(state, cursor) do
-      {:ok, {_kind, {_, _, n}, _value}, state, cursor} when is_integer(n) ->
+      {:ok, {_kind, {_, _, n}, _value}, cursor} when is_integer(n) ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_count_newlines(state, cursor, count + n)
 
-      {:ok, _sep, state, cursor} ->
+      {:ok, _sep, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_count_newlines(state, cursor, count)
 
@@ -71,7 +71,7 @@ defmodule ToxicParser.Grammar.EOE do
           {State.t(), ToxicParser.Cursor.t(), keyword()}
   def skip_with_meta(%State{} = state, cursor, first_meta \\ nil) do
     case Layout.peek_sep(state, cursor) do
-      {:ok, sep_tok, state, cursor} ->
+      {:ok, sep_tok, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         new_meta = first_meta || Helpers.token_meta(sep_tok)
         skip_with_meta(state, cursor, new_meta)

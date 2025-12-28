@@ -33,8 +33,8 @@ defmodule ToxicParser.Grammar.Strings do
         min_bp \\ 0,
         opts \\ []
       ) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, _cursor} ->
         case kind do
           kind when kind in @simple_string_start ->
             parse_simple_string(state, cursor, ctx, log, min_bp, opts)
@@ -52,10 +52,10 @@ defmodule ToxicParser.Grammar.Strings do
             {:no_string, state, cursor}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_string, state, cursor}
 
-      {:error, _diag, state, cursor} ->
+      {:error, _diag, _cursor} ->
         {:no_string, state, cursor}
     end
   end
@@ -156,8 +156,8 @@ defmodule ToxicParser.Grammar.Strings do
          {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
       # Check for sigil_modifiers token
       {modifiers, state, cursor} =
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {kind, _meta, _value}, _, _} ->
+        case Cursor.peek(cursor) do
+          {:ok, {kind, _meta, _value}, _cursor} ->
             case kind do
               :sigil_modifiers ->
                 {:ok, {:sigil_modifiers, _mod_meta, modifiers}, state, cursor} =
@@ -261,8 +261,8 @@ defmodule ToxicParser.Grammar.Strings do
     # (because line continuation \\\n affects indentation stripping)
     should_unescape = kind not in [:sigil, :heredoc_binary, :heredoc_charlist]
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {end_kind, _meta, _value} = tok, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {end_kind, _meta, _value} = tok, _cursor} ->
         if end_kind in target_ends do
           {:ok, Enum.reverse(acc), end_kind, tok, state, cursor, log}
         else
@@ -316,10 +316,10 @@ defmodule ToxicParser.Grammar.Strings do
           end
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -330,8 +330,8 @@ defmodule ToxicParser.Grammar.Strings do
     open_meta = TokenAdapter.token_meta(begin_tok)
 
     # Check for empty interpolation #{} first
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {peek_kind, _meta, _value} = tok, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {peek_kind, _meta, _value} = tok, _cursor} ->
         case peek_kind do
           :end_interpolation ->
             # Empty interpolation - use empty block
@@ -350,8 +350,8 @@ defmodule ToxicParser.Grammar.Strings do
             alias ToxicParser.Grammar.EOE
             {state, cursor} = EOE.skip(state, cursor)
 
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {end_kind, _meta, _value} = end_tok, _, _} ->
+            case Cursor.peek(cursor) do
+              {:ok, {end_kind, _meta, _value} = end_tok, _cursor} ->
                 case end_kind do
                   :end_interpolation ->
                     # Just EOE before close - empty block with EOE metadata
@@ -365,8 +365,8 @@ defmodule ToxicParser.Grammar.Strings do
                     # EOE followed by content - parse the content as expr_list
                     case Expressions.expr_list(state, cursor, Context.expr(), log) do
                       {:ok, expr, state, cursor, log} ->
-                        case TokenAdapter.peek(state, cursor) do
-                          {:ok, {interp_end_kind, _meta, _value} = interp_end_tok, _, _} ->
+                        case Cursor.peek(cursor) do
+                          {:ok, {interp_end_kind, _meta, _value} = interp_end_tok, _cursor} ->
                             if interp_end_kind == :end_interpolation do
                               {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                               close_meta = TokenAdapter.token_meta(interp_end_tok)
@@ -380,10 +380,10 @@ defmodule ToxicParser.Grammar.Strings do
                                cursor, log}
                             end
 
-                          {:eof, state, cursor} ->
+                          {:eof, _cursor} ->
                             {:error, :unexpected_eof, state, cursor, log}
 
-                          {:error, diag, state, cursor} ->
+                          {:error, diag, _cursor} ->
                             {:error, diag, state, cursor, log}
                         end
 
@@ -392,10 +392,10 @@ defmodule ToxicParser.Grammar.Strings do
                     end
                 end
 
-              {:eof, state, cursor} ->
+              {:eof, _cursor} ->
                 {:error, :unexpected_eof, state, cursor, log}
 
-              {:error, diag, state, cursor} ->
+              {:error, diag, _cursor} ->
                 {:error, diag, state, cursor, log}
             end
 
@@ -406,8 +406,8 @@ defmodule ToxicParser.Grammar.Strings do
             case Expressions.expr_list(state, cursor, Context.expr(), log) do
               {:ok, expr, state, cursor, log} ->
                 # Consume end_interpolation
-                case TokenAdapter.peek(state, cursor) do
-                  {:ok, {end_kind, _meta, _value} = end_tok, _, _} ->
+                case Cursor.peek(cursor) do
+                  {:ok, {end_kind, _meta, _value} = end_tok, _cursor} ->
                     if end_kind == :end_interpolation do
                       {:ok, _end, state, cursor} = TokenAdapter.next(state, cursor)
                       close_meta = TokenAdapter.token_meta(end_tok)
@@ -419,10 +419,10 @@ defmodule ToxicParser.Grammar.Strings do
                       {:error, {:expected_end_interpolation, end_kind}, state, cursor, log}
                     end
 
-                  {:eof, state, cursor} ->
+                  {:eof, _cursor} ->
                     {:error, :unexpected_eof, state, cursor, log}
 
-                  {:error, diag, state, cursor} ->
+                  {:error, diag, _cursor} ->
                     {:error, diag, state, cursor, log}
                 end
 
@@ -431,10 +431,10 @@ defmodule ToxicParser.Grammar.Strings do
             end
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end

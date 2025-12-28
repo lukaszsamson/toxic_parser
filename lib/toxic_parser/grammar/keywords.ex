@@ -6,6 +6,7 @@ defmodule ToxicParser.Grammar.Keywords do
   alias ToxicParser.{
     Builder,
     Context,
+    Cursor,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -13,6 +14,8 @@ defmodule ToxicParser.Grammar.Keywords do
     State,
     TokenAdapter
   }
+
+  # TokenAdapter used for next, checkpoint, rewind, pushback_many, token_meta
 
   alias ToxicParser.Grammar.{EOE, Expressions, Strings}
 
@@ -215,8 +218,8 @@ defmodule ToxicParser.Grammar.Keywords do
   def try_parse_kw_data(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value} = tok, _cursor} ->
         cond do
           starts_kw?(tok) ->
             parse_kw_data(state, cursor, ctx, log)
@@ -234,10 +237,10 @@ defmodule ToxicParser.Grammar.Keywords do
             {:no_kw, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_kw, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -258,8 +261,8 @@ defmodule ToxicParser.Grammar.Keywords do
   def try_parse_kw_call(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value} = tok, _cursor} ->
         cond do
           starts_kw?(tok) ->
             parse_kw_call(state, cursor, ctx, log)
@@ -277,10 +280,10 @@ defmodule ToxicParser.Grammar.Keywords do
             {:no_kw, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_kw, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -322,8 +325,8 @@ defmodule ToxicParser.Grammar.Keywords do
     # no-parens keyword values allow no_parens_expr, so no validation (error_kind = nil)
     error_kind = nil
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value} = tok, _cursor} ->
         cond do
           starts_kw?(tok) ->
             case parse_kw_pair(state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
@@ -347,10 +350,10 @@ defmodule ToxicParser.Grammar.Keywords do
             {:no_kw_expr, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_kw_expr, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -376,8 +379,8 @@ defmodule ToxicParser.Grammar.Keywords do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
     min_bp = Keyword.get(opts, :min_bp, 0)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value} = tok, _cursor} ->
         cond do
           # Definite keyword (kw_identifier) - no checkpoint needed.
           starts_kw?(tok) ->
@@ -403,10 +406,10 @@ defmodule ToxicParser.Grammar.Keywords do
             {:no_kw, state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_kw, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -483,12 +486,12 @@ defmodule ToxicParser.Grammar.Keywords do
   defp parse_kw_list(acc, state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
     case parse_kw_pair(state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
       {:ok, pair, state, cursor, log} ->
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {:",", _meta, _value}, _, _} ->
+        case Cursor.peek(cursor) do
+          {:ok, {:",", _meta, _value}, _cursor} ->
             {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
             # Check for trailing comma - if next is a terminator, stop
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {kind, _meta, _value}, _, _}
+            case Cursor.peek(cursor) do
+              {:ok, {kind, _meta, _value}, _cursor}
               when kind in [:eol, :";", :")", :"]", :"}", :">>"] ->
                 {:ok, Enum.reverse([pair | acc]), state, cursor, log}
 
@@ -515,8 +518,8 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   defp parse_kw_pair(state, cursor, _ctx, log, min_bp, value_ctx, error_kind) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, key}, _, _} when kind in @kw_kinds ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, key}, _cursor} when kind in @kw_kinds ->
         # Standard keyword like foo:
         # Add format: :keyword for token_metadata compatibility
         {:ok, tok, state, cursor} = TokenAdapter.next(state, cursor)
@@ -524,7 +527,7 @@ defmodule ToxicParser.Grammar.Keywords do
         key_meta_kw = [{:format, :keyword} | key_meta]
         parse_kw_value(key, key_meta_kw, state, cursor, log, min_bp, value_ctx, error_kind)
 
-      {:ok, {kind, _meta, _value}, _, _} when kind in @quoted_kw_start ->
+      {:ok, {kind, _meta, _value}, _cursor} when kind in @quoted_kw_start ->
         # Potentially a quoted keyword like "foo": or 'bar':
         # Try parsing as string - if it returns keyword_key, it's a keyword
         case Strings.parse(state, cursor, Context.matched_expr(), log, 10000) do
@@ -553,14 +556,14 @@ defmodule ToxicParser.Grammar.Keywords do
             {:error, reason, state, cursor, log}
         end
 
-      {:ok, {kind, _meta, _value}, _, _} ->
+      {:ok, {kind, _meta, _value}, _cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         {:error, {:expected, :keyword, got: kind}, state, cursor, log}
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end

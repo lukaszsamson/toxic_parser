@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   require ToxicParser.NoParens
 
-  alias ToxicParser.{Builder, Context, EventLog, NoParens, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, EventLog, NoParens, State}
   alias ToxicParser.Grammar.{Blocks, Keywords}
 
   @type result ::
@@ -123,8 +123,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
          parse_no_parens,
          clean_meta?
        ) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:do, _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:do, _meta, _value}, _cursor} ->
         if allow_do_block? do
           attach_if_do(ast, state, cursor, ctx, log, allow_do_block?, clean_meta?)
         else
@@ -152,8 +152,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
   end
 
   defp attach_if_do(ast, state, cursor, ctx, log, true, clean_meta?) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:do, _meta, _value}, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:do, _meta, _value}, _cursor} ->
         with {:ok, {block_meta, sections}, state, cursor, log} <-
                Blocks.parse_do_block(state, cursor, ctx, log) do
           ast = attach_do_block(ast, block_meta, sections, clean_meta?)
@@ -191,8 +191,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
 
   defp maybe_parse_no_parens(ast, token, state, cursor, ctx, log, min_bp, parse_no_parens)
        when is_function(parse_no_parens, 6) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, next_tok, _, _} ->
+    case Cursor.peek(cursor) do
+      {:ok, next_tok, _cursor} ->
         if allow_no_parens?(token, next_tok) do
           # For op_identifier calls, use min_bp=0 to include all operators
           # in the argument per lexer disambiguation.

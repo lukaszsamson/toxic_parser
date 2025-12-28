@@ -9,12 +9,13 @@ defmodule ToxicParser.LayoutTest do
     {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
 
     # Raw eol token with newline count in third element
-    assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}, _value}, state, cursor} =
+    # peek_sep returns 3-tuple: {:ok, token, cursor}
+    assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}, _value}, cursor} =
              Layout.peek_sep(state, cursor)
 
     {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
     # Raw semicolon token
-    assert {:ok, {:";", _meta, _value}, _, _} = Layout.peek_sep(state, cursor)
+    assert {:ok, {:";", _meta, _value}, _cursor} = Layout.peek_sep(state, cursor)
   end
 
   test "skip_newlines_only counts only newline tokens, stops at semicolon" do

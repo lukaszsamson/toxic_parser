@@ -27,17 +27,17 @@ defmodule ToxicParser.Grammar.Blocks do
   """
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:fn, _meta, _value} = tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:fn, _meta, _value} = tok, _cursor} ->
         parse_fn(tok, state, cursor, ctx, log)
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:no_block, state, cursor}
 
-      {:error, _diag, state, cursor} ->
+      {:error, _reason, _cursor} ->
         {:no_block, state, cursor}
 
-      {:ok, _tok, state, cursor} ->
+      {:ok, _tok, _cursor} ->
         {:no_block, state, cursor}
     end
   end
@@ -50,20 +50,20 @@ defmodule ToxicParser.Grammar.Blocks do
     # In elixir_parser.yrl, fn_eoe consumes at most one separator token and
     # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
     {state, cursor, newlines} =
-      case TokenAdapter.peek(state, cursor) do
-        {:ok, {:eol, {_, _, n}, _value}, _, cursor} when is_integer(n) ->
+      case Cursor.peek(cursor) do
+        {:ok, {:eol, {_, _, n}, _value}, _cursor} when is_integer(n) ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:eol, _meta, _value}, _, cursor} ->
+        {:ok, {:eol, _meta, _value}, _cursor} ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
-        {:ok, {:";", {_, _, n}, _value}, _, cursor} when is_integer(n) ->
+        {:ok, {:";", {_, _, n}, _value}, _cursor} when is_integer(n) ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:";", _meta, _value}, _, cursor} ->
+        {:ok, {:";", _meta, _value}, _cursor} ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
@@ -150,8 +150,8 @@ defmodule ToxicParser.Grammar.Blocks do
       encoded_label = Builder.Helpers.literal(label, label_meta, state)
       acc = [{encoded_label, section_value} | acc]
 
-      case TokenAdapter.peek(state, cursor) do
-        {:ok, tok, _, cursor} ->
+      case Cursor.peek(cursor) do
+        {:ok, tok, _cursor} ->
           if block_label?(tok) do
             {:ok, label_tok, state, cursor} = TokenAdapter.next(state, cursor)
             next_label_meta = TokenAdapter.token_meta(label_tok)

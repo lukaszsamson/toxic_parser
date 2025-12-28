@@ -22,8 +22,8 @@ defmodule ToxicParser.Grammar.Stabs do
         %EventLog{} = log,
         min_bp
       ) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:")", _meta, _value} = close_tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:")", _meta, _value} = close_tok, _cursor} ->
         # (;) -> empty stab with semicolon
         # Output: {:__block__, [closing: [...], line: L, column: C], []}
         # NOTE: Empty (;) parens don't include newlines in metadata
@@ -195,8 +195,8 @@ defmodule ToxicParser.Grammar.Stabs do
          log,
          terminator
        ) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:stab_op, _, _} = stab_tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:stab_op, _, _} = stab_tok, _cursor} ->
         # This is definitely a stab clause
         {:ok, _stab, state, cursor} = TokenAdapter.next(state, cursor)
         stab_base_meta = TokenAdapter.token_meta(stab_tok)
@@ -238,7 +238,7 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, clause, state, cursor, log}
         end
 
-      {:ok, {:when_op, _, _} = when_tok, state, cursor} ->
+      {:ok, {:when_op, _, _} = when_tok, _cursor} ->
         # Pattern followed by guard then stab
         {:ok, _when, state, cursor} = TokenAdapter.next(state, cursor)
         when_meta = TokenAdapter.token_meta(when_tok)
@@ -246,8 +246,8 @@ defmodule ToxicParser.Grammar.Stabs do
 
         # If the next token is a keyword pair starter (`y:`), this cannot be a stab guard.
         # It's the `when` operator with a keyword list RHS (see `no_parens_op_expr`).
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {_, _meta, tok_value} = tok, state, cursor} ->
+        case Cursor.peek(cursor) do
+          {:ok, {_, _meta, tok_value} = tok, _cursor} ->
             if Keywords.starts_kw?(tok) do
               cond do
                 patterns == [] ->
@@ -273,8 +273,8 @@ defmodule ToxicParser.Grammar.Stabs do
                          ) do
                     {state, cursor} = EOE.skip(state, cursor)
 
-                    case TokenAdapter.peek(state, cursor) do
-                      {:ok, {:stab_op, _, _}, state, cursor} ->
+                    case Cursor.peek(cursor) do
+                      {:ok, {:stab_op, _, _}, _cursor} ->
                         {patterns, parens_meta} =
                           if length(patterns) == 1 and parens_meta != [] do
                             unwrapped = unwrap_splice(patterns)
@@ -362,7 +362,7 @@ defmodule ToxicParser.Grammar.Stabs do
             end
 
           _ ->
-            # TokenAdapter.peek should not return eof here (terminator inserted), but be defensive.
+            # Cursor.peek should not return eof here (terminator inserted), but be defensive.
             {:not_stab, state, cursor, log}
         end
 
@@ -459,23 +459,23 @@ defmodule ToxicParser.Grammar.Stabs do
   # Grammar: stab_expr -> stab_op_eol_and_expr (no patterns, just -> body)
   #          stab_parens_many -> open_paren call_args_parens close_paren
   defp parse_stab_patterns(acc, state, cursor, ctx, log) do
-    case TokenAdapter.peek(state, cursor) do
+    case Cursor.peek(cursor) do
       # If we immediately see stab_op, there are no patterns
-      {:ok, {:stab_op, _, _}, state, cursor} ->
+      {:ok, {:stab_op, _, _}, _cursor} ->
         {:ok, [], state, cursor, log}
 
       # stab_parens_many: fn (args) -> body end
       # But we need to check if this is actually stab_parens_many or just
       # a parenthesized expression in the pattern (like `(e and f) or g -> ...`)
-      {:ok, {:"(", _meta, _value} = open_tok, state, cursor} ->
+      {:ok, {:"(", _meta, _value} = open_tok, _cursor} ->
         # Try parsing as stab_parens_many first
         {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
         case parse_stab_parens_many(open_tok, checkpoint_state, cursor, ctx, log) do
           {:ok, patterns, state2, cursor2, log2, parens_meta} ->
             # Check if followed by -> or when (actual stab_parens_many)
-            case TokenAdapter.peek(state2, cursor2) do
-              {:ok, {kind, _meta, _value}, state2, cursor2} when kind in [:stab_op, :when_op] ->
+            case Cursor.peek(cursor2) do
+              {:ok, {kind, _meta, _value}, _cursor2} when kind in [:stab_op, :when_op] ->
                 # Yes, this is stab_parens_many
                 state2 = TokenAdapter.drop_checkpoint(state2, ref)
                 {:ok, patterns, state2, cursor2, log2, parens_meta}
@@ -492,7 +492,7 @@ defmodule ToxicParser.Grammar.Stabs do
             parse_stab_pattern_exprs(acc, state, cursor, ctx, log)
         end
 
-      {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+      {:ok, {kind, _meta, _value} = tok, _cursor} ->
         cond do
           Keywords.starts_kw?(tok) ->
             # call_args_no_parens_kw: (x: 1 -> body)
@@ -546,15 +546,15 @@ defmodule ToxicParser.Grammar.Stabs do
     # This ensures `(; )` is parsed as a parenthesized empty block pattern, not as `fn () ->`.
     {state, cursor, _newlines} = EOE.skip_newlines_only(state, cursor, 0)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:";", _meta, _value}, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:";", _meta, _value}, _cursor} ->
         # Force fallback to regular parenthesized-expression parsing.
         {:error, :paren_semicolon, state, cursor, log}
 
       _ ->
-        case TokenAdapter.peek(state, cursor) do
+        case Cursor.peek(cursor) do
           # Empty parens: fn () -> body end
-          {:ok, {:")", _meta, _value} = close_tok, state, cursor} ->
+          {:ok, {:")", _meta, _value} = close_tok, _cursor} ->
             {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = TokenAdapter.token_meta(close_tok)
             # Return empty patterns with parens metadata attached to the clause later
@@ -562,7 +562,7 @@ defmodule ToxicParser.Grammar.Stabs do
             {:ok, [], state, cursor, log, {open_meta, close_meta}}
 
           # Content inside parens - parse as call_args_parens
-          {:ok, _, state, cursor} ->
+          {:ok, _, _cursor} ->
             with {:ok, args, state, cursor, log} <-
                    parse_call_args_parens(state, cursor, ctx, log) do
               {state, cursor} = EOE.skip(state, cursor)
@@ -583,10 +583,10 @@ defmodule ToxicParser.Grammar.Stabs do
               end
             end
 
-          {:eof, state, cursor} ->
+          {:eof, _cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, state, cursor} ->
+          {:error, diag, _cursor} ->
             {:error, diag, state, cursor, log}
         end
     end
@@ -594,8 +594,8 @@ defmodule ToxicParser.Grammar.Stabs do
 
   # Parse call_args_parens: comma-separated expressions, optionally followed by keywords
   defp parse_call_args_parens(state, cursor, ctx, log) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, tok, _cursor} ->
         # TODO: no coverage?
         if Keywords.starts_kw?(tok) do
           # Just keywords: fn (x: 1) -> body end
@@ -617,15 +617,15 @@ defmodule ToxicParser.Grammar.Stabs do
     with {:ok, expr, state, cursor, log} <-
            Expressions.expr(state, cursor, Context.matched_expr(), log) do
       {expr, state, cursor} =
-        case TokenAdapter.peek(state, cursor) do
+        case Cursor.peek(cursor) do
           # Only annotate trailing newline EOE when this is a single-arg paren group.
           # For multi-arg groups like `(a, b\n)`, Elixir does NOT annotate the last arg.
-          {:ok, {kind, _meta, _value} = sep_tok, state, cursor} when kind in [:eol, :";"] ->
+          {:ok, {kind, _meta, _value} = sep_tok, _cursor} when kind in [:eol, :";"] ->
             sep_meta = EOE.build_sep_meta(sep_tok)
             {state_after_sep, cursor} = EOE.skip(state, cursor)
 
             if acc == [] and
-                 match?({:ok, {:")", _, _}, _, _}, TokenAdapter.peek(state_after_sep, cursor)) do
+                 match?({:ok, {:")", _, _}, _}, Cursor.peek(cursor)) do
               {EOE.annotate_eoe(expr, sep_meta), state_after_sep, cursor}
             else
               {expr, state_after_sep, cursor}
@@ -635,13 +635,13 @@ defmodule ToxicParser.Grammar.Stabs do
             {expr, state, cursor}
         end
 
-      case TokenAdapter.peek(state, cursor) do
-        {:ok, {:",", _meta, _value}, state, cursor} ->
+      case Cursor.peek(cursor) do
+        {:ok, {:",", _meta, _value}, _cursor} ->
           {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor} = EOE.skip(state, cursor)
           # Check for keyword after comma
-          case TokenAdapter.peek(state, cursor) do
-            {:ok, tok, state, cursor} ->
+          case Cursor.peek(cursor) do
+            {:ok, tok, _cursor} ->
               cond do
                 Keywords.starts_kw?(tok) ->
                   # Expressions followed by keywords
@@ -704,17 +704,17 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, expr, state, cursor, log} when is_list(expr) and length(expr) > 0 ->
         {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {:",", _meta, _value}, state, cursor} ->
+        case Cursor.peek(cursor) do
+          {:ok, {:",", _meta, _value}, _cursor} ->
             {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {:")", _meta, _value}, state, cursor} ->
+            case Cursor.peek(cursor) do
+              {:ok, {:")", _meta, _value}, _cursor} ->
                 # Trailing comma
                 {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
 
-              {:ok, tok, state, cursor} ->
+              {:ok, tok, _cursor} ->
                 cond do
                   Keywords.starts_kw?(tok) ->
                     # allow_no_parens: true because stab patterns use call_args_no_parens_kw grammar
@@ -760,13 +760,13 @@ defmodule ToxicParser.Grammar.Stabs do
     with {:ok, expr, state, cursor, log} <- parse_stab_pattern_expr(state, cursor, log) do
       {state_after_eoe, cursor} = EOE.skip(state, cursor)
 
-      case TokenAdapter.peek(state_after_eoe, cursor) do
-        {:ok, {:",", _meta, _value}, state, cursor} ->
-          {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+      case Cursor.peek(cursor) do
+        {:ok, {:",", _meta, _value}, _cursor} ->
+          {:ok, _comma, state, cursor} = TokenAdapter.next(state_after_eoe, cursor)
           {state, cursor} = EOE.skip(state, cursor)
           # Check for keyword after comma
-          case TokenAdapter.peek(state, cursor) do
-            {:ok, tok, state, cursor} ->
+          case Cursor.peek(cursor) do
+            {:ok, tok, _cursor} ->
               cond do
                 Keywords.starts_kw?(tok) ->
                   # call_args_no_parens_many: exprs followed by kw
@@ -806,11 +806,11 @@ defmodule ToxicParser.Grammar.Stabs do
               parse_stab_pattern_exprs([expr | acc], state, cursor, Context.matched_expr(), log)
           end
 
-        {:ok, {:stab_op, _meta, _value}, state, cursor} ->
-          {:ok, Enum.reverse([expr | acc]), state, cursor, log}
+        {:ok, {:stab_op, _meta, _value}, _cursor} ->
+          {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
 
         _ ->
-          {:ok, Enum.reverse([expr | acc]), state, cursor, log}
+          {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
       end
     end
   end
@@ -822,17 +822,17 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, expr, state, cursor, log} when is_list(expr) and length(expr) > 0 ->
         {state_after_eoe, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state_after_eoe, cursor) do
-          {:ok, {:",", _meta, _value}, state, cursor} ->
-            {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+        case Cursor.peek(cursor) do
+          {:ok, {:",", _meta, _value}, _cursor} ->
+            {:ok, _comma, state, cursor} = TokenAdapter.next(state_after_eoe, cursor)
             {state, cursor} = EOE.skip(state, cursor)
 
-            case TokenAdapter.peek(state, cursor) do
-              {:ok, {:stab_op, _meta, _value}, state, cursor} ->
+            case Cursor.peek(cursor) do
+              {:ok, {:stab_op, _meta, _value}, _cursor} ->
                 # End before ->
                 {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
 
-              {:ok, tok, state, cursor} ->
+              {:ok, tok, _cursor} ->
                 cond do
                   Keywords.starts_kw?(tok) ->
                     with {:ok, more_kw, state, cursor, log} <-
@@ -863,11 +863,11 @@ defmodule ToxicParser.Grammar.Stabs do
                 {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
             end
 
-          {:ok, {:stab_op, _meta, _value}, state, cursor} ->
-            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
+          {:ok, {:stab_op, _meta, _value}, _cursor} ->
+            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state_after_eoe, cursor, log}
 
           _ ->
-            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
+            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state_after_eoe, cursor, log}
         end
 
       {:ok, _expr, state, cursor, log} ->
@@ -882,10 +882,10 @@ defmodule ToxicParser.Grammar.Stabs do
   # Handles containers ({}, [], <<>>) specially, then delegates to Pratt.
   # Uses @stab_pattern_min_bp to stop before -> only, allowing when and <-/\.
   defp parse_stab_pattern_expr(state, cursor, log) do
-    case TokenAdapter.peek(state, cursor) do
+    case Cursor.peek(cursor) do
       # Container tokens - parse container base then continue with led at min_bp
       # Use parse_container_base which doesn't call Pratt.led internally
-      {:ok, {kind, _meta, _value}, state, cursor} when kind in [:"{", :"[", :"<<"] ->
+      {:ok, {kind, _meta, _value}, _cursor} when kind in [:"{", :"[", :"<<"] ->
         with {:ok, ast, state, cursor, log} <-
                Containers.parse_container_base(state, cursor, Context.expr(), log) do
           # Continue with led to handle trailing operators
@@ -893,7 +893,7 @@ defmodule ToxicParser.Grammar.Stabs do
         end
 
       # Map literal %{} or struct %Name{}
-      {:ok, {kind, _meta, _value}, state, cursor} when kind in [:%{}, :%] ->
+      {:ok, {kind, _meta, _value}, _cursor} when kind in [:%{}, :%] ->
         Maps.parse_map(state, cursor, Context.expr(), log, @stab_pattern_min_bp)
 
       # Other tokens - use Pratt parser with min_bp to stop before ->
@@ -962,24 +962,24 @@ defmodule ToxicParser.Grammar.Stabs do
   def parse_stab_body(%State{} = state, cursor, %Context{}, %EventLog{} = log, terminator) do
     body_ctx = Context.expr()
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {^terminator, _meta, _value}, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {^terminator, _meta, _value}, _cursor} ->
         {:ok, nil, state, cursor, log}
 
-      {:ok, {:block_identifier, _, _}, state, cursor} when terminator == :end ->
+      {:ok, {:block_identifier, _, _}, _cursor} when terminator == :end ->
         {:ok, nil, state, cursor, log}
 
-      {:ok, {kind, _meta, _value}, state, cursor} when kind in [:eol, :";"] ->
+      {:ok, {kind, _meta, _value}, _cursor} when kind in [:eol, :";"] ->
         # `-> ;` / `-> \n` (newlines are normally already skipped by stab_op_eol)
         {:ok, nil, state, cursor, log}
 
-      {:ok, _, state, cursor} ->
+      {:ok, _, _cursor} ->
         Expressions.expr(state, cursor, body_ctx, log)
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:ok, nil, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -1011,8 +1011,8 @@ defmodule ToxicParser.Grammar.Stabs do
       ) do
     {state, cursor} = EOE.skip(state, cursor)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, tok, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, tok, _cursor} ->
         if stop_token?(tok, terminator, stop_kinds) do
           {:ok, acc, state, cursor, log}
         else
@@ -1131,17 +1131,17 @@ defmodule ToxicParser.Grammar.Stabs do
           end
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
 
   defp maybe_annotate_and_consume_eoe(expr, state, cursor) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {kind, _meta, _value} = sep_tok, state, cursor} when kind in [:eol, :";"] ->
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value} = sep_tok, _cursor} when kind in [:eol, :";"] ->
         sep_meta = EOE.build_sep_meta(sep_tok)
 
         annotated =

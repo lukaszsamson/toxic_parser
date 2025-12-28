@@ -17,11 +17,11 @@ defmodule ToxicParser.Layout do
   Returns the raw token.
   """
   @spec peek_sep(State.t(), Cursor.t(), term()) ::
-          {:ok, sep_token(), State.t(), Cursor.t()} | :none
-  def peek_sep(%State{} = state, cursor, _ctx \\ nil) do
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:eol, _meta, _value} = tok, state, cursor} -> {:ok, tok, state, cursor}
-      {:ok, {:";", _meta, _value} = tok, state, cursor} -> {:ok, tok, state, cursor}
+          {:ok, sep_token(), Cursor.t()} | :none
+  def peek_sep(%State{} = _state, cursor, _ctx \\ nil) do
+    case Cursor.peek(cursor) do
+      {:ok, {:eol, _meta, _value} = tok, cursor} -> {:ok, tok, cursor}
+      {:ok, {:";", _meta, _value} = tok, cursor} -> {:ok, tok, cursor}
       _ -> :none
     end
   end
@@ -32,7 +32,7 @@ defmodule ToxicParser.Layout do
   @spec skip_seps(State.t(), Cursor.t(), term()) :: {State.t(), Cursor.t()}
   def skip_seps(%State{} = state, cursor, ctx \\ nil) do
     case peek_sep(state, cursor, ctx) do
-      {:ok, _sep, state, cursor} ->
+      {:ok, _sep, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_seps(state, cursor, ctx)
 
@@ -50,15 +50,15 @@ defmodule ToxicParser.Layout do
           {State.t(), Cursor.t(), non_neg_integer()}
   def skip_newlines_only(%State{} = state, cursor, ctx \\ nil, count \\ 0) when count >= 0 do
     case peek_sep(state, cursor, ctx) do
-      {:ok, {:";", _meta, _value}, _state, _cursor} ->
+      {:ok, {:";", _meta, _value}, _cursor} ->
         # Stop at semicolon - don't consume it
         {state, cursor, count}
 
-      {:ok, {:eol, {_, _, n}, _value}, state, cursor} when is_integer(n) ->
+      {:ok, {:eol, {_, _, n}, _value}, cursor} when is_integer(n) ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_newlines_only(state, cursor, ctx, count + n)
 
-      {:ok, {:eol, _meta, _value}, state, cursor} ->
+      {:ok, {:eol, _meta, _value}, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
         skip_newlines_only(state, cursor, ctx, count)
 

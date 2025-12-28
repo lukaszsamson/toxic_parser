@@ -49,17 +49,17 @@ defmodule ToxicParser.Grammar.Bitstrings do
           # treat this as kw_data if the close bitstring delimiter follows.
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-          case TokenAdapter.peek(state, cursor) do
-            {:ok, {:">>", _meta, _value}, _, cursor} ->
+          case Cursor.peek(cursor) do
+            {:ok, {:">>", _meta, _value}, _cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, state, cursor} ->
+            {:ok, {kind, _meta, _value}, _cursor} ->
               {:error, {:expected, :">>", got: kind}, state, cursor, log}
 
-            {:eof, state, cursor} ->
+            {:eof, _cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state, cursor} ->
+            {:error, diag, _cursor} ->
               {:error, diag, state, cursor, log}
           end
 

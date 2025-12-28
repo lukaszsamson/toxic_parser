@@ -11,7 +11,17 @@ defmodule ToxicParser do
     and continues parsing with normalized `:eoe` tokens carrying newline counts.
   """
 
-  alias ToxicParser.{Context, Env, Error, EventLog, Grammar, Position, Result, TokenAdapter}
+  alias ToxicParser.{
+    Context,
+    Cursor,
+    Env,
+    Error,
+    EventLog,
+    Grammar,
+    Position,
+    Result,
+    TokenAdapter
+  }
 
   @type mode :: :strict | :tolerant
 
@@ -172,9 +182,19 @@ defmodule ToxicParser do
   end
 
   defp parser_error(reason, state) do
+    # Convert charlist error tuples from lexer to strings (like Error.from_toxic does)
+    normalized_reason =
+      case reason do
+        {loc, msg, token} when is_list(msg) and is_list(token) ->
+          {loc, List.to_string(msg), List.to_string(token)}
+
+        other ->
+          other
+      end
+
     %Error{
       phase: :parser,
-      reason: reason,
+      reason: normalized_reason,
       token: nil,
       expected: nil,
       severity: :error,
@@ -188,14 +208,14 @@ defmodule ToxicParser do
 
   # Check for remaining tokens after parsing in strict mode
   defp check_remaining_tokens(state, cursor, :strict) do
-    case TokenAdapter.peek(state, cursor) do
-      {:eof, _state, _cursor} ->
+    case Cursor.peek(cursor) do
+      {:eof, _cursor} ->
         :ok
 
-      {:ok, token, _state, _cursor} ->
+      {:ok, token, _cursor} ->
         {:error, {:syntax_error_before, format_token(token)}, state}
 
-      {:error, _diag, _state, _cursor} ->
+      {:error, _reason, _cursor} ->
         # Lexer error on remaining input - already an error state
         :ok
     end

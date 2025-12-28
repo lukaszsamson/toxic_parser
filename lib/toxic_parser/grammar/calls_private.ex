@@ -23,20 +23,20 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
     {state, cursor} = EOE.skip(state, cursor)
 
-    case TokenAdapter.peek(state, cursor) do
-      {:ok, {:")", _meta, _value}, state, cursor} ->
+    case Cursor.peek(cursor) do
+      {:ok, {:")", _meta, _value}, _cursor} ->
         {:ok, acc, state, cursor, log}
 
-      {:ok, _tok, state, cursor} ->
+      {:ok, _tok, _cursor} ->
         with {:ok, args, state, cursor, log} <-
                parse_call_args_parens(state, cursor, container_ctx, log) do
           {:ok, :lists.reverse(args, acc), state, cursor, log}
         end
 
-      {:eof, state, cursor} ->
+      {:eof, _cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, state, cursor} ->
+      {:error, diag, _cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -46,17 +46,17 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       {:ok, kw_list, state, cursor, log} ->
         {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {:")", _meta, _value}, state, cursor} ->
+        case Cursor.peek(cursor) do
+          {:ok, {:")", _meta, _value}, _cursor} ->
             {:ok, [kw_list], state, cursor, log}
 
-          {:ok, {kind, _meta, _value}, state, cursor} ->
+          {:ok, {kind, _meta, _value}, _cursor} ->
             {:error, {:expected, :")", got: kind}, state, cursor, log}
 
-          {:eof, state, cursor} ->
+          {:eof, _cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, state, cursor} ->
+          {:error, diag, _cursor} ->
             {:error, diag, state, cursor, log}
         end
 
@@ -77,8 +77,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       {:ok, expr, state, cursor, log} ->
         {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {:")", _meta, _value}, state, cursor} ->
+        case Cursor.peek(cursor) do
+          {:ok, {:")", _meta, _value}, _cursor} ->
             {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
           _ ->
@@ -98,23 +98,23 @@ defmodule ToxicParser.Grammar.CallsPrivate do
         {:ok, kw_list, state, cursor, log} ->
           {state, cursor} = EOE.skip(state, cursor)
 
-          case TokenAdapter.peek(state, cursor) do
-            {:ok, {:")", _meta, _value}, state, cursor} ->
+          case Cursor.peek(cursor) do
+            {:ok, {:")", _meta, _value}, _cursor} ->
               {:ok, {:kw_call, kw_list}, state, cursor, log}
 
-            {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
+            {:ok, {:",", _meta, _value} = comma_tok, _cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
 
               {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state,
                cursor, log}
 
-            {:ok, {kind, _meta, _value}, state, cursor} ->
+            {:ok, {kind, _meta, _value}, _cursor} ->
               {:error, {:expected, :")", got: kind}, state, cursor, log}
 
-            {:eof, state, cursor} ->
+            {:eof, _cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, state, cursor} ->
+            {:error, diag, _cursor} ->
               {:error, diag, state, cursor, log}
           end
 
