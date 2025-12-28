@@ -200,7 +200,8 @@ defmodule ToxicParser.Pratt do
         opts \\ []
       ) do
     # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
-    nud_opts = Keyword.merge([min_bp: min_bp], opts)
+    # Use Keyword.put instead of Keyword.merge for single key (avoids list traversal)
+    nud_opts = Keyword.put(opts, :min_bp, min_bp)
 
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
          {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, nud_opts) do
@@ -2426,9 +2427,11 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state, cursor) do
       {:ok, rhs_token, state, cursor} ->
+        # Build rhs_opts directly instead of Keyword.merge (avoids list traversal)
         rhs_opts =
           opts
-          |> Keyword.merge([allow_no_parens_extension?: context.allow_no_parens_expr, unary_operand: false])
+          |> Keyword.put(:allow_no_parens_extension?, context.allow_no_parens_expr)
+          |> Keyword.put(:unary_operand, false)
 
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
@@ -2675,7 +2678,8 @@ defmodule ToxicParser.Pratt do
   end
 
   defp build_meta_with_newlines(token_meta, newlines) when newlines > 0 do
-    [newlines: newlines] ++ token_meta
+    # Use cons instead of ++ to avoid allocating intermediate list
+    [{:newlines, newlines} | token_meta]
   end
 
   defp function_capture_operand?({:/, _meta, [callee, arity]}) when is_integer(arity) do

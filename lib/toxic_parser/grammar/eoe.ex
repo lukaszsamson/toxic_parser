@@ -58,7 +58,9 @@ defmodule ToxicParser.Grammar.EOE do
   @spec build_sep_meta(tuple()) :: keyword()
   def build_sep_meta({kind, {_, _, newlines}, _value} = token)
       when kind in [:eol, :";"] and is_integer(newlines) do
-    [newlines: newlines] ++ Helpers.token_meta(token)
+    # Use cons instead of ++ to avoid allocating intermediate list
+    # Note: Elixir includes newlines: 0 even when there are no newlines
+    [{:newlines, newlines} | Helpers.token_meta(token)]
   end
 
   def build_sep_meta({kind, _meta, _value} = token) when kind in [:eol, :";"] do

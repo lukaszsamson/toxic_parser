@@ -29,14 +29,29 @@ defmodule ToxicParser.Builder.Meta do
   @spec closing_meta(keyword(), keyword(), non_neg_integer(), keyword(), keyword()) :: keyword()
   def closing_meta(base_meta, close_meta, newlines \\ 0, prefix \\ [], opts \\ []) do
     base_first? = Keyword.get(opts, :base_first, false)
-    newlines_kv = newlines_kv(newlines)
+    closing = [closing: close_meta]
 
+    # Build list efficiently - avoid ++ with empty lists
     if base_first? do
-      prefix ++ base_meta ++ newlines_kv ++ [closing: close_meta]
+      # prefix ++ base_meta ++ newlines_kv ++ [closing: close_meta]
+      result = prepend_newlines(closing, newlines)
+      result = base_meta ++ result
+      prepend_list(result, prefix)
     else
-      prefix ++ newlines_kv ++ [closing: close_meta] ++ base_meta
+      # prefix ++ newlines_kv ++ [closing: close_meta] ++ base_meta
+      result = closing ++ base_meta
+      result = prepend_newlines(result, newlines)
+      prepend_list(result, prefix)
     end
   end
+
+  # Prepend list only if non-empty
+  defp prepend_list(tail, []), do: tail
+  defp prepend_list(tail, prefix), do: prefix ++ tail
+
+  # Prepend newlines only if > 0
+  defp prepend_newlines(tail, 0), do: tail
+  defp prepend_newlines(tail, n), do: [{:newlines, n} | tail]
 
   @doc "Builds a `[newlines: n]` keyword when n > 0, otherwise []."
   @spec newlines_meta(non_neg_integer()) :: keyword()
