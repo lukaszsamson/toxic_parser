@@ -30,7 +30,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       {:ok, _tok, state, cursor} ->
         with {:ok, args, state, cursor, log} <-
                parse_call_args_parens(state, cursor, container_ctx, log) do
-          {:ok, Enum.reverse(args) ++ acc, state, cursor, log}
+          {:ok, :lists.reverse(args, acc), state, cursor, log}
         end
 
       {:eof, state, cursor} ->

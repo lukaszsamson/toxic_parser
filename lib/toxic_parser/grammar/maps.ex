@@ -949,7 +949,7 @@ defmodule ToxicParser.Grammar.Maps do
                 _ ->
                   with {:ok, more_entries, close_meta, state, cursor, log} <-
                          parse_map_close(state, cursor, Context.container_expr(), log) do
-                    update_ast = {:|, pipe_meta, [base, [rhs_expr] ++ more_entries]}
+                    update_ast = {:|, pipe_meta, [base, [rhs_expr | more_entries]]}
                     {:ok, update_ast, close_meta, state, cursor, log}
                   end
               end
@@ -1023,7 +1023,7 @@ defmodule ToxicParser.Grammar.Maps do
                   # Parse the remaining entries using map_close (assoc and/or kw tail)
                   with {:ok, more_entries, close_meta, state, cursor, log} <-
                          parse_map_close(state, cursor, Context.container_expr(), log) do
-                    entries = Enum.reverse([{key, value} | acc]) ++ more_entries
+                    entries = :lists.reverse([{key, value} | acc], more_entries)
                     update_ast = {:|, pipe_meta, [base, entries]}
                     {:ok, update_ast, close_meta, state, cursor, log}
                   end
@@ -1158,7 +1158,7 @@ defmodule ToxicParser.Grammar.Maps do
                     {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
                       close_meta = Helpers.token_meta(close_tok)
                       # kw_list is already a list of keyword tuples, don't wrap in another list
-                      entries = Enum.reverse([entry | acc]) ++ kw_list
+                      entries = :lists.reverse([entry | acc], kw_list)
                       {:ok, entries, close_meta, state, cursor, log}
 
                     {:ok, {got_kind, _meta, _value}, state, cursor} ->

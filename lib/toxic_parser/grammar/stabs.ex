@@ -134,7 +134,7 @@ defmodule ToxicParser.Grammar.Stabs do
     # For parens metadata, Elixir uses: [line: L, column: C, closing: [...]]
     # (base_meta first, no newlines for single-expression parens)
     parens_meta = open_meta ++ [closing: close_meta]
-    {name, [parens: parens_meta] ++ meta, args}
+    {name, [{:parens, parens_meta} | meta], args}
   end
 
   defp unwrap_single_non_stab_with_parens([single], _open_meta, _close_meta, _newlines),
@@ -208,7 +208,7 @@ defmodule ToxicParser.Grammar.Stabs do
         newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
 
         stab_meta =
-          if newlines > 0, do: [newlines: newlines] ++ stab_base_meta, else: stab_base_meta
+          if newlines > 0, do: [{:newlines, newlines} | stab_base_meta], else: stab_base_meta
 
         with {:ok, body, state, cursor, log} <-
                parse_stab_body(state, cursor, ctx, log, terminator) do
@@ -329,7 +329,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
                     stab_meta =
                       if newlines > 0,
-                        do: [newlines: newlines] ++ stab_base_meta,
+                        do: [{:newlines, newlines} | stab_base_meta],
                         else: stab_base_meta
 
                     with {:ok, body, state, cursor, log} <-
@@ -649,9 +649,9 @@ defmodule ToxicParser.Grammar.Stabs do
                          Keywords.parse_kw_no_parens_call(state, cursor, ctx, log) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
-                      {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, cursor, log}
+                      {:ok, :lists.reverse(acc, [expr ++ kw_list]), state, cursor, log}
                     else
-                      {:ok, Enum.reverse([expr | acc]) ++ [kw_list], state, cursor, log}
+                      {:ok, :lists.reverse([expr | acc], [kw_list]), state, cursor, log}
                     end
                   end
 
@@ -712,7 +712,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.peek(state, cursor) do
               {:ok, {:")", _meta, _value}, state, cursor} ->
                 # Trailing comma
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
 
               {:ok, tok, state, cursor} ->
                 cond do
@@ -720,7 +720,7 @@ defmodule ToxicParser.Grammar.Stabs do
                     # allow_no_parens: true because stab patterns use call_args_no_parens_kw grammar
                     with {:ok, more_kw, state, cursor, log} <-
                            Keywords.parse_kw_call(state, cursor, ctx, log, allow_no_parens: true) do
-                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, cursor, log}
+                      {:ok, Enum.reverse(acc, [acc_kw ++ expr ++ more_kw]), state, cursor, log}
                     end
 
                   match?({kind, _, _} when kind in [:list_string_start, :bin_string_start], tok) ->
@@ -734,15 +734,15 @@ defmodule ToxicParser.Grammar.Stabs do
                     )
 
                   true ->
-                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                    {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
                 end
 
               _ ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
             end
 
           _ ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
         end
 
       {:ok, _expr, state, cursor, log} ->
@@ -781,9 +781,9 @@ defmodule ToxicParser.Grammar.Stabs do
                          ) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
-                      {:ok, Enum.reverse(acc) ++ [expr ++ kw_list], state, cursor, log}
+                      {:ok, Enum.reverse(acc, [expr ++ kw_list]), state, cursor, log}
                     else
-                      {:ok, Enum.reverse(acc) ++ [expr, kw_list], state, cursor, log}
+                      {:ok, Enum.reverse(acc, [expr, kw_list]), state, cursor, log}
                     end
                   end
 
@@ -830,7 +830,7 @@ defmodule ToxicParser.Grammar.Stabs do
             case TokenAdapter.peek(state, cursor) do
               {:ok, {:stab_op, _meta, _value}, state, cursor} ->
                 # End before ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
 
               {:ok, tok, state, cursor} ->
                 cond do
@@ -843,7 +843,7 @@ defmodule ToxicParser.Grammar.Stabs do
                              log,
                              Precedence.stab_op_bp() + 1
                            ) do
-                      {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr ++ more_kw], state, cursor, log}
+                      {:ok, Enum.reverse(acc, [acc_kw ++ expr ++ more_kw]), state, cursor, log}
                     end
 
                   match?({kind, _, _} when kind in [:list_string_start, :bin_string_start], tok) ->
@@ -856,18 +856,18 @@ defmodule ToxicParser.Grammar.Stabs do
                     )
 
                   true ->
-                    {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                    {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
                 end
 
               _ ->
-                {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+                {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
             end
 
           {:ok, {:stab_op, _meta, _value}, state, cursor} ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
 
           _ ->
-            {:ok, Enum.reverse(acc) ++ [acc_kw ++ expr], state, cursor, log}
+            {:ok, Enum.reverse(acc, [acc_kw ++ expr]), state, cursor, log}
         end
 
       {:ok, _expr, state, cursor, log} ->

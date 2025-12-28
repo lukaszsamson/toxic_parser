@@ -277,7 +277,7 @@ defmodule ToxicParser.Grammar.Expressions do
 
     # Build the :erlang.binary_to_atom call
     dot_ast = {:., start_meta, [:erlang, :binary_to_atom]}
-    call_meta = [delimiter: delimiter, format: :keyword] ++ start_meta
+    call_meta = [{:delimiter, delimiter}, {:format, :keyword} | start_meta]
 
     {dot_ast, call_meta, [binary_ast, :utf8]}
   end

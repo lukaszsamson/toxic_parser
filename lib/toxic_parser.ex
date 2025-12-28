@@ -135,7 +135,7 @@ defmodule ToxicParser do
     %Result{
       ast: ast,
       comments: [],
-      diagnostics: Enum.reverse(state.diagnostics) ++ extra_diagnostics,
+      diagnostics: :lists.reverse(state.diagnostics, extra_diagnostics),
       events: events,
       env: env,
       mode: mode,

@@ -117,7 +117,7 @@ defmodule ToxicParser.Builder.Helpers do
   def from_token({:alias, _meta, name} = token) do
     # Aliases need both :last and regular location metadata
     m = token_meta(token)
-    {:__aliases__, [last: m] ++ m, [name]}
+    {:__aliases__, [{:last, m} | m], [name]}
   end
 
   def from_token({kind, _meta, _value}) when kind in [true, false, nil] do

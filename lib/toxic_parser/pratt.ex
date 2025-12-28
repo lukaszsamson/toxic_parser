@@ -103,8 +103,15 @@ defmodule ToxicParser.Pratt do
 
   defp ensure_no_parens_extension_opt(opts) do
     case Keyword.get(opts, :allow_no_parens_extension?) do
-      nil -> Keyword.put(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
-      _ -> opts
+      nil ->
+        Keyword.put(
+          opts,
+          :allow_no_parens_extension?,
+          not Keyword.get(opts, :unary_operand, false)
+        )
+
+      _ ->
+        opts
     end
   end
 
@@ -538,7 +545,7 @@ defmodule ToxicParser.Pratt do
       meta =
         if callee_kind == :op_identifier and length(args) == 1 and
              not has_do_block do
-          [ambiguous_op: nil] ++ base_meta
+          [{:ambiguous_op, nil} | base_meta]
         else
           base_meta
         end
@@ -1010,7 +1017,9 @@ defmodule ToxicParser.Pratt do
       case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
         {line, col} when is_integer(line) and is_integer(col) ->
           rest_meta = Keyword.drop(meta, [:line, :column])
-          {[line: line, column: col + 1] ++ rest_meta, [line: line, column: col] ++ rest_meta}
+
+          {[{:line, line}, {:column, col + 1} | rest_meta],
+           [{:line, line}, {:column, col} | rest_meta]}
 
         _ ->
           {meta, meta}
@@ -1533,14 +1542,14 @@ defmodule ToxicParser.Pratt do
               # This indicates a no-parens call is expected (from op_identifier/dot_op_identifier)
               {member, member_meta, :no_parens_call} when is_atom(member) ->
                 {:ok,
-                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, true,
+                 {{{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}, true,
                   false}}
 
               # Bracket identifier with :allows_bracket flag: {member_atom, member_meta, :allows_bracket}
               # This indicates bracket access is allowed (no whitespace before [)
               {member, member_meta, :allows_bracket} when is_atom(member) ->
                 {:ok,
-                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                 {{{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}, false,
                   true}}
 
               # Simple identifier: {member_atom, member_meta}
@@ -1548,7 +1557,7 @@ defmodule ToxicParser.Pratt do
               # Bracket access NOT allowed (whitespace before [)
               {member, member_meta} when is_atom(member) ->
                 {:ok,
-                 {{{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}, false,
+                 {{{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}, false,
                   false}}
 
               # Alias on RHS with bracket access allowed (no whitespace before [)
@@ -2062,7 +2071,7 @@ defmodule ToxicParser.Pratt do
   # Meta is [last: alias_location] ++ dot_location
   defp build_dot_alias(left_expr, rhs_alias, rhs_meta, dot_meta) do
     last_meta = Keyword.get(rhs_meta, :last, rhs_meta)
-    {:ok, {:__aliases__, [last: last_meta] ++ dot_meta, [left_expr, rhs_alias]}}
+    {:ok, {:__aliases__, [{:last, last_meta} | dot_meta], [left_expr, rhs_alias]}}
   end
 
   # Parse container args for dot_container: expr.{...}
@@ -2585,7 +2594,7 @@ defmodule ToxicParser.Pratt do
   # NOT encoded - aliases are AST nodes, not primitive literals
   defp literal_to_ast({:alias, _meta, atom} = token, _state) do
     m = Builder.Helpers.token_meta(token)
-    {:__aliases__, [last: m] ++ m, [atom]}
+    {:__aliases__, [{:last, m} | m], [atom]}
   end
 
   # Identifier: wrap in tuple with nil context (variable reference)
@@ -2597,7 +2606,7 @@ defmodule ToxicParser.Pratt do
   # Paren identifier: same as identifier, but mark it so led() knows to handle (
   # Add paren_call: true marker so led() can distinguish if(a) from if (a)
   defp literal_to_ast({:paren_identifier, _meta, atom} = token, _state) do
-    {atom, [paren_call: true] ++ Builder.Helpers.token_meta(token), nil}
+    {atom, [{:paren_call, true} | Builder.Helpers.token_meta(token)], nil}
   end
 
   # Do identifier: same as identifier
@@ -2781,15 +2790,15 @@ defmodule ToxicParser.Pratt do
               # Simple identifier with :no_parens_call flag - treat same as simple identifier
               # In struct base context, { is the struct body, not a no-parens call argument
               {member, member_meta, :no_parens_call} when is_atom(member) ->
-                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
+                {:ok, {{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}}
 
               # Simple identifier with :allows_bracket flag
               {member, member_meta, :allows_bracket} when is_atom(member) ->
-                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
+                {:ok, {{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}}
 
               # Simple identifier: {member_atom, member_meta}
               {member, member_meta} when is_atom(member) ->
-                {:ok, {{:., dot_meta, [left, member]}, [no_parens: true] ++ member_meta, []}}
+                {:ok, {{:., dot_meta, [left, member]}, [{:no_parens, true} | member_meta], []}}
 
               # Other AST node
               other ->

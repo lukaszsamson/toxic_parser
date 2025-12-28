@@ -156,7 +156,7 @@ defmodule ToxicParser.Grammar.Calls do
 
         _ ->
           # Single arg - add ambiguous_op: nil metadata
-          meta = [ambiguous_op: nil] ++ TokenAdapter.token_meta(callee_tok)
+          meta = [{:ambiguous_op, nil} | TokenAdapter.token_meta(callee_tok)]
           ast = {callee, meta, [first_arg]}
 
           DoBlocks.maybe_do_block(ast, state, cursor, ctx, log,
@@ -573,7 +573,7 @@ defmodule ToxicParser.Grammar.Calls do
           end
 
         _ ->
-          meta = [ambiguous_op: nil] ++ TokenAdapter.token_meta(callee_tok)
+          meta = [{:ambiguous_op, nil} | TokenAdapter.token_meta(callee_tok)]
           ast = {callee, meta, [first_arg]}
           DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
       end

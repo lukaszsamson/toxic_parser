@@ -398,7 +398,7 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   defp add_diagnostics(state, diagnostics) do
-    %{state | diagnostics: Enum.reverse(diagnostics) ++ state.diagnostics}
+    %{state | diagnostics: :lists.reverse(diagnostics, state.diagnostics)}
   end
 
   defp update_terminators(state, cursor) do
