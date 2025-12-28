@@ -881,7 +881,9 @@ defmodule ToxicParser.Pratt do
                                    cursor_full,
                                    operand_context,
                                    log,
-                                   0, unary_operand: true) do
+                                   0,
+                                   unary_operand: true
+                                 ) do
                             {:ok, operand_full, state_full, cursor_full, log}
                           end
 
@@ -907,7 +909,9 @@ defmodule ToxicParser.Pratt do
                                      cursor_full,
                                      operand_context,
                                      log,
-                                     0, unary_operand: true) do
+                                     0,
+                                     unary_operand: true
+                                   ) do
                               {:ok, operand_full, state_full, cursor_full, log}
                             end
 

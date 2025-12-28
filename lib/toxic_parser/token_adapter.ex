@@ -358,7 +358,8 @@ defmodule ToxicParser.TokenAdapter do
           {:error_token, _meta, %Toxic.Error{} = err} ->
             {:ok, raw, add_diagnostics(state, [err]), cursor}
 
-          {kind, _, _} when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
+          {kind, _, _}
+          when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
             {:ok, raw, update_terminators(state, cursor), cursor}
 
           _ ->
