@@ -144,9 +144,6 @@ defmodule ToxicParser.Grammar.Delimited do
         case Cursor.peek(cursor) do
           {:ok, {kind, _meta, _value}, _cursor} ->
             cond do
-              kind in close_kinds ->
-                {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
-
               kind == separator ->
                 {:ok, sep_tok, state, cursor} = TokenAdapter.next(state, cursor)
                 {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_separator)
@@ -179,6 +176,9 @@ defmodule ToxicParser.Grammar.Delimited do
                   {:error, diag, _cursor} ->
                     {:error, diag, state, cursor, log}
                 end
+
+              kind in close_kinds ->
+                {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
 
               true ->
                 if opts[:stop_on_unexpected?] do
