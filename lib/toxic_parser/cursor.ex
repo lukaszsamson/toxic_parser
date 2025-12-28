@@ -11,9 +11,9 @@ defmodule ToxicParser.Cursor do
 
   @type token :: Toxic.token()
 
-  # {rest, driver, la_front, la_back, max_peek, la_size}
+  # {rest, driver, la_front, la_back}
   @opaque t ::
-            {charlist(), Toxic.Driver.t(), [token()], [token()], pos_integer(), non_neg_integer()}
+            {charlist(), Toxic.Driver.t(), [token()], [token()]}
 
   @spec new(binary() | charlist(), keyword()) :: t()
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
@@ -40,54 +40,53 @@ defmodule ToxicParser.Cursor do
 
     driver = Toxic.Driver.new(driver_opts)
 
-    max_peek = Keyword.get(opts, :max_peek, 4)
-    {rest, driver, [], [], max_peek, 0}
+    {rest, driver, [], []}
   end
 
   @spec next(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
   # Fast path: front has tokens
-  def next({rest, driver, [tok | front], back, max_peek, size}) do
-    {:ok, tok, {rest, driver, front, back, max_peek, size - 1}}
+  def next({rest, driver, [tok | front], back}) do
+    {:ok, tok, {rest, driver, front, back}}
   end
 
   # Flip path: front empty, back has tokens
-  def next({rest, driver, [], [_ | _] = back, max_peek, size}) do
+  def next({rest, driver, [], [_ | _] = back}) do
     [tok | front] = Enum.reverse(back)
-    {:ok, tok, {rest, driver, front, [], max_peek, size - 1}}
+    {:ok, tok, {rest, driver, front, []}}
   end
 
   # Fetch path: both queues empty, get from driver
-  def next({rest, driver, [], [], max_peek, 0}) do
+  def next({rest, driver, [], []}) do
     case Toxic.Driver.next(rest, driver) do
-      {:ok, tok, rest, driver} -> {:ok, tok, {rest, driver, [], [], max_peek, 0}}
-      {:eof, driver} -> {:eof, {[], driver, [], [], max_peek, 0}}
-      {:error, reason, rest, driver} -> {:error, reason, {rest, driver, [], [], max_peek, 0}}
+      {:ok, tok, rest, driver} -> {:ok, tok, {rest, driver, [], []}}
+      {:eof, driver} -> {:eof, {[], driver, [], []}}
+      {:error, reason, rest, driver} -> {:error, reason, {rest, driver, [], []}}
     end
   end
 
   @spec peek(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
   # Fast path: front has tokens
-  def peek({_rest, _driver, [tok | _], _back, _max_peek, _size} = cursor) do
+  def peek({_rest, _driver, [tok | _], _back} = cursor) do
     {:ok, tok, cursor}
   end
 
   # Flip path: front empty, back has tokens
-  def peek({rest, driver, [], [_ | _] = back, max_peek, size}) do
+  def peek({rest, driver, [], [_ | _] = back}) do
     [tok | _] = front = Enum.reverse(back)
-    {:ok, tok, {rest, driver, front, [], max_peek, size}}
+    {:ok, tok, {rest, driver, front, []}}
   end
 
   # Fetch path: both queues empty, get from driver
-  def peek({rest, driver, [], [], max_peek, 0} = _cursor) do
+  def peek({rest, driver, [], []} = _cursor) do
     case Toxic.Driver.next(rest, driver) do
       {:ok, tok, rest, driver} ->
-        {:ok, tok, {rest, driver, [tok], [], max_peek, 1}}
+        {:ok, tok, {rest, driver, [tok], []}}
 
       {:eof, driver} ->
-        {:eof, {[], driver, [], [], max_peek, 0}}
+        {:eof, {[], driver, [], []}}
 
       {:error, reason, rest, driver} ->
-        {:error, reason, {rest, driver, [], [], max_peek, 0}}
+        {:error, reason, {rest, driver, [], []}}
     end
   end
 
@@ -110,8 +109,8 @@ defmodule ToxicParser.Cursor do
   The pushed token will be the next one returned by next/1.
   """
   @spec pushback(t(), token()) :: t()
-  def pushback({rest, driver, front, back, max_peek, size}, token) do
-    {rest, driver, [token | front], back, max_peek, size + 1}
+  def pushback({rest, driver, front, back}, token) do
+    {rest, driver, [token | front], back}
   end
 
   @doc """
@@ -121,9 +120,9 @@ defmodule ToxicParser.Cursor do
   @spec pushback_many(t(), [token()]) :: t()
   def pushback_many(cursor, []), do: cursor
 
-  def pushback_many({rest, driver, front, back, max_peek, size}, tokens) do
+  def pushback_many({rest, driver, front, back}, tokens) do
     new_front = tokens ++ front
-    {rest, driver, new_front, back, max_peek, size + length(tokens)}
+    {rest, driver, new_front, back}
   end
 
   @doc """
@@ -141,20 +140,20 @@ defmodule ToxicParser.Cursor do
 
   @doc "Pay-for-play terminator snapshot (does not run on every token)."
   @spec current_terminators(t()) :: [term()]
-  def current_terminators({_rest, driver, _front, _back, _max_peek, _size}) do
+  def current_terminators({_rest, driver, _front, _back}) do
     Toxic.Driver.current_terminators(driver)
   end
 
   @doc "Get current position (line, column) from the driver."
   @spec position(t()) :: {pos_integer(), pos_integer()}
-  def position({_rest, driver, _front, _back, _max_peek, _size}) do
+  def position({_rest, driver, _front, _back}) do
     # Driver has line/column fields directly
     {driver.line, driver.column}
   end
 
   @doc "Check if cursor is at EOF (no more tokens in lookahead or source)."
   @spec eof?(t()) :: boolean()
-  def eof?({[], _driver, [], [], _max_peek, 0}), do: true
+  def eof?({[], _driver, [], []}), do: true
   def eof?(_cursor), do: false
 
   # defp ensure_lookahead(cursor, n) do

@@ -65,7 +65,7 @@ defmodule ToxicParser.Pratt do
     :dot_call_op
   ]
 
-  defp is_binary_only_op(kind), do: kind in @binary_only_ops
+  defguardp is_binary_only_op(kind) when kind in @binary_only_ops
 
   @type context :: Context.t()
 

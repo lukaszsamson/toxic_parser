@@ -1189,33 +1189,29 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp scan_classify(state, cursor, consumed, _ctx, _terminator, _stop_kinds, max, _boundary?)
        when max <= 0 do
-    {state, cursor} = TokenAdapter.pushback_many(state, cursor, Enum.reverse(consumed))
+    cursor = Cursor.pushback_many(cursor, Enum.reverse(consumed))
     {:unknown, state, cursor}
   end
 
   defp scan_classify(state, cursor, consumed, ctx, terminator, stop_kinds, max, boundary?) do
-    case TokenAdapter.next(state, cursor) do
-      {:ok, {tok_kind, _meta, _value} = tok, state2, cursor2} ->
+    case Cursor.next(cursor) do
+      {:ok, {tok_kind, _meta, _value} = tok, cursor2} ->
         top? = ctx.delim == 0 and ctx.block == 0
 
         cond do
           top? and tok_kind == :stab_op and boundary? ->
             # If we've already hit an EOE boundary, `->` belongs to the next stab_expr,
             # not the current item (which should be parsed as a plain expr).
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:expr, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:expr, state, cursor3}
 
           top? and tok_kind == :stab_op ->
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:clause, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:clause, state, cursor3}
 
           top? and boundary? and tok_kind in [:eol, :";"] ->
             scan_classify(
-              state2,
+              state,
               cursor2,
               [tok | consumed],
               ctx,
@@ -1226,26 +1222,20 @@ defmodule ToxicParser.Grammar.Stabs do
             )
 
           top? and boundary? ->
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:expr, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:expr, state, cursor3}
 
           top? and stop_token?(tok, terminator, stop_kinds) ->
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:expr, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:expr, state, cursor3}
 
           top? and tok_kind == :";" ->
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:expr, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:expr, state, cursor3}
 
           top? and tok_kind == :eol and ctx.open? == false ->
             scan_classify(
-              state2,
+              state,
               cursor2,
               [tok | consumed],
               ctx,
@@ -1257,7 +1247,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
           top? and tok_kind == :eol ->
             scan_classify(
-              state2,
+              state,
               cursor2,
               [tok | consumed],
               ctx,
@@ -1268,16 +1258,14 @@ defmodule ToxicParser.Grammar.Stabs do
             )
 
           tok_kind == :error_token ->
-            {state2, cursor2} =
-              TokenAdapter.pushback_many(state2, cursor2, Enum.reverse([tok | consumed]))
-
-            {:unknown, state2, cursor2}
+            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            {:unknown, state, cursor3}
 
           true ->
             ctx2 = scan_update_ctx(ctx, tok)
 
             scan_classify(
-              state2,
+              state,
               cursor2,
               [tok | consumed],
               ctx2,
@@ -1288,13 +1276,13 @@ defmodule ToxicParser.Grammar.Stabs do
             )
         end
 
-      {:eof, state2, cursor2} ->
-        {state2, cursor2} = TokenAdapter.pushback_many(state2, cursor2, Enum.reverse(consumed))
-        {:expr, state2, cursor2}
+      {:eof, cursor2} ->
+        cursor3 = Cursor.pushback_many(cursor2, Enum.reverse(consumed))
+        {:expr, state, cursor3}
 
-      {:error, _diag, state2, cursor2} ->
-        {state2, cursor2} = TokenAdapter.pushback_many(state2, cursor2, Enum.reverse(consumed))
-        {:unknown, state2, cursor2}
+      {:error, _diag, cursor2} ->
+        cursor3 = Cursor.pushback_many(cursor2, Enum.reverse(consumed))
+        {:unknown, state, cursor3}
     end
   end
 
