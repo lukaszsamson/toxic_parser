@@ -125,7 +125,7 @@ defmodule ToxicParser.TokenAdapter do
   @spec newlines(token()) :: non_neg_integer()
   def newlines({kind, {_, _, count}, _value})
       when kind in [:eol, :";", :","] and is_integer(count),
-    do: count
+      do: count
 
   # Literals encode parsed values in extra, not newline counts
   def newlines({kind, _meta, _value}) when kind in [:int, :flt, :char], do: 0
@@ -168,7 +168,10 @@ defmodule ToxicParser.TokenAdapter do
   defp delimiter({token, _meta, _value}) when token in [:"(", :")"], do: {:paren, {"(", ")"}}
   defp delimiter({token, _meta, _value}) when token in [:"[", :"]"], do: {:bracket, {"[", "]"}}
   defp delimiter({token, _meta, _value}) when token in [:"{", :"}"], do: {:curly, {"{", "}"}}
-  defp delimiter({token, _meta, _value}) when token in [:"<<", :">>"], do: {:bitstring, {"<<", ">>"}}
+
+  defp delimiter({token, _meta, _value}) when token in [:"<<", :">>"],
+    do: {:bitstring, {"<<", ">>"}}
+
   defp delimiter(_), do: nil
 
   defp delimiter_role({token, _meta, _value}) when token in [:"(", :"[", :"{", :"<<"], do: :open
@@ -314,12 +317,12 @@ defmodule ToxicParser.TokenAdapter do
     checkpoint = Map.fetch!(state.checkpoints, ref)
 
     {%{
-      state
-      | diagnostics: checkpoint.diagnostics,
-        terminators: checkpoint.terminators,
-        event_log: checkpoint.event_log,
-        checkpoints: Map.delete(state.checkpoints, ref)
-    }, Cursor.rewind(cursor, checkpoint.cursor)}
+       state
+       | diagnostics: checkpoint.diagnostics,
+         terminators: checkpoint.terminators,
+         event_log: checkpoint.event_log,
+         checkpoints: Map.delete(state.checkpoints, ref)
+     }, Cursor.rewind(cursor, checkpoint.cursor)}
   end
 
   @doc """

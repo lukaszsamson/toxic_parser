@@ -23,8 +23,16 @@ defmodule ToxicParser.Grammar.Containers do
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
           | {:no_container, State.t(), Cursor.t()}
 
-  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) :: result()
-  def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) ::
+          result()
+  def parse(
+        %State{} = state,
+        cursor,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp \\ 0,
+        opts \\ []
+      ) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, {:"(", _meta, _value}, _, cursor} ->
         parse_paren(state, cursor, ctx, log, min_bp, opts)
@@ -116,13 +124,33 @@ defmodule ToxicParser.Grammar.Containers do
         else
           # Skip any remaining EOE tokens and count newlines
           {state, cursor, more_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-          parse_paren_content(open_meta, newlines + more_newlines, state, cursor, ctx, log, min_bp, opts)
+
+          parse_paren_content(
+            open_meta,
+            newlines + more_newlines,
+            state,
+            cursor,
+            ctx,
+            log,
+            min_bp,
+            opts
+          )
         end
 
       _ ->
         # Skip any remaining EOE tokens and count newlines
         {state, cursor, more_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-        parse_paren_content(open_meta, newlines + more_newlines, state, cursor, ctx, log, min_bp, opts)
+
+        parse_paren_content(
+          open_meta,
+          newlines + more_newlines,
+          state,
+          cursor,
+          ctx,
+          log,
+          min_bp,
+          opts
+        )
     end
   end
 
@@ -222,11 +250,13 @@ defmodule ToxicParser.Grammar.Containers do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
+          with {:ok, expr, state, cursor, log} <-
+                 Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed in containers
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor, log}
+                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                 log}
 
               _ ->
                 {:ok, {:expr, expr}, state, cursor, log}
@@ -295,7 +325,8 @@ defmodule ToxicParser.Grammar.Containers do
     {:ok, open_tok, state, cursor} = TokenAdapter.next(state, cursor)
     open_meta = TokenAdapter.token_meta(open_tok)
 
-    with {:ok, elements, newlines, close_meta, state, cursor, log} <- parse_tuple_args(state, cursor, ctx, log) do
+    with {:ok, elements, newlines, close_meta, state, cursor, log} <-
+           parse_tuple_args(state, cursor, ctx, log) do
       meta = Meta.closing_meta(open_meta, close_meta, newlines)
 
       # 2-element tuples are represented as literal {a, b} and are encodable
@@ -344,11 +375,13 @@ defmodule ToxicParser.Grammar.Containers do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
+          with {:ok, expr, state, cursor, log} <-
+                 Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed in containers
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor, log}
+                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                 log}
 
               _ ->
                 {:ok, {:expr, expr}, state, cursor, log}
@@ -374,7 +407,9 @@ defmodule ToxicParser.Grammar.Containers do
           case TokenAdapter.next(state, cursor) do
             {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
               close_meta = TokenAdapter.token_meta(close_tok)
-              {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state, cursor, log}
+
+              {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state,
+               cursor, log}
 
             {:ok, {kind, _meta, _value}, state, cursor} ->
               {:error, {:expected, :"}", got: kind}, state, cursor, log}

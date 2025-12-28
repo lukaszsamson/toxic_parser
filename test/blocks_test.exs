@@ -7,7 +7,9 @@ defmodule ToxicParser.BlocksTest do
     {state, cursor} = TokenAdapter.new("fn -> :ok end")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert {:fn, _, [{:->, _, [[], :ok]}]} = ast
   end
 

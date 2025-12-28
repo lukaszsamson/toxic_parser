@@ -7,7 +7,8 @@ defmodule ToxicParser.Recovery do
 
   @expr_sync [:eol, :";", :"}", :"]", :")", :end]
 
-  @spec sync_expr(State.t(), Cursor.t(), EventLog.t()) :: {:ok, State.t(), Cursor.t(), EventLog.t()}
+  @spec sync_expr(State.t(), Cursor.t(), EventLog.t()) ::
+          {:ok, State.t(), Cursor.t(), EventLog.t()}
   def sync_expr(%State{} = state, cursor, %EventLog{} = log) do
     skip_until(state, cursor, @expr_sync, log)
   end

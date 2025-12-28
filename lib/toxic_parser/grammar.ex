@@ -23,7 +23,8 @@ defmodule ToxicParser.Grammar do
     {state, cursor} = TokenAdapter.new(source, opts)
     log = EventLog.new() |> EventLog.start_node(:root, zero_meta())
 
-    with {:ok, ast, state, cursor, log} <- Expressions.expr_list(state, cursor, Context.expr(), log) do
+    with {:ok, ast, state, cursor, log} <-
+           Expressions.expr_list(state, cursor, Context.expr(), log) do
       log = EventLog.end_node(log, :root, zero_meta())
       {:ok, ast, state, cursor, log}
     end

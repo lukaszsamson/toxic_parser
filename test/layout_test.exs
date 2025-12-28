@@ -11,6 +11,7 @@ defmodule ToxicParser.LayoutTest do
     # Raw eol token with newline count in third element
     assert {:ok, {:eol, {{1, 2}, {3, 1}, 2}, _value}, state, cursor} =
              Layout.peek_sep(state, cursor)
+
     {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
     # Raw semicolon token
     assert {:ok, {:";", _meta, _value}, _, _} = Layout.peek_sep(state, cursor)

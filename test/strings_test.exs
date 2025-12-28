@@ -6,21 +6,30 @@ defmodule ToxicParser.StringsTest do
   test "parses binary string" do
     {state, cursor} = TokenAdapter.new(~S("abc"))
     log = EventLog.new()
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert ast == "abc"
   end
 
   test "parses charlist" do
     {state, cursor} = TokenAdapter.new(~S('abc'))
     log = EventLog.new()
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert ast == ~c'abc'
   end
 
   test "parses sigil" do
     {state, cursor} = TokenAdapter.new("~r/foo/")
     log = EventLog.new()
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert match?({:sigil_r, _, [_content, _mods]}, ast)
   end
 end

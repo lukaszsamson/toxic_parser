@@ -105,7 +105,8 @@ defmodule ToxicParser.Grammar.Expressions do
               {:keyword_key, key_atom, key_meta, state, cursor, log} ->
                 {state, cursor} = EOE.skip(state, cursor)
 
-                with {:ok, value_ast, state, cursor, log} <- expr(state, cursor, keyword_value_context(ctx), log) do
+                with {:ok, value_ast, state, cursor, log} <-
+                       expr(state, cursor, keyword_value_context(ctx), log) do
                   key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
                   {:ok, [{key_ast, value_ast}], state, cursor, log}
                 end
@@ -113,7 +114,8 @@ defmodule ToxicParser.Grammar.Expressions do
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor, log} ->
                 {state, cursor} = EOE.skip(state, cursor)
 
-                with {:ok, value_ast, state, cursor, log} <- expr(state, cursor, keyword_value_context(ctx), log) do
+                with {:ok, value_ast, state, cursor, log} <-
+                       expr(state, cursor, keyword_value_context(ctx), log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
                   {:ok, [{key_ast, value_ast}], state, cursor, log}
                 end
@@ -132,7 +134,8 @@ defmodule ToxicParser.Grammar.Expressions do
                       {:ok, [{key_ast, value_ast}], state, cursor, log}
                     end
 
-                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor, log} ->
+                  {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor,
+                   log} ->
                     {state, cursor} = EOE.skip(state, cursor)
 
                     with {:ok, value_ast, state, cursor, log} <-

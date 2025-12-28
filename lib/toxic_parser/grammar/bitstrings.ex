@@ -64,11 +64,13 @@ defmodule ToxicParser.Grammar.Bitstrings do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
+          with {:ok, expr, state, cursor, log} <-
+                 Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed in containers
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor, log}
+                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                 log}
 
               _ ->
                 {:ok, {:expr, expr}, state, cursor, log}

@@ -3701,6 +3701,12 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("receive do ('c') -> :ok after 0 -> :timeout end")
       assert_conforms("case x do ('c') -> :ok end")
     end
+
+    test "repro 167" do
+      assert_conforms(
+        "\n%baz{@ Context ** with|[foo: \n\nnot qux.\nbar,foo: cond\n]\n}\n\n;@ delta.gamma.{\nbaz.alpha,baz,@ delta,} \\\\\n// + @ foo[\nfoo]"
+      )
+    end
   end
 
   # =============================================================================

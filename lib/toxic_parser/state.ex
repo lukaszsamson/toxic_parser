@@ -72,17 +72,17 @@ defmodule ToxicParser.State do
     ctx = Keyword.get(opts, :expression_context, Context.expr())
 
     {%__MODULE__{
-      mode: mode,
-      emit_events?: emit_events?,
-      opts: opts,
-      fuel: Keyword.get(opts, :fuel_limit, :infinity),
-      expression_context: ctx,
-      line_index: line_index(source_bin),
-      terminators: terminators,
-      max_peek: max_peek,
-      source: source_bin,
-      event_log: EventLog.new()
-    }, cursor}
+       mode: mode,
+       emit_events?: emit_events?,
+       opts: opts,
+       fuel: Keyword.get(opts, :fuel_limit, :infinity),
+       expression_context: ctx,
+       line_index: line_index(source_bin),
+       terminators: terminators,
+       max_peek: max_peek,
+       source: source_bin,
+       event_log: EventLog.new()
+     }, cursor}
   end
 
   @doc """

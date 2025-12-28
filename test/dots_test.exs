@@ -7,18 +7,27 @@ defmodule ToxicParser.DotsTest do
   test "dot identifiers and aliases" do
     {state, cursor} = TokenAdapter.new("foo.bar")
     log = EventLog.new()
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert Macro.to_string(ast) =~ "bar"
 
     {state, cursor} = TokenAdapter.new("Foo.Bar")
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert Macro.to_string(ast) =~ "Bar"
   end
 
   test "dot calls" do
     {state, cursor} = TokenAdapter.new("foo.bar(1)")
     log = EventLog.new()
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert Macro.to_string(ast) =~ "bar(1)"
 
     {state, cursor} = TokenAdapter.new("foo.(1)")
@@ -27,11 +36,17 @@ defmodule ToxicParser.DotsTest do
              Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
 
     {state, cursor} = TokenAdapter.new("foo.()")
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert Macro.to_string(ast) =~ "foo"
 
     {state, cursor} = TokenAdapter.new("foo.bar().baz")
-    assert {:ok, ast, _state, _cursor, _log} = Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
+    assert {:ok, ast, _state, _cursor, _log} =
+             Grammar.Expressions.expr(state, cursor, Context.matched_expr(), log)
+
     assert Macro.to_string(ast) =~ "baz"
   end
 

@@ -29,8 +29,8 @@ defmodule ToxicParser.Grammar.Calls do
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
           | {:keyword_key, atom(), keyword(), State.t(), Cursor.t(), EventLog.t()}
-          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(), Cursor.t(),
-             EventLog.t()}
+          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
+             Cursor.t(), EventLog.t()}
 
   @doc """
   Parses a call-or-identifier expression. Currently falls back to Pratt for
@@ -78,7 +78,6 @@ defmodule ToxicParser.Grammar.Calls do
         Pratt.parse(state, cursor, ctx, log)
 
       {:ok, {next_kind, _meta, _value} = next_tok, _, cursor} ->
-
         cond do
           # op_identifier means tokenizer determined this is a no-parens call
           # with a unary expression argument (e.g., "a -1" where - is unary)
@@ -132,14 +131,16 @@ defmodule ToxicParser.Grammar.Calls do
   #          no_parens_one_ambig -> op_identifier call_args_no_parens_ambig
   defp parse_op_identifier_call({_, _, callee} = callee_tok, state, cursor, ctx, log) do
     # Parse first arg as no_parens_expr (elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr)
-    with {:ok, first_arg, state, cursor, log} <- Expressions.expr(state, cursor, Context.no_parens_expr(), log) do
+    with {:ok, first_arg, state, cursor, log} <-
+           Expressions.expr(state, cursor, Context.no_parens_expr(), log) do
       # Check for comma to see if there are more args
       case TokenAdapter.peek(state, cursor) do
         {:ok, {:",", _meta, _value}, _, cursor} ->
           # Multiple args - continue parsing
           {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
 
-          with {:ok, args, state, cursor, log} <- parse_no_parens_args([first_arg], state, cursor, ctx, log) do
+          with {:ok, args, state, cursor, log} <-
+                 parse_no_parens_args([first_arg], state, cursor, ctx, log) do
             # No ambiguous_op metadata when multiple args
             meta = TokenAdapter.token_meta(callee_tok)
             ast = {callee, meta, args}
@@ -238,7 +239,8 @@ defmodule ToxicParser.Grammar.Calls do
     {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
     with {:ok, args, state, cursor, log} <- parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :")") do
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = TokenAdapter.token_meta(callee_tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
@@ -274,7 +276,8 @@ defmodule ToxicParser.Grammar.Calls do
     {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
     with {:ok, args, state, cursor, log} <- parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :")") do
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = extract_meta(callee_ast)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
@@ -293,10 +296,17 @@ defmodule ToxicParser.Grammar.Calls do
 
   defp expect_token(state, cursor, kind) do
     case TokenAdapter.next(state, cursor) do
-      {:ok, {^kind, _meta, _value} = token, state, cursor} -> {:ok, token, state, cursor}
-      {:ok, {got_kind, _meta, _value}, state, cursor} -> {:error, {:expected, kind, got: got_kind}, state, cursor}
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor}
-      {:error, diag, state, cursor} -> {:error, diag, state, cursor}
+      {:ok, {^kind, _meta, _value} = token, state, cursor} ->
+        {:ok, token, state, cursor}
+
+      {:ok, {got_kind, _meta, _value}, state, cursor} ->
+        {:error, {:expected, kind, got: got_kind}, state, cursor}
+
+      {:eof, state, cursor} ->
+        {:error, :unexpected_eof, state, cursor}
+
+      {:error, diag, state, cursor} ->
+        {:error, diag, state, cursor}
     end
   end
 
@@ -320,7 +330,6 @@ defmodule ToxicParser.Grammar.Calls do
       ) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value}, _, cursor} ->
-
         case kind do
           k when k in [:eol, :";", :")", :"]", :"}", :do] ->
             {:ok, Enum.reverse(acc), state, cursor, log}
@@ -363,7 +372,9 @@ defmodule ToxicParser.Grammar.Calls do
                     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
                     arg_context = Context.no_parens_expr()
 
-                    case Pratt.parse_with_min_bp(state, cursor, arg_context, log, 0, stop_at_assoc: true) do
+                    case Pratt.parse_with_min_bp(state, cursor, arg_context, log, 0,
+                           stop_at_assoc: true
+                         ) do
                       {:ok, arg, state, cursor, log} ->
                         handle_no_parens_arg(arg, acc, state, cursor, ctx, log, min_bp, opts)
 
@@ -441,7 +452,14 @@ defmodule ToxicParser.Grammar.Calls do
   The caller is responsible for calling led() with the correct min_bp.
   Optional `min_bp` parameter (default 0) is threaded through to argument parsing.
   """
-  @spec parse_without_led(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) ::
+  @spec parse_without_led(
+          State.t(),
+          Cursor.t(),
+          Pratt.context(),
+          EventLog.t(),
+          non_neg_integer(),
+          keyword()
+        ) ::
           result()
   def parse_without_led(
         %State{} = state,
@@ -483,7 +501,6 @@ defmodule ToxicParser.Grammar.Calls do
         parse_bracket_access_no_led(tok, open_tok, state, cursor, ctx, log)
 
       {:ok, {next_kind, _meta, _value} = next_tok, _, cursor} ->
-
         cond do
           kind == :op_identifier ->
             parse_op_identifier_call_no_led(tok, state, cursor, ctx, log, min_bp, opts)
@@ -524,7 +541,8 @@ defmodule ToxicParser.Grammar.Calls do
     {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
     with {:ok, args, state, cursor, log} <- parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :")") do
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = TokenAdapter.token_meta(callee_tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
@@ -557,13 +575,23 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_op_identifier_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log, _min_bp, opts) do
+  defp parse_op_identifier_call_no_led(
+         {_, _, callee} = callee_tok,
+         state,
+         cursor,
+         ctx,
+         log,
+         _min_bp,
+         opts
+       ) do
     # Use min_bp=0 for op_identifier arguments - same reasoning as parse_no_parens_args.
     # This allows @spec +integer :: integer to parse :: as part of the argument.
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
     # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
     with {:ok, first_arg, state, cursor, log} <-
-           Pratt.parse_with_min_bp(state, cursor, Context.no_parens_expr(), log, 0, stop_at_assoc: true) do
+           Pratt.parse_with_min_bp(state, cursor, Context.no_parens_expr(), log, 0,
+             stop_at_assoc: true
+           ) do
       case TokenAdapter.peek(state, cursor) do
         {:ok, {:",", _meta, _value}, _, cursor} ->
           # raise "dead code"
@@ -584,8 +612,17 @@ defmodule ToxicParser.Grammar.Calls do
     end
   end
 
-  defp parse_no_parens_call_no_led({_, _, callee} = callee_tok, state, cursor, ctx, log, min_bp, opts) do
-    with {:ok, args, state, cursor, log} <- parse_no_parens_args([], state, cursor, ctx, log, min_bp, opts) do
+  defp parse_no_parens_call_no_led(
+         {_, _, callee} = callee_tok,
+         state,
+         cursor,
+         ctx,
+         log,
+         min_bp,
+         opts
+       ) do
+    with {:ok, args, state, cursor, log} <-
+           parse_no_parens_args([], state, cursor, ctx, log, min_bp, opts) do
       meta = TokenAdapter.token_meta(callee_tok)
       ast = {callee, meta, args}
       DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)

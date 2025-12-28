@@ -14,7 +14,8 @@ defmodule ToxicParser.Grammar.Dots do
   @doc """
   Parse a dot call `expr.(...)` when the current token is `:dot_call_op`.
   """
-  @spec parse_dot_call(Macro.t(), State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
+  @spec parse_dot_call(Macro.t(), State.t(), Cursor.t(), Pratt.context(), EventLog.t()) ::
+          result()
   def parse_dot_call(left, %State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     {:ok, dot_tok, state, cursor} = TokenAdapter.next(state, cursor)
     dot_meta = Helpers.token_meta(dot_tok)
@@ -27,7 +28,8 @@ defmodule ToxicParser.Grammar.Dots do
 
     with {:ok, args, state, cursor, log} <-
            ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :")") do
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       call_meta = Meta.closing_meta(dot_meta, close_meta, total_newlines)
 
@@ -55,7 +57,6 @@ defmodule ToxicParser.Grammar.Dots do
   def parse_member(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, dot_meta) do
     case TokenAdapter.next(state, cursor) do
       {:ok, {tok_kind, _meta, tok_value} = tok, state, cursor} ->
-
         case Identifiers.classify(tok_kind) do
           kind
           when kind in [
@@ -120,7 +121,8 @@ defmodule ToxicParser.Grammar.Dots do
 
     with {:ok, args, state, cursor, log} <-
            ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, cursor, ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :")") do
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :")") do
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       callee_meta = Helpers.token_meta(tok)
       meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
@@ -144,8 +146,10 @@ defmodule ToxicParser.Grammar.Dots do
     container_ctx = Context.container_expr()
 
     with {:ok, state, cursor, log} <- reject_initial_kw_data(state, cursor, container_ctx, log),
-         {:ok, tagged_items, state, cursor, log} <- parse_curly_args(state, cursor, container_ctx, log),
-         {:ok, close_meta, trailing_newlines, state, cursor} <- Meta.consume_closing(state, cursor, :"}") do
+         {:ok, tagged_items, state, cursor, log} <-
+           parse_curly_args(state, cursor, container_ctx, log),
+         {:ok, close_meta, trailing_newlines, state, cursor} <-
+           Meta.consume_closing(state, cursor, :"}") do
       args = finalize_curly_items(tagged_items)
       total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
       # Use dot's metadata for the call column (not the curly's position)
@@ -184,7 +188,8 @@ defmodule ToxicParser.Grammar.Dots do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
+          with {:ok, expr, state, cursor, log} <-
+                 Expressions.expr(state, cursor, container_ctx, log) do
             {:ok, {:expr, expr}, state, cursor, log}
           end
 
@@ -193,7 +198,9 @@ defmodule ToxicParser.Grammar.Dots do
       end
     end
 
-    Delimited.parse_comma_separated(state, cursor, container_ctx, log, :"}", item_fun, allow_empty?: true)
+    Delimited.parse_comma_separated(state, cursor, container_ctx, log, :"}", item_fun,
+      allow_empty?: true
+    )
   end
 
   defp reject_initial_kw_data(state, cursor, container_ctx, log) do
@@ -269,7 +276,13 @@ defmodule ToxicParser.Grammar.Dots do
 
   # Parse quoted identifier: D."foo" or D."foo"() or D."foo" arg (no-parens)
   # Token sequence: quoted_identifier_start -> string_fragment* -> quoted_identifier_end/quoted_op_identifier_end
-  defp parse_quoted_identifier({:quoted_identifier_start, _meta, start_value} = start_tok, state, cursor, ctx, log) do
+  defp parse_quoted_identifier(
+         {:quoted_identifier_start, _meta, start_value} = start_tok,
+         state,
+         cursor,
+         ctx,
+         log
+       ) do
     start_meta = Helpers.token_meta(start_tok)
     delimiter = delimiter_from_value(start_value)
 
@@ -354,7 +367,6 @@ defmodule ToxicParser.Grammar.Dots do
   defp collect_fragments(acc, state, cursor, target_end, log) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, {tok_kind, _meta, fragment}, _, _} ->
-
         cond do
           tok_kind == target_end ->
             {:ok, acc, target_end, state, cursor, log}

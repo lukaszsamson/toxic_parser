@@ -8,9 +8,23 @@ defmodule ToxicParser.Grammar.DoBlocks do
           {:ok, Macro.t(), State.t(), ToxicParser.Cursor.t(), EventLog.t()}
           | {:error, term(), State.t(), ToxicParser.Cursor.t(), EventLog.t()}
 
-  @spec maybe_do_block(Macro.t(), State.t(), ToxicParser.Cursor.t(), any(), EventLog.t(), keyword()) ::
+  @spec maybe_do_block(
+          Macro.t(),
+          State.t(),
+          ToxicParser.Cursor.t(),
+          any(),
+          EventLog.t(),
+          keyword()
+        ) ::
           result
-  def maybe_do_block(ast, %State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
+  def maybe_do_block(
+        ast,
+        %State{} = state,
+        cursor,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        opts \\ []
+      ) do
     allow_do_block? = Context.allow_do_block?(ctx)
     clean_meta? = Keyword.get(opts, :clean_meta?, true)
     token = Keyword.get(opts, :token)
@@ -213,7 +227,8 @@ defmodule ToxicParser.Grammar.DoBlocks do
     end
   end
 
-  defp allow_no_parens?({kind, _meta, _value}, next_tok) when kind in [:do_identifier, :op_identifier] do
+  defp allow_no_parens?({kind, _meta, _value}, next_tok)
+       when kind in [:do_identifier, :op_identifier] do
     raise "dead code"
     starts_no_parens_arg?(next_tok)
   end

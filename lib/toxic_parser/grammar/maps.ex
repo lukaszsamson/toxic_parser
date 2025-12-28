@@ -11,7 +11,8 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
 
-  @spec parse_map(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  @spec parse_map(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) ::
+          result()
   def parse_map(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0) do
     with {:ok, ast, state, cursor, log} <- parse_map_base(state, cursor, ctx, log) do
       # Continue with Pratt.led to handle trailing operators
@@ -84,9 +85,11 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, {:at_op, _meta, _value}, state, cursor} ->
         {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
           TokenAdapter.next(state, cursor)
+
         {state, cursor} = EOE.skip(state, cursor)
 
-        with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, Context.matched_expr(), log) do
+        with {:ok, operand, state, cursor, log} <-
+               parse_unary_operand(state, cursor, Context.matched_expr(), log) do
           op_meta = Helpers.token_meta(op_tok)
           ast = {op_value, op_meta, [operand]}
           # Continue with dots/calls to handle trailing .foo or .Bar
@@ -96,11 +99,11 @@ defmodule ToxicParser.Grammar.Maps do
       # Other unary ops (^, !, not, +, -): precedence < dot 310
       # So ^t.d should be ^(t.d) - dots are part of the operand
       {:ok, {tok_kind, _tok_meta, tok_value}, state, cursor} ->
-
         cond do
           tok_kind in [:unary_op, :dual_op] ->
             {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             {state, cursor} = EOE.skip(state, cursor)
 
             # Parse operand with dots applied (since dot binds tighter)
@@ -116,6 +119,7 @@ defmodule ToxicParser.Grammar.Maps do
           tok_kind == :ellipsis_op ->
             {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             op_meta = Helpers.token_meta(op_tok)
 
             case TokenAdapter.peek(state, cursor) do
@@ -136,6 +140,7 @@ defmodule ToxicParser.Grammar.Maps do
           tok_kind == :ternary_op and tok_value == :"//" ->
             {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             {state, cursor} = EOE.skip(state, cursor)
 
             with {:ok, operand, state, cursor, log} <-
@@ -206,6 +211,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, {:at_op, _meta, _value}, state, cursor} ->
         {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
           TokenAdapter.next(state, cursor)
+
         {state, cursor} = EOE.skip(state, cursor)
 
         with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, ctx, log) do
@@ -218,11 +224,11 @@ defmodule ToxicParser.Grammar.Maps do
       # so that dots are included in their operand.
       # E.g., %@+a.i{} should be @(+(a.i)){} not (@(+a)).i{}
       {:ok, {tok_kind, _tok_meta, tok_value} = tok, state, cursor} ->
-
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
             {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             op_meta = Helpers.token_meta(op_tok)
 
             case tok_kind do
@@ -254,11 +260,14 @@ defmodule ToxicParser.Grammar.Maps do
           # ternary_op :"//" used as unary prefix (precedence < dot 310)
           tok_kind == :ternary_op and tok_value == :"//" ->
             raise "dead code"
+
             {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             {state, cursor} = EOE.skip(state, cursor)
 
-            with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
+            with {:ok, operand, state, cursor, log} <-
+                   parse_unary_operand_with_dots(state, cursor, ctx, log) do
               op_meta = Helpers.token_meta(op_tok)
 
               {outer_meta, inner_meta} =
@@ -314,7 +323,8 @@ defmodule ToxicParser.Grammar.Maps do
 
         {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-        with {:ok, arg, state, cursor, log} <- Brackets.parse_bracket_arg_no_skip(state, cursor, log) do
+        with {:ok, arg, state, cursor, log} <-
+               Brackets.parse_bracket_arg_no_skip(state, cursor, log) do
           {state, cursor, _trailing_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case TokenAdapter.next(state, cursor) do
@@ -355,6 +365,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, {:at_op, _meta, _value}, state, cursor} ->
         {:ok, {:at_op, _op_meta, op_value} = op_tok, state, cursor} =
           TokenAdapter.next(state, cursor)
+
         {state, cursor} = EOE.skip(state, cursor)
 
         with {:ok, operand, state, cursor, log} <- parse_unary_operand(state, cursor, ctx, log) do
@@ -366,11 +377,11 @@ defmodule ToxicParser.Grammar.Maps do
 
       # Other unary ops - recurse with dots
       {:ok, {tok_kind, _tok_meta, tok_value}, state, cursor} ->
-
         cond do
           tok_kind in [:unary_op, :ellipsis_op, :dual_op] ->
             {:ok, {_op_kind, _op_meta, op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             op_meta = Helpers.token_meta(op_tok)
 
             case tok_kind do
@@ -402,11 +413,14 @@ defmodule ToxicParser.Grammar.Maps do
           # ternary_op :"//" used as unary prefix
           tok_kind == :ternary_op and tok_value == :"//" ->
             raise "dead code"
+
             {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
+
             {state, cursor} = EOE.skip(state, cursor)
 
-            with {:ok, operand, state, cursor, log} <- parse_unary_operand_with_dots(state, cursor, ctx, log) do
+            with {:ok, operand, state, cursor, log} <-
+                   parse_unary_operand_with_dots(state, cursor, ctx, log) do
               op_meta = Helpers.token_meta(op_tok)
 
               {outer_meta, inner_meta} =
@@ -426,7 +440,8 @@ defmodule ToxicParser.Grammar.Maps do
           tok_kind in [:"(", :"[", :"{", :"<<", :%, :%{}] ->
             alias ToxicParser.Grammar.Containers
 
-            with {:ok, base, state, cursor, log} <- Containers.parse(state, cursor, ctx, log, 10000) do
+            with {:ok, base, state, cursor, log} <-
+                   Containers.parse(state, cursor, ctx, log, 10000) do
               Pratt.led_dots_and_calls(base, state, cursor, log, ctx)
             end
 
@@ -453,7 +468,17 @@ defmodule ToxicParser.Grammar.Maps do
         brace_meta = Helpers.token_meta(open_tok)
         # Skip leading EOE and count newlines
         {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-        parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, cursor, ctx, log)
+
+        parse_map_args_body(
+          base,
+          percent_meta,
+          brace_meta,
+          leading_newlines,
+          state,
+          cursor,
+          ctx,
+          log
+        )
 
       {:ok, {got_kind, _meta, _value}, state, cursor} ->
         {:error, {:expected, :"{", got: got_kind}, state, cursor, log}
@@ -473,7 +498,16 @@ defmodule ToxicParser.Grammar.Maps do
     parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, cursor, ctx, log)
   end
 
-  defp parse_map_args_body(base, percent_meta, brace_meta, leading_newlines, state, cursor, ctx, log) do
+  defp parse_map_args_body(
+         base,
+         percent_meta,
+         brace_meta,
+         leading_newlines,
+         state,
+         cursor,
+         ctx,
+         log
+       ) do
     case TokenAdapter.peek(state, cursor) do
       # Empty map: map_args -> open_curly '}'
       {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
@@ -487,11 +521,14 @@ defmodule ToxicParser.Grammar.Maps do
         case try_parse_map_update(state, cursor, ctx, log) do
           {:ok, update_ast, close_meta, state, cursor, log} ->
             map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
-            {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, cursor, log}
+
+            {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, cursor,
+             log}
 
           {:not_update, state, cursor} ->
             # Parse map_close: kw_data | assoc | assoc_base ',' kw_data
-            with {:ok, entries, close_meta, state, cursor, log} <- parse_map_close(state, cursor, ctx, log) do
+            with {:ok, entries, close_meta, state, cursor, log} <-
+                   parse_map_close(state, cursor, ctx, log) do
               map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
               {:ok, build_map_ast(base, entries, percent_meta, map_meta), state, cursor, log}
             end
@@ -535,7 +572,8 @@ defmodule ToxicParser.Grammar.Maps do
 
         case parse_map_update_candidate(checkpoint_state, cursor, ctx, log) do
           {:ok, update_ast, close_meta, state, cursor, log} ->
-            {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id), cursor, log}
+            {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id),
+             cursor, log}
 
           {:not_update, state, cursor} ->
             {state, cursor} = TokenAdapter.rewind(state, cursor, checkpoint_id)
@@ -578,6 +616,17 @@ defmodule ToxicParser.Grammar.Maps do
               # Rewind and reparse with min_bp to not consume |
               {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
               parse_map_update_with_min_bp(state, cursor, log)
+            end
+
+          {{:|, pipe_meta, [_base, rhs]}, _} ->
+            if not Keyword.has_key?(pipe_meta, :parens) and is_list(rhs) and
+                 rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) do
+              # Reparse to distinguish between kw_data and bracketed list `[kw]`.
+              {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+              parse_map_update_with_min_bp(state, cursor, log)
+            else
+              state = TokenAdapter.drop_checkpoint(state, reparse_ref)
+              handle_map_update_after_base_expr(base_expr, state, cursor, log)
             end
 
           _ ->
@@ -846,36 +895,58 @@ defmodule ToxicParser.Grammar.Maps do
   defp parse_map_update_rhs(base, pipe_meta, state, cursor, log) do
     container_ctx = Context.container_expr()
 
-    case Keywords.try_parse_kw_data(state, cursor, container_ctx, log) do
-      {:ok, kw_list, state, cursor, log} ->
-        # assoc_update_kw -> matched_expr pipe_op_eol kw_data
-        # assoc_update_kw -> unmatched_expr pipe_op_eol kw_data
-        {state, cursor} = EOE.skip(state, cursor)
+    case TokenAdapter.peek(state, cursor) do
+      {:ok, {:"[", _meta, _value}, state, cursor} ->
+        # Bracketed list literal like `| [a: 1]` should be treated as a single entry.
+        with {:ok, rhs_expr, state, cursor, log} <-
+               Expressions.expr(state, cursor, container_ctx, log) do
+          {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.peek(state, cursor) do
-          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
-            {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-            close_meta = Helpers.token_meta(close_tok)
-            update_ast = {:|, pipe_meta, [base, kw_list]}
-            {:ok, update_ast, close_meta, state, cursor, log}
+          case TokenAdapter.peek(state, cursor) do
+            {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+              {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+              close_meta = Helpers.token_meta(close_tok)
+              update_ast = {:|, pipe_meta, [base, [rhs_expr]]}
+              {:ok, update_ast, close_meta, state, cursor, log}
 
-          _ ->
-            raise "dead code"
-            {:not_update, state, cursor}
+            _ ->
+              {:error, :expected_closing_brace, state, cursor, log}
+          end
         end
 
-      {:no_kw, state, cursor, log} ->
-        # assoc_expr(s): %{base | k => v, ...}
-        parse_map_update_assoc_entries(base, pipe_meta, [], state, cursor, log)
+      _ ->
+        case Keywords.try_parse_kw_data(state, cursor, container_ctx, log) do
+          {:ok, kw_list, state, cursor, log} ->
+            # assoc_update_kw -> matched_expr pipe_op_eol kw_data
+            # assoc_update_kw -> unmatched_expr pipe_op_eol kw_data
+            {state, cursor} = EOE.skip(state, cursor)
 
-      {:error, reason, state, cursor, log} ->
-        {:error, reason, state, cursor, log}
+            case TokenAdapter.peek(state, cursor) do
+              {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+                {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                close_meta = Helpers.token_meta(close_tok)
+                update_ast = {:|, pipe_meta, [base, kw_list]}
+                {:ok, update_ast, close_meta, state, cursor, log}
+
+              _ ->
+                raise "dead code"
+                {:not_update, state, cursor}
+            end
+
+          {:no_kw, state, cursor, log} ->
+            # assoc_expr(s): %{base | k => v, ...}
+            parse_map_update_assoc_entries(base, pipe_meta, [], state, cursor, log)
+
+          {:error, reason, state, cursor, log} ->
+            {:error, reason, state, cursor, log}
+        end
     end
   end
 
   # Parse assoc entries for map update RHS
   defp parse_map_update_assoc_entries(base, pipe_meta, acc, state, cursor, log) do
-    with {:ok, entry, state, cursor, log} <- parse_assoc_expr(state, cursor, Context.container_expr(), log) do
+    with {:ok, entry, state, cursor, log} <-
+           parse_assoc_expr(state, cursor, Context.container_expr(), log) do
       # Verify it's actually an assoc (has =>)
       case entry do
         {key, value} ->
@@ -1010,7 +1081,8 @@ defmodule ToxicParser.Grammar.Maps do
   # Parse assoc list (assoc_base): one or more assoc_expr separated by commas
   # assoc_base -> assoc_expr | assoc_expr ',' assoc_base
   defp parse_assoc_list(acc, state, cursor, ctx, log) do
-    with {:ok, entry, state, cursor, log} <- parse_assoc_expr(state, cursor, Context.container_expr(), log) do
+    with {:ok, entry, state, cursor, log} <-
+           parse_assoc_expr(state, cursor, Context.container_expr(), log) do
       {state, cursor} = EOE.skip(state, cursor)
 
       case TokenAdapter.peek(state, cursor) do
@@ -1084,7 +1156,8 @@ defmodule ToxicParser.Grammar.Maps do
   # Parse assoc_expr: container_expr | container_expr '=>' container_expr
   # Returns {:ok, entry, state, cursor, log} where entry is {key, value} or just expr
   defp parse_assoc_expr(state, cursor, _ctx, log) do
-    with {:ok, left, state, cursor, log} <- Expressions.expr(state, cursor, Context.container_expr(), log) do
+    with {:ok, left, state, cursor, log} <-
+           Expressions.expr(state, cursor, Context.container_expr(), log) do
       {state, cursor} = EOE.skip(state, cursor)
 
       case TokenAdapter.peek(state, cursor) do
@@ -1093,7 +1166,8 @@ defmodule ToxicParser.Grammar.Maps do
           assoc_meta = Helpers.token_meta(assoc_tok)
           {state, cursor} = EOE.skip(state, cursor)
 
-          with {:ok, right, state, cursor, log} <- Expressions.expr(state, cursor, Context.container_expr(), log) do
+          with {:ok, right, state, cursor, log} <-
+                 Expressions.expr(state, cursor, Context.container_expr(), log) do
             # Annotate key with :assoc metadata
             annotated_key = annotate_assoc(left, assoc_meta)
             {:ok, {annotated_key, right}, state, cursor, log}

@@ -185,7 +185,8 @@ defmodule ToxicParser.Grammar.Keywords do
   end
 
   @doc "Parses a keyword list usable in data (container) position."
-  @spec parse_kw_data(State.t(), ToxicParser.Cursor.t(), Pratt.context(), EventLog.t()) :: result()
+  @spec parse_kw_data(State.t(), ToxicParser.Cursor.t(), Pratt.context(), EventLog.t()) ::
+          result()
   def parse_kw_data(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     # elixir_parser.yrl: kw_base -> kw_eol container_expr
     parse_kw_list([], state, cursor, ctx, log, 0, Context.container_expr(), :container)
@@ -203,14 +204,19 @@ defmodule ToxicParser.Grammar.Keywords do
   - `{:no_kw, state, cursor, log}` when the next token does not start `kw_data`
   - `{:error, reason, state, cursor, log}` for real syntax errors while parsing keyword data
   """
-  @spec try_parse_kw_data(State.t(), ToxicParser.Cursor.t(), Pratt.context(), EventLog.t(), keyword()) ::
+  @spec try_parse_kw_data(
+          State.t(),
+          ToxicParser.Cursor.t(),
+          Pratt.context(),
+          EventLog.t(),
+          keyword()
+        ) ::
           try_result()
   def try_parse_kw_data(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
 
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value} = tok, state, cursor} ->
-
         cond do
           starts_kw?(tok) ->
             parse_kw_data(state, cursor, ctx, log)
@@ -241,14 +247,19 @@ defmodule ToxicParser.Grammar.Keywords do
 
   Intended for `call_args_parens` contexts, including quoted keys like `'a': 1`.
   """
-  @spec try_parse_kw_call(State.t(), ToxicParser.Cursor.t(), Pratt.context(), EventLog.t(), keyword()) ::
+  @spec try_parse_kw_call(
+          State.t(),
+          ToxicParser.Cursor.t(),
+          Pratt.context(),
+          EventLog.t(),
+          keyword()
+        ) ::
           try_result()
   def try_parse_kw_call(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, opts \\ []) do
     allow_quoted_keys? = Keyword.get(opts, :allow_quoted_keys?, true)
 
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value} = tok, state, cursor} ->
-
         cond do
           starts_kw?(tok) ->
             parse_kw_call(state, cursor, ctx, log)
@@ -313,7 +324,6 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value} = tok, state, cursor} ->
-
         cond do
           starts_kw?(tok) ->
             case parse_kw_pair(state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
@@ -368,7 +378,6 @@ defmodule ToxicParser.Grammar.Keywords do
 
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value} = tok, state, cursor} ->
-
         cond do
           # Definite keyword (kw_identifier) - no checkpoint needed.
           starts_kw?(tok) ->
@@ -484,7 +493,16 @@ defmodule ToxicParser.Grammar.Keywords do
                 {:ok, Enum.reverse([pair | acc]), state, cursor, log}
 
               _ ->
-                parse_kw_list([pair | acc], state, cursor, ctx, log, min_bp, value_ctx, error_kind)
+                parse_kw_list(
+                  [pair | acc],
+                  state,
+                  cursor,
+                  ctx,
+                  log,
+                  min_bp,
+                  value_ctx,
+                  error_kind
+                )
             end
 
           _ ->

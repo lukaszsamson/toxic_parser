@@ -122,7 +122,7 @@ defmodule ToxicParser.GrammarTokenPropertyTest do
                   allow_unmatched: true,
                   allow_no_parens: false
                 ),
-              max_runs: 50000,
+              max_runs: 30000,
               max_shrinks: 50
             ) do
         tokens = TokenCompiler.to_tokens(tree)

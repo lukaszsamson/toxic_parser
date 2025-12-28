@@ -28,7 +28,9 @@ defmodule ToxicParser.PrattPrecedenceTest do
     {state, cursor} = TokenAdapter.new("1 + 2")
     log = EventLog.new()
 
-    assert {:ok, ast, _state, _cursor, %EventLog{}} = Pratt.parse(state, cursor, Context.matched_expr(), log)
+    assert {:ok, ast, _state, _cursor, %EventLog{}} =
+             Pratt.parse(state, cursor, Context.matched_expr(), log)
+
     assert match?({_, _, _}, ast)
   end
 

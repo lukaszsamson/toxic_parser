@@ -16,7 +16,8 @@ defmodule ToxicParser.Layout do
   Peeks at the next separator (`:eol` or `:";"``) without consuming it.
   Returns the raw token.
   """
-  @spec peek_sep(State.t(), Cursor.t(), term()) :: {:ok, sep_token(), State.t(), Cursor.t()} | :none
+  @spec peek_sep(State.t(), Cursor.t(), term()) ::
+          {:ok, sep_token(), State.t(), Cursor.t()} | :none
   def peek_sep(%State{} = state, cursor, _ctx \\ nil) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, {:eol, _meta, _value} = tok, state, cursor} -> {:ok, tok, state, cursor}
@@ -45,7 +46,8 @@ defmodule ToxicParser.Layout do
   Returns the updated state plus total newline count.
   Used for `stab_op_eol` which only allows newlines after `->`.
   """
-  @spec skip_newlines_only(State.t(), Cursor.t(), term(), non_neg_integer()) :: {State.t(), Cursor.t(), non_neg_integer()}
+  @spec skip_newlines_only(State.t(), Cursor.t(), term(), non_neg_integer()) ::
+          {State.t(), Cursor.t(), non_neg_integer()}
   def skip_newlines_only(%State{} = state, cursor, ctx \\ nil, count \\ 0) when count >= 0 do
     case peek_sep(state, cursor, ctx) do
       {:ok, {:";", _meta, _value}, _state, _cursor} ->

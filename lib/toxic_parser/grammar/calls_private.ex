@@ -104,7 +104,9 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
             {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
-              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, cursor, log}
+
+              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state,
+               cursor, log}
 
             {:ok, {kind, _meta, _value}, state, cursor} ->
               {:error, {:expected, :")", got: kind}, state, cursor, log}
@@ -117,7 +119,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <- Expressions.expr(state, cursor, container_ctx, log) do
+          with {:ok, expr, state, cursor, log} <-
+                 Expressions.expr(state, cursor, container_ctx, log) do
             # Validate no_parens expressions are not allowed inside paren calls
             case ExprClass.classify(expr) do
               :no_parens ->

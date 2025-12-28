@@ -21,11 +21,18 @@ defmodule ToxicParser.Grammar.Strings do
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
           | {:no_string, State.t(), Cursor.t()}
           | {:keyword_key, atom(), keyword(), State.t(), Cursor.t(), EventLog.t()}
-          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(), Cursor.t(),
-             EventLog.t()}
+          | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
+             Cursor.t(), EventLog.t()}
 
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
-  def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log, min_bp \\ 0, opts \\ []) do
+  def parse(
+        %State{} = state,
+        cursor,
+        %Context{} = ctx,
+        %EventLog{} = log,
+        min_bp \\ 0,
+        opts \\ []
+      ) do
     case TokenAdapter.peek(state, cursor) do
       {:ok, {kind, _meta, _value}, _, _} ->
         case kind do
@@ -57,6 +64,7 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_simple_string(state, cursor, ctx, log, min_bp, opts) do
     {:ok, {start_tok_kind, _meta, _value} = start_tok, state, cursor} =
       TokenAdapter.next(state, cursor)
+
     start_meta = TokenAdapter.token_meta(start_tok)
     kind = string_kind(start_tok_kind)
     target_ends = closing_for(start_tok_kind)
@@ -77,7 +85,8 @@ defmodule ToxicParser.Grammar.Strings do
           content = merge_fragments(parts)
 
           if byte_size(content) > @max_atom_length do
-            {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor, log}
+            {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor,
+             log}
           else
             atom = String.to_atom(content)
             # Include delimiter and format: :keyword for quoted keyword keys
@@ -107,6 +116,7 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_heredoc(state, cursor, ctx, log, min_bp, opts) do
     {:ok, {start_tok_kind, _meta, _value} = start_tok, state, cursor} =
       TokenAdapter.next(state, cursor)
+
     start_meta = TokenAdapter.token_meta(start_tok)
     kind = string_kind(start_tok_kind)
     target_ends = closing_for(start_tok_kind)
@@ -138,6 +148,7 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_sigil(state, cursor, ctx, log, min_bp, opts) do
     {:ok, {:sigil_start, _meta, {sigil, delimiter}} = start_tok, state, cursor} =
       TokenAdapter.next(state, cursor)
+
     start_meta = TokenAdapter.token_meta(start_tok)
 
     with {:ok, parts, _actual_end, end_tok, state, cursor, log} <-
@@ -199,6 +210,7 @@ defmodule ToxicParser.Grammar.Strings do
   defp parse_quoted_atom(state, cursor, ctx, kind, log, min_bp, opts) do
     {:ok, {^kind, _meta, delimiter} = start_tok, state, cursor} =
       TokenAdapter.next(state, cursor)
+
     start_meta = TokenAdapter.token_meta(start_tok)
     # Use delimiter from token value (39 = ', 34 = ")
     delimiter = if delimiter == 39, do: "'", else: "\""
@@ -228,7 +240,8 @@ defmodule ToxicParser.Grammar.Strings do
         content = merge_fragments(parts)
 
         if byte_size(content) > @max_atom_length do
-          {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor, log}
+          {:error, {:atom_too_long, content, TokenAdapter.token_meta(start_tok)}, state, cursor,
+           log}
         else
           atom = String.to_atom(content)
           # Include delimiter in metadata for literal_encoder
@@ -261,19 +274,41 @@ defmodule ToxicParser.Grammar.Strings do
               if should_unescape do
                 case safe_unescape(fragment) do
                   {:ok, content} ->
-                    collect_parts([{:fragment, content} | acc], state, cursor, target_ends, kind, log)
+                    collect_parts(
+                      [{:fragment, content} | acc],
+                      state,
+                      cursor,
+                      target_ends,
+                      kind,
+                      log
+                    )
 
                   {:error, reason} ->
                     {:error, {:unescape_error, reason, TokenAdapter.token_meta(frag_tok)}, state,
                      cursor, log}
                 end
               else
-                collect_parts([{:fragment, fragment} | acc], state, cursor, target_ends, kind, log)
+                collect_parts(
+                  [{:fragment, fragment} | acc],
+                  state,
+                  cursor,
+                  target_ends,
+                  kind,
+                  log
+                )
               end
 
             :begin_interpolation ->
-              with {:ok, interp_ast, state, cursor, log} <- parse_interpolation(state, cursor, kind, log) do
-                collect_parts([{:interpolation, interp_ast} | acc], state, cursor, target_ends, kind, log)
+              with {:ok, interp_ast, state, cursor, log} <-
+                     parse_interpolation(state, cursor, kind, log) do
+                collect_parts(
+                  [{:interpolation, interp_ast} | acc],
+                  state,
+                  cursor,
+                  target_ends,
+                  kind,
+                  log
+                )
               end
 
             _ ->
@@ -341,9 +376,8 @@ defmodule ToxicParser.Grammar.Strings do
 
                               {:ok, interp_ast, state, cursor, log}
                             else
-                              {:error,
-                               {:expected_end_interpolation, interp_end_kind},
-                               state, cursor, log}
+                              {:error, {:expected_end_interpolation, interp_end_kind}, state,
+                               cursor, log}
                             end
 
                           {:eof, state, cursor} ->
@@ -382,8 +416,7 @@ defmodule ToxicParser.Grammar.Strings do
                       interp_ast = build_interpolation_ast(expr, open_meta, close_meta, kind)
                       {:ok, interp_ast, state, cursor, log}
                     else
-                      {:error, {:expected_end_interpolation, end_kind}, state,
-                       cursor, log}
+                      {:error, {:expected_end_interpolation, end_kind}, state, cursor, log}
                     end
 
                   {:eof, state, cursor} ->
@@ -474,7 +507,18 @@ defmodule ToxicParser.Grammar.Strings do
 
   # Build AST for heredocs
   # Note: For heredocs, parts are NOT unescaped yet (to allow proper line continuation handling)
-  defp build_heredoc_ast(parts, kind, start_meta, indentation, state, cursor, ctx, log, min_bp, opts) do
+  defp build_heredoc_ast(
+         parts,
+         kind,
+         start_meta,
+         indentation,
+         state,
+         cursor,
+         ctx,
+         log,
+         min_bp,
+         opts
+       ) do
     delimiter =
       case kind do
         :heredoc_binary -> ~s|"""|
@@ -615,7 +659,8 @@ defmodule ToxicParser.Grammar.Strings do
       {_kind, _meta, {_delim, indentation}} when is_integer(indentation) and indentation >= 0 ->
         indentation
 
-      _ -> nil
+      _ ->
+        nil
     end
   end
 

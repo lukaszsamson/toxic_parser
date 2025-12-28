@@ -72,7 +72,8 @@ defmodule ToxicParser.Grammar.Blocks do
       end
 
     # Use the same stab_eoe parsing as paren stabs, but with :end terminator
-    with {:ok, clauses, state, cursor, log} <- Stabs.parse_stab_eoe_until([], state, cursor, ctx, log, :end),
+    with {:ok, clauses, state, cursor, log} <-
+           Stabs.parse_stab_eoe_until([], state, cursor, ctx, log, :end),
          {:ok, end_meta, state, cursor, log} <- expect_kind_with_meta(state, cursor, :end, log) do
       log = exit_scope(log, :fn, TokenAdapter.full_metadata(fn_tok, state))
       end_location = meta_to_location(end_meta)
@@ -100,7 +101,8 @@ defmodule ToxicParser.Grammar.Blocks do
 
         with {:ok, sections, state, cursor, log} <-
                parse_labeled_sections([], :do, do_location, state, cursor, ctx, log),
-             {:ok, end_meta, state, cursor, log} <- expect_kind_with_meta(state, cursor, :end, log) do
+             {:ok, end_meta, state, cursor, log} <-
+               expect_kind_with_meta(state, cursor, :end, log) do
           log = exit_scope(log, :do_block, TokenAdapter.full_metadata(do_tok, state))
           end_location = meta_to_location(end_meta)
           # Build do/end metadata like elixir_parser.yrl does
@@ -121,7 +123,6 @@ defmodule ToxicParser.Grammar.Blocks do
 
   # Convert raw meta tuple to [line: L, column: C]
   defp meta_to_location({{line, column}, _, _}), do: [line: line, column: column]
-  defp meta_to_location(_), do: []
 
   defp expect_kind_with_meta(state, cursor, kind, log) do
     case TokenAdapter.next(state, cursor) do

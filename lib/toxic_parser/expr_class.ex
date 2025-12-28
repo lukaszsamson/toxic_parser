@@ -263,8 +263,6 @@ defmodule ToxicParser.ExprClass do
     String.starts_with?(name_str, "sigil_")
   end
 
-  defp is_sigil_name?(_), do: false
-
   # Check if a name looks like an operator (symbols made of special characters)
   # This handles custom operators like :---, :^^^, etc.
   @operator_chars ~c"+-*/<>=|&!^~@%"
@@ -274,6 +272,4 @@ defmodule ToxicParser.ExprClass do
     # Operators are made entirely of special characters
     name_str != "" and String.to_charlist(name_str) |> Enum.all?(&(&1 in @operator_chars))
   end
-
-  defp is_operator_name?(_), do: false
 end
