@@ -99,6 +99,19 @@ defmodule ToxicParser.Cursor do
   end
 
   @doc """
+  Push multiple tokens back to the front of the lookahead.
+
+  Tokens must be in reverse source order (last token in list = next to be consumed).
+  This avoids allocating an intermediate reversed list at hot callsites.
+  """
+  @spec pushback_many_rev(t(), [token()]) :: t()
+  def pushback_many_rev(cursor, []), do: cursor
+
+  def pushback_many_rev({rest, driver, lookahead}, tokens_rev) do
+    {rest, driver, :lists.reverse(tokens_rev, lookahead)}
+  end
+
+  @doc """
   Create a lightweight checkpoint (just saves the cursor tuple).
   Use for backtracking token consumption only.
   """

@@ -1192,36 +1192,37 @@ defmodule ToxicParser.Grammar.Stabs do
     scan_classify(state, cursor, [], ctx, terminator, stop_kinds, 200, false)
   end
 
-  defp scan_classify(state, cursor, consumed, _ctx, _terminator, _stop_kinds, max, _boundary?)
+  defp scan_classify(state, cursor, consumed_rev, _ctx, _terminator, _stop_kinds, max, _boundary?)
        when max <= 0 do
-    cursor = Cursor.pushback_many(cursor, Enum.reverse(consumed))
+    cursor = Cursor.pushback_many_rev(cursor, consumed_rev)
     {:unknown, state, cursor}
   end
 
-  defp scan_classify(state, cursor, consumed, ctx, terminator, stop_kinds, max, boundary?) do
+  defp scan_classify(state, cursor, consumed_rev, ctx, terminator, stop_kinds, max, boundary?) do
     # ctx = {delim, block, open?, percent_pending?}
     {delim, block, open?, _pp} = ctx
 
     case Cursor.next(cursor) do
       {:ok, {tok_kind, _meta, _value} = tok, cursor2} ->
         top? = delim == 0 and block == 0
+        consumed_rev = [tok | consumed_rev]
 
         cond do
           top? and tok_kind == :stab_op and boundary? ->
             # If we've already hit an EOE boundary, `->` belongs to the next stab_expr,
             # not the current item (which should be parsed as a plain expr).
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:expr, state, cursor3}
 
           top? and tok_kind == :stab_op ->
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:clause, state, cursor3}
 
           top? and boundary? and tok_kind in [:eol, :";"] ->
             scan_classify(
               state,
               cursor2,
-              [tok | consumed],
+              consumed_rev,
               ctx,
               terminator,
               stop_kinds,
@@ -1230,22 +1231,22 @@ defmodule ToxicParser.Grammar.Stabs do
             )
 
           top? and boundary? ->
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:expr, state, cursor3}
 
           top? and stop_token?(tok, terminator, stop_kinds) ->
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:expr, state, cursor3}
 
           top? and tok_kind == :";" ->
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:expr, state, cursor3}
 
           top? and tok_kind == :eol and open? == false ->
             scan_classify(
               state,
               cursor2,
-              [tok | consumed],
+              consumed_rev,
               ctx,
               terminator,
               stop_kinds,
@@ -1257,7 +1258,7 @@ defmodule ToxicParser.Grammar.Stabs do
             scan_classify(
               state,
               cursor2,
-              [tok | consumed],
+              consumed_rev,
               ctx,
               terminator,
               stop_kinds,
@@ -1266,7 +1267,7 @@ defmodule ToxicParser.Grammar.Stabs do
             )
 
           tok_kind == :error_token ->
-            cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
+            cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:unknown, state, cursor3}
 
           true ->
@@ -1275,7 +1276,7 @@ defmodule ToxicParser.Grammar.Stabs do
             scan_classify(
               state,
               cursor2,
-              [tok | consumed],
+              consumed_rev,
               ctx2,
               terminator,
               stop_kinds,
@@ -1285,11 +1286,11 @@ defmodule ToxicParser.Grammar.Stabs do
         end
 
       {:eof, cursor2} ->
-        cursor3 = Cursor.pushback_many(cursor2, Enum.reverse(consumed))
+        cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
         {:expr, state, cursor3}
 
-      {:error, _diag, cursor2} ->
-        cursor3 = Cursor.pushback_many(cursor2, Enum.reverse(consumed))
+      {:error, _reason, cursor2} ->
+        cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
         {:unknown, state, cursor3}
     end
   end
