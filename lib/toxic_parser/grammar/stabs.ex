@@ -1182,8 +1182,13 @@ defmodule ToxicParser.Grammar.Stabs do
   defp block_label?({kind, _meta, _value}) when kind in [:else, :catch, :rescue, :after], do: true
   defp block_label?(_), do: false
 
+  # Scan context tuple: {delim, block, open?, percent_pending?}
+  # Using tuple instead of map for zero-allocation updates (called 3.5M+ times)
+  @type scan_ctx :: {non_neg_integer(), non_neg_integer(), boolean(), boolean()}
+
   defp classify_stab_item(%State{} = state, cursor, terminator, stop_kinds) do
-    ctx = %{delim: 0, block: 0, open?: true, percent_pending?: false}
+    # {delim, block, open?, percent_pending?}
+    ctx = {0, 0, true, false}
     scan_classify(state, cursor, [], ctx, terminator, stop_kinds, 200, false)
   end
 
@@ -1194,9 +1199,12 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   defp scan_classify(state, cursor, consumed, ctx, terminator, stop_kinds, max, boundary?) do
+    # ctx = {delim, block, open?, percent_pending?}
+    {delim, block, open?, _pp} = ctx
+
     case Cursor.next(cursor) do
       {:ok, {tok_kind, _meta, _value} = tok, cursor2} ->
-        top? = ctx.delim == 0 and ctx.block == 0
+        top? = delim == 0 and block == 0
 
         cond do
           top? and tok_kind == :stab_op and boundary? ->
@@ -1233,7 +1241,7 @@ defmodule ToxicParser.Grammar.Stabs do
             cursor3 = Cursor.pushback_many(cursor2, Enum.reverse([tok | consumed]))
             {:expr, state, cursor3}
 
-          top? and tok_kind == :eol and ctx.open? == false ->
+          top? and tok_kind == :eol and open? == false ->
             scan_classify(
               state,
               cursor2,
@@ -1286,54 +1294,38 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  defp scan_update_ctx(ctx, tok) do
-    ctx
-    |> scan_update_delims(tok)
-    |> scan_update_percent(tok)
-    |> Map.put(:open?, scan_open?(tok, ctx))
+  # ctx = {delim, block, open?, percent_pending?}
+  defp scan_update_ctx({delim, block, _open?, percent_pending?}, tok) do
+    {d2, b2} = scan_update_delims(delim, block, tok)
+    pp2 = scan_update_percent(percent_pending?, tok)
+    open2 = scan_open?(tok, percent_pending?)
+    {d2, b2, open2, pp2}
   end
 
-  defp scan_update_percent(%{percent_pending?: true} = ctx, tok) do
-    case tok do
-      {:"{", _meta, _value} -> %{ctx | percent_pending?: false}
-      _ -> ctx
-    end
-  end
+  # Returns updated percent_pending? boolean
+  defp scan_update_percent(true = _percent_pending?, {:"{", _meta, _value}), do: false
+  defp scan_update_percent(true = pp, _tok), do: pp
+  defp scan_update_percent(false = _percent_pending?, {:%, _meta, _value}), do: true
+  defp scan_update_percent(false = pp, _tok), do: pp
 
-  defp scan_update_percent(ctx, tok) do
-    case tok do
-      {:%, _meta, _value} -> %{ctx | percent_pending?: true}
-      _ -> ctx
-    end
-  end
+  # Returns {new_delim, new_block} tuple
+  defp scan_update_delims(d, b, {kind, _meta, _value}) when kind in [:"(", :"[", :"{", :"<<"],
+    do: {d + 1, b}
 
-  defp scan_update_delims(%{delim: d, block: b} = ctx, tok) do
-    case tok do
-      {kind, _meta, _value} when kind in [:"(", :"[", :"{", :"<<"] ->
-        %{ctx | delim: d + 1}
+  defp scan_update_delims(d, b, {kind, _meta, _value}) when kind in [:")", :"]", :"}", :">>"],
+    do: {max(d - 1, 0), b}
 
-      {kind, _meta, _value} when kind in [:")", :"]", :"}", :">>"] ->
-        %{ctx | delim: max(d - 1, 0)}
+  defp scan_update_delims(d, b, {:do, _meta, _value}), do: {d, b + 1}
+  defp scan_update_delims(d, b, {:fn, _meta, _value}), do: {d, b + 1}
+  defp scan_update_delims(d, b, {:end, _meta, _value}) when b > 0, do: {d, b - 1}
+  defp scan_update_delims(d, b, _tok), do: {d, b}
 
-      {:do, _meta, _value} ->
-        %{ctx | block: b + 1}
+  # scan_open? now takes percent_pending? boolean directly
+  defp scan_open?({kind, _meta, _value}, true = _percent_pending?)
+       when kind in [:identifier, :alias],
+       do: true
 
-      {:fn, _meta, _value} ->
-        %{ctx | block: b + 1}
-
-      {:end, _meta, _value} when b > 0 ->
-        %{ctx | block: b - 1}
-
-      _ ->
-        ctx
-    end
-  end
-
-  defp scan_open?(tok, %{percent_pending?: true}) do
-    case tok do
-      {kind, _meta, _value} -> kind in [:identifier, :alias]
-    end
-  end
+  defp scan_open?({_kind, _meta, _value}, true = _percent_pending?), do: false
 
   @binary_op [
     :stab_op,
@@ -1379,8 +1371,9 @@ defmodule ToxicParser.Grammar.Stabs do
                 :%
               ] ++ @binary_op ++ @unary_op
 
-  defp scan_open?({kind, _meta, _value}, _ctx) when kind in @open_kinds, do: true
-  defp scan_open?(_, _ctx), do: false
+  # When percent_pending? is false (or any value), check @open_kinds
+  defp scan_open?({kind, _meta, _value}, _percent_pending?) when kind in @open_kinds, do: true
+  defp scan_open?(_, _percent_pending?), do: false
 
   @doc "Build the value for a do-block section (block or stab clauses)."
   @spec build_section_value([Macro.t()]) :: Macro.t()
