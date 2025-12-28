@@ -10,53 +10,49 @@ defmodule ToxicParser.Precedence do
   @type assoc :: :left | :right | :nonassoc
 
   @binary_bp [
-    {:stab_op, 10, :right},
-    {:in_match_op, 40, :left},
-    {:when_op, 50, :right},
-    {:type_op, 60, :right},
-    {:pipe_op, 70, :right},
-    {:assoc_op, 80, :right},
-    {:match_op, 100, :right},
-    {:or_op, 120, :left},
-    {:and_op, 130, :left},
-    {:comp_op, 140, :left},
-    {:rel_op, 150, :left},
-    {:arrow_op, 160, :left},
-    {:in_op, 170, :left},
-    {:xor_op, 180, :left},
-    {:ternary_op, 190, :right},
-    {:concat_op, 200, :right},
-    {:range_op, 200, :right},
-    {:dual_op, 210, :left},
-    {:mult_op, 220, :left},
-    {:power_op, 230, :left},
-    {:., 310, :left},
-    {:dot_call_op, 310, :left}
-  ]
+               {:stab_op, 10, :right},
+               {:in_match_op, 40, :left},
+               {:when_op, 50, :right},
+               {:type_op, 60, :right},
+               {:pipe_op, 70, :right},
+               {:assoc_op, 80, :right},
+               {:match_op, 100, :right},
+               {:or_op, 120, :left},
+               {:and_op, 130, :left},
+               {:comp_op, 140, :left},
+               {:rel_op, 150, :left},
+               {:arrow_op, 160, :left},
+               {:in_op, 170, :left},
+               {:xor_op, 180, :left},
+               {:ternary_op, 190, :right},
+               {:concat_op, 200, :right},
+               {:range_op, 200, :right},
+               {:dual_op, 210, :left},
+               {:mult_op, 220, :left},
+               {:power_op, 230, :left},
+               {:., 310, :left},
+               {:dot_call_op, 310, :left}
+             ]
+             |> Map.new(fn {kind, bt, assoc} -> {kind, {bt, assoc}} end)
 
   @unary_bp [
-    {:capture_op, 90, :nonassoc},
-    {:ellipsis_op, 90, :nonassoc},
-    {:unary_op, 300, :nonassoc},
-    {:at_op, 320, :nonassoc}
-  ]
+              {:capture_op, 90, :nonassoc},
+              {:ellipsis_op, 90, :nonassoc},
+              {:unary_op, 300, :nonassoc},
+              {:at_op, 320, :nonassoc}
+            ]
+            |> Map.new(fn {kind, bt, assoc} -> {kind, {bt, assoc}} end)
 
   @doc "Returns {binding power, associativity} for a binary operator class."
   @spec binary(atom()) :: {bp(), assoc()} | nil
   def binary(kind) do
-    case List.keyfind(@binary_bp, kind, 0) do
-      {_, bp, assoc} -> {bp, assoc}
-      _ -> nil
-    end
+    Map.get(@binary_bp, kind)
   end
 
   @doc "Returns {binding power, associativity} for a unary operator class."
   @spec unary(atom()) :: {bp(), assoc()} | nil
   def unary(kind) do
-    case List.keyfind(@unary_bp, kind, 0) do
-      {_, bp, assoc} -> {bp, assoc}
-      _ -> nil
-    end
+    Map.get(@unary_bp, kind)
   end
 
   @doc "Returns binding power for `not in` combined operator."

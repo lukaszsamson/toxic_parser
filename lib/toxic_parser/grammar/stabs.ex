@@ -1381,16 +1381,16 @@ defmodule ToxicParser.Grammar.Stabs do
   ]
 
   @open_kinds [
-          :",",
-          :kw_identifier,
-          :kw_identifier_unsafe_end,
-          :kw_identifier_safe_end,
-          :"(",
-          :"[",
-          :"{",
-          :"<<",
-          :%
-        ] ++ @binary_op ++ @unary_op
+                :",",
+                :kw_identifier,
+                :kw_identifier_unsafe_end,
+                :kw_identifier_safe_end,
+                :"(",
+                :"[",
+                :"{",
+                :"<<",
+                :%
+              ] ++ @binary_op ++ @unary_op
 
   defp scan_open?({kind, _meta, _value}, _ctx) when kind in @open_kinds, do: true
   defp scan_open?(_, _ctx), do: false
