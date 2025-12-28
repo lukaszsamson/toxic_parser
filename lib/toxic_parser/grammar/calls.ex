@@ -7,6 +7,8 @@ defmodule ToxicParser.Grammar.Calls do
   subsequent iterations.
   """
 
+  require ToxicParser.NoParens
+
   alias ToxicParser.{
     Builder,
     Context,

@@ -1,6 +1,8 @@
 defmodule ToxicParser.Grammar.DoBlocks do
   @moduledoc false
 
+  require ToxicParser.NoParens
+
   alias ToxicParser.{Builder, Context, EventLog, NoParens, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Keywords}
 

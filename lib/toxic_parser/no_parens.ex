@@ -38,8 +38,5 @@ defmodule ToxicParser.NoParens do
     :ellipsis_op
   ]
 
-  @spec can_start_no_parens_arg?(tuple()) :: boolean()
-  def can_start_no_parens_arg?({kind, _meta, _value}) do
-    kind in @no_parens_arg_kinds
-  end
+  defguard can_start_no_parens_arg?(token) when elem(token, 0) in @no_parens_arg_kinds
 end

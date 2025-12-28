@@ -9,6 +9,7 @@ defmodule ToxicParser.Pratt do
   shapes; spacing-sensitive disambiguation will occur in parselets using token
   metadata.
   """
+  require ToxicParser.NoParens
 
   alias ToxicParser.{
     Builder,
@@ -107,10 +108,10 @@ defmodule ToxicParser.Pratt do
     Keyword.put(opts, :allow_no_parens_extension?, allow?)
   end
 
-  defp is_no_parens_op_expr?(kind), do: kind in @no_parens_op_expr_operators
+  defguardp is_no_parens_op_expr?(kind) when kind in @no_parens_op_expr_operators
 
   defp do_block_expr?({_, meta, _}) when is_list(meta) do
-    Keyword.has_key?(meta, :do) or Keyword.has_key?(meta, :end)
+    Keyword.has_key?(meta, :do)
   end
 
   defp do_block_expr?(_), do: false
