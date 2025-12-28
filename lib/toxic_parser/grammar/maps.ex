@@ -938,10 +938,20 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
               {state, cursor} = EOE.skip(state, cursor)
 
-              with {:ok, more_entries, close_meta, state, cursor, log} <-
-                     parse_map_close(state, cursor, Context.container_expr(), log) do
-                update_ast = {:|, pipe_meta, [base, [rhs_expr] ++ more_entries]}
-                {:ok, update_ast, close_meta, state, cursor, log}
+              case TokenAdapter.peek(state, cursor) do
+                {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+                  # Trailing comma after bracketed list.
+                  {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                  close_meta = Helpers.token_meta(close_tok)
+                  update_ast = {:|, pipe_meta, [base, [rhs_expr]]}
+                  {:ok, update_ast, close_meta, state, cursor, log}
+
+                _ ->
+                  with {:ok, more_entries, close_meta, state, cursor, log} <-
+                         parse_map_close(state, cursor, Context.container_expr(), log) do
+                    update_ast = {:|, pipe_meta, [base, [rhs_expr] ++ more_entries]}
+                    {:ok, update_ast, close_meta, state, cursor, log}
+                  end
               end
 
             _ ->

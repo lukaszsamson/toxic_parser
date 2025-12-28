@@ -3715,6 +3715,10 @@ defmodule ToxicParser.ConformanceTest do
     test "repro 169" do
       assert_conforms("%^\n//baz{}")
     end
+
+    test "repro 170" do
+      assert_conforms("- - alpha\n;%{foo = ().\nbaz|\n[beta: \n\nfor\n\n],} ^^^\n@ foo[\n\ngamma\n\n] in alpha.beta\n\n;... not beta +\nspam alpha, qux: beta, bar: foo ** unless, alpha: not qux.unless < foo")
+    end
   end
 
   # =============================================================================
