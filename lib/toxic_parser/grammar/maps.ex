@@ -412,8 +412,6 @@ defmodule ToxicParser.Grammar.Maps do
 
           # ternary_op :"//" used as unary prefix
           tok_kind == :ternary_op and tok_value == :"//" ->
-            raise "dead code"
-
             {:ok, {_op_kind, _op_meta, _op_value} = op_tok, state, cursor} =
               TokenAdapter.next(state, cursor)
 
@@ -893,17 +891,58 @@ defmodule ToxicParser.Grammar.Maps do
 
     case TokenAdapter.peek(state, cursor) do
       {:ok, {:"[", _meta, _value}, state, cursor} ->
-        # Bracketed list literal like `| [a: 1]` should be treated as a single entry.
+        # Bracketed list literal: treat as single entry, unless followed by =>.
         with {:ok, rhs_expr, state, cursor, log} <-
                Expressions.expr(state, cursor, container_ctx, log) do
           {state, cursor} = EOE.skip(state, cursor)
 
           case TokenAdapter.peek(state, cursor) do
+            {:ok, {:assoc_op, _meta, _value} = assoc_tok, state, cursor} ->
+              {:ok, _assoc, state, cursor} = TokenAdapter.next(state, cursor)
+              {state, cursor} = EOE.skip(state, cursor)
+
+              with {:ok, value, state, cursor, log} <-
+                     Expressions.expr(state, cursor, Context.container_expr(), log) do
+                entries = [{annotate_assoc(rhs_expr, Helpers.token_meta(assoc_tok)), value}]
+                {state, cursor} = EOE.skip(state, cursor)
+
+                case TokenAdapter.peek(state, cursor) do
+                  {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+                    {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                    close_meta = Helpers.token_meta(close_tok)
+                    update_ast = {:|, pipe_meta, [base, entries]}
+                    {:ok, update_ast, close_meta, state, cursor, log}
+
+                  {:ok, {:",", _meta, _value}, state, cursor} ->
+                    {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                    {state, cursor} = EOE.skip(state, cursor)
+
+                    with {:ok, more_entries, close_meta, state, cursor, log} <-
+                           parse_map_close(state, cursor, Context.container_expr(), log) do
+                      update_ast = {:|, pipe_meta, [base, entries ++ more_entries]}
+                      {:ok, update_ast, close_meta, state, cursor, log}
+                    end
+
+                  _ ->
+                    {:error, :expected_closing_brace, state, cursor, log}
+                end
+              end
+
             {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
               {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
               close_meta = Helpers.token_meta(close_tok)
               update_ast = {:|, pipe_meta, [base, [rhs_expr]]}
               {:ok, update_ast, close_meta, state, cursor, log}
+
+            {:ok, {:",", _meta, _value}, state, cursor} ->
+              {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+              {state, cursor} = EOE.skip(state, cursor)
+
+              with {:ok, more_entries, close_meta, state, cursor, log} <-
+                     parse_map_close(state, cursor, Context.container_expr(), log) do
+                update_ast = {:|, pipe_meta, [base, [rhs_expr] ++ more_entries]}
+                {:ok, update_ast, close_meta, state, cursor, log}
+              end
 
             _ ->
               {:error, :expected_closing_brace, state, cursor, log}

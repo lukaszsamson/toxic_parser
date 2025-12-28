@@ -3707,6 +3707,14 @@ defmodule ToxicParser.ConformanceTest do
         "\n%baz{@ Context ** with|[foo: \n\nnot qux.\nbar,foo: cond\n]\n}\n\n;@ delta.gamma.{\nbaz.alpha,baz,@ delta,} \\\\\n// + @ foo[\nfoo]"
       )
     end
+
+    test "repro 168" do
+      assert_conforms("%{o|[] => 1}")
+    end
+
+    test "repro 169" do
+      assert_conforms("%^\n//baz{}")
+    end
   end
 
   # =============================================================================
