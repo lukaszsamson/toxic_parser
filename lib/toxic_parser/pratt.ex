@@ -102,10 +102,10 @@ defmodule ToxicParser.Pratt do
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term(), term()}
 
   defp ensure_no_parens_extension_opt(opts) do
-    allow? =
-      Keyword.get(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
-
-    Keyword.put(opts, :allow_no_parens_extension?, allow?)
+    case Keyword.get(opts, :allow_no_parens_extension?) do
+      nil -> Keyword.put(opts, :allow_no_parens_extension?, not Keyword.get(opts, :unary_operand, false))
+      _ -> opts
+    end
   end
 
   defguardp is_no_parens_op_expr?(kind) when kind in @no_parens_op_expr_operators
@@ -2428,8 +2428,7 @@ defmodule ToxicParser.Pratt do
       {:ok, rhs_token, state, cursor} ->
         rhs_opts =
           opts
-          |> Keyword.put(:allow_no_parens_extension?, context.allow_no_parens_expr)
-          |> Keyword.put(:unary_operand, false)
+          |> Keyword.merge([allow_no_parens_extension?: context.allow_no_parens_expr, unary_operand: false])
 
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
