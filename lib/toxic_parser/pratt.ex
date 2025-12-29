@@ -701,7 +701,9 @@ defmodule ToxicParser.Pratt do
                       end
 
                     {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
-                      if operand_ctx.allow_do_block and ExprClass.classify(operand_base) == :unmatched do
+                      if operand_ctx.allow_do_block and
+                           ExprClass.classify(operand_base) == :unmatched and
+                           not has_parens_meta?(operand_base) do
                         case {next_tok_kind, bp(next_tok_kind)} do
                           {_, nil} ->
                             {:ok, operand_base,
@@ -784,7 +786,7 @@ defmodule ToxicParser.Pratt do
                   {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
                     if operand_context.allow_do_block and
                          ExprClass.classify(operand_base) == :unmatched and
-                         not (op_kind == :dual_op and has_parens_meta?(operand_base)) do
+                         not has_parens_meta?(operand_base) do
                       case bp(next_tok_kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           {state_full, cursor_full} =

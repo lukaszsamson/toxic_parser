@@ -3723,35 +3723,51 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "repro 171" do
-      assert_conforms("& %bar{\n\ngamma baz do end .. receive|cond} :: beta +10\ncond\n\nnot\n\n... beta.baz -0")
+      assert_conforms(
+        "& %bar{\n\ngamma baz do end .. receive|cond} :: beta +10\ncond\n\nnot\n\n... beta.baz -0"
+      )
     end
 
     test "repro 172" do
-      assert_conforms("\nspam\n&7\n...; & if true do\n:ok\nend <|> if baz do\n:ok\nend |\nfor\n~~~\nfoo\n")
+      assert_conforms(
+        "\nspam\n&7\n...; & if true do\n:ok\nend <|> if baz do\n:ok\nend |\nfor\n~~~\nfoo\n"
+      )
     end
 
     test "repro 173" do
-      assert_conforms("& ( :one ->\n\nBaz)\n..\nqux alpha, 4.58, 0b100 do\nnil\nend | case foo do; :bob\nbar\nrescue\nafter\nend")
+      assert_conforms(
+        "& ( :one ->\n\nBaz)\n..\nqux alpha, 4.58, 0b100 do\nnil\nend | case foo do; :bob\nbar\nrescue\nafter\nend"
+      )
     end
 
     test "repro 174" do
-      assert_conforms("\n& if false do\n:ok\nend\n..\n... | bar :three, baz\nqux :one, :three, 925, 58.35\nspam gamma Mod, delta, :error\nspam(0o27) do\nalpha ->\n\n\nBaz\n:three ->\n\n\nbar\nend")
+      assert_conforms(
+        "\n& if false do\n:ok\nend\n..\n... | bar :three, baz\nqux :one, :three, 925, 58.35\nspam gamma Mod, delta, :error\nspam(0o27) do\nalpha ->\n\n\nBaz\n:three ->\n\n\nbar\nend"
+      )
     end
 
     test "repro 175" do
-      assert_conforms("eggs.bar or ..\n\n@ @ not cond.delta -35\n\n;@ delta\n\n;& beta.\n\nbeta[\nspam if do after; delta rescue end] :: beta.bar when spam: \n\n... bar\n")
+      assert_conforms(
+        "eggs.bar or ..\n\n@ @ not cond.delta -35\n\n;@ delta\n\n;& beta.\n\nbeta[\nspam if do after; delta rescue end] :: beta.bar when spam: \n\n... bar\n"
+      )
     end
 
     test "repro 176" do
-      assert_conforms("... (; :one ->\n\n\neggs)\n... if beta do\n:ok\nend\n& if true do\n:ok\nend .. 0 when if foo do\n:ok\nend\n( 1 -> Remote.Mod.Mod; delta ->\n\n\nbeta;) == :foo\n")
+      assert_conforms(
+        "... (; :one ->\n\n\neggs)\n... if beta do\n:ok\nend\n& if true do\n:ok\nend .. 0 when if foo do\n:ok\nend\n( 1 -> Remote.Mod.Mod; delta ->\n\n\nbeta;) == :foo\n"
+      )
     end
 
     test "repro 177" do
-      assert_conforms("nil ||| delta\n; & if true do\n:ok\nend\n..\nfoo when foo: State, qux: 0o0")
+      assert_conforms(
+        "nil ||| delta\n; & if true do\n:ok\nend\n..\nfoo when foo: State, qux: 0o0"
+      )
     end
 
     test "repro 178" do
-      assert_conforms("\n& if false do\n:ok\nend\n..\n:ok |\nif true do\n:ok\nend\n:ok &&& alpha Qux.Foo, eggs, Foo")
+      assert_conforms(
+        "\n& if false do\n:ok\nend\n..\n:ok |\nif true do\n:ok\nend\n:ok &&& alpha Qux.Foo, eggs, Foo"
+      )
     end
   end
 
