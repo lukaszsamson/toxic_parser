@@ -333,10 +333,10 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
       failures =
         for op <- @binary_ops,
-            expr_a <- @expressions -- [:no_parens, :unmatched],
-            expr_b <- @expressions -- [:no_parens, :unmatched],
-            expr_c <- @expressions -- [:no_parens, :unmatched],
-            expr_d <- @expressions -- [:no_parens, :unmatched] do
+            expr_a <- @expressions -- [],
+            expr_b <- @expressions -- [],
+            expr_c <- @expressions -- [],
+            expr_d <- @expressions -- [] do
           s_op = op_to_string(op)
 
           # Inside values
@@ -368,11 +368,16 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "ternary range between two binary operators (a op1 b..c//d op2 e)" do
       failures =
-        for op1 <- @binary_ops, op2 <- @binary_ops do
+        for op1 <- @binary_ops, op2 <- @binary_ops,
+        expr_a <- @expressions -- [:no_parens],
+            expr_b <- @expressions -- [:no_parens],
+            expr_c <- @expressions -- [:no_parens],
+            expr_d <- @expressions -- [:no_parens],
+            expr_e <- @expressions -- [] do
           s1 = op_to_string(op1)
           s2 = op_to_string(op2)
 
-          check("a #{s1} b..c//d #{s2} e")
+          check("#{gen_expr(expr_a, "a")} #{s1} #{gen_expr(expr_b, "b")}..#{gen_expr(expr_c, "c")}//#{gen_expr(expr_d, "d")} #{s2} #{gen_expr(expr_e, "e")}")
         end
         |> Enum.reject(&is_nil/1)
 
@@ -397,9 +402,9 @@ defmodule ToxicParser.SystematicOperatorsTest do
     test "map update with unary operators" do
       failures =
         for op <- @simple_unary_ops,
-            expr_a <- @expressions -- [:no_parens],
-            expr_b <- @expressions -- [:no_parens],
-            expr_c <- @expressions -- [:no_parens] do
+            expr_a <- @expressions -- [],
+            expr_b <- @expressions -- [],
+            expr_c <- @expressions -- [] do
           s_op = op_to_string(op)
 
           [

@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Context, Cursor, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, ExprClass, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.{Helpers, Meta}
   alias ToxicParser.Grammar.{Brackets, EOE, Expressions, Keywords}
 
@@ -705,9 +705,14 @@ defmodule ToxicParser.Grammar.Maps do
     if Keyword.has_key?(pipe_meta, :parens) do
       :not_update
     else
-      case classify_pipe_rhs_for_map_update(rhs) do
+      base_class = ExprClass.classify(base)
+
+      case classify_pipe_rhs_for_map_update(rhs, base_class) do
         {:valid, entries} ->
           {:update, base, pipe_meta, entries}
+
+        _ ->
+          :not_update
       end
     end
   end
@@ -717,10 +722,13 @@ defmodule ToxicParser.Grammar.Maps do
   # Check if RHS of | is valid for map update
   # Valid: single assoc {:"=>", _, [k, v]} or keyword list
   # Annotates keys with :assoc metadata indicating the position of =>
-  defp classify_pipe_rhs_for_map_update({:"=>", assoc_meta, [key, value]} = _assoc) do
-    raise "dead code"
-    annotated_key = annotate_assoc(key, assoc_meta)
-    {:valid, [{annotated_key, value}]}
+  defp classify_pipe_rhs_for_map_update({:"=>", assoc_meta, [key, value]} = _assoc, base_class) do
+    if valid_update_entry?({key, value}, base_class) do
+      annotated_key = annotate_assoc(key, assoc_meta)
+      {:valid, [{annotated_key, value}]}
+    else
+      :invalid
+    end
   end
 
   # Handle nested pipe in map update RHS: a | b | c => d
@@ -728,7 +736,7 @@ defmodule ToxicParser.Grammar.Maps do
   # The RHS of first | is: {:|, _, [b, {:"=>", _, [c, d]}]}
   # This should become: [{(b | c), d}] - key is b | c, value is d
   # Use extract_assoc to properly handle any level of nesting
-  defp classify_pipe_rhs_for_map_update({:|, rhs_meta, _} = expr) do
+  defp classify_pipe_rhs_for_map_update({:|, rhs_meta, _} = expr, _base_class) do
     if Keyword.has_key?(rhs_meta, :parens) do
       {:valid, [expr]}
     else
@@ -745,17 +753,20 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp classify_pipe_rhs_for_map_update(list) when is_list(list) do
+  defp classify_pipe_rhs_for_map_update(list, base_class) when is_list(list) do
     cond do
       list == [] ->
         # Empty list literal (e.g. ''), treated as a map_base_expr, wrapped.
         {:valid, [list]}
 
       Enum.all?(list, &is_keyword_or_assoc_entry?/1) ->
-        # raise "dead code"
-        # Annotate keys in assoc entries with :assoc metadata
-        annotated = Enum.map(list, &annotate_assoc_entry/1)
-        {:valid, annotated}
+        if Enum.all?(list, &valid_update_entry?(&1, base_class)) do
+          # Annotate keys in assoc entries with :assoc metadata
+          annotated = Enum.map(list, &annotate_assoc_entry/1)
+          {:valid, annotated}
+        else
+          :invalid
+        end
 
       true ->
         # A non-keyword list literal is a valid map_base_expr on the RHS.
@@ -765,11 +776,14 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Fallback: if RHS contains a rightmost assoc (=>), treat it as a single assoc entry.
   # Otherwise it's a map_base_expr, wrapped in a list.
-  defp classify_pipe_rhs_for_map_update(rhs) do
+  defp classify_pipe_rhs_for_map_update(rhs, base_class) do
     case extract_assoc(rhs) do
       {:assoc, key, value, assoc_meta} ->
-        raise "dead code"
-        {:valid, [{annotate_assoc(key, assoc_meta), value}]}
+        if valid_update_entry?({key, value}, base_class) do
+          {:valid, [{annotate_assoc(key, assoc_meta), value}]}
+        else
+          :invalid
+        end
 
       :not_assoc ->
         {:valid, [rhs]}
@@ -811,7 +825,6 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Annotate a single assoc entry with :assoc metadata
   defp annotate_assoc_entry({:"=>", assoc_meta, [key, value]}) do
-    raise "dead code"
     {annotate_assoc(key, assoc_meta), value}
   end
 
@@ -821,6 +834,39 @@ defmodule ToxicParser.Grammar.Maps do
   defp is_keyword_or_assoc_entry?({{_expr, _meta, _args}, _value}), do: true
   defp is_keyword_or_assoc_entry?({:"=>", _meta, [_k, _v]}), do: true
   defp is_keyword_or_assoc_entry?(_), do: false
+
+  defp valid_update_entry?({:"=>", _meta, [key, _value]}, base_class),
+    do: valid_update_entry?({key, nil}, base_class)
+
+  defp valid_update_entry?({key, _value}, base_class) do
+    case ExprClass.classify(key) do
+      :no_parens -> allow_unary_no_parens_key?(key, base_class)
+      _ -> true
+    end
+  end
+
+  defp valid_update_entry?(_, _base_class), do: true
+
+  # Allow unary-operator keys with no-parens calls only when the base is matched.
+  defp allow_unary_no_parens_key?({name, _meta, [arg]}, :matched) when is_atom(name) do
+    Macro.operator?(name, 1) and no_parens_call?(arg)
+  end
+
+  defp allow_unary_no_parens_key?(_, _), do: false
+
+  defp no_parens_call?({name, meta, args}) when is_atom(name) and is_list(meta) and is_list(args) do
+    not Macro.operator?(name, length(args)) and no_parens_meta?(meta) and args != []
+  end
+
+  defp no_parens_call?({_callee, meta, args}) when is_list(meta) and is_list(args) do
+    no_parens_meta?(meta) and args != []
+  end
+
+  defp no_parens_call?(_), do: false
+
+  defp no_parens_meta?(meta) do
+    not Keyword.has_key?(meta, :closing) and not Keyword.has_key?(meta, :parens)
+  end
 
   # Parse trailing entries after map update: %{base | k => v, more...}
   defp parse_map_update_trailing_entries(base, pipe_meta, initial_entries, state, cursor, log) do
@@ -980,7 +1026,12 @@ defmodule ToxicParser.Grammar.Maps do
 
           {:no_kw, state, cursor, log} ->
             # assoc_expr(s): %{base | k => v, ...}
-            parse_map_update_assoc_entries(base, pipe_meta, [], state, cursor, log)
+            base_class = ExprClass.classify(base)
+
+            case parse_map_update_assoc_entries(base, pipe_meta, base_class, [], state, cursor, log) do
+              {:not_update, state, cursor} -> {:not_update, state, cursor}
+              other -> other
+            end
 
           {:error, reason, state, cursor, log} ->
             {:error, reason, state, cursor, log}
@@ -989,14 +1040,17 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   # Parse assoc entries for map update RHS
-  defp parse_map_update_assoc_entries(base, pipe_meta, acc, state, cursor, log) do
+  defp parse_map_update_assoc_entries(base, pipe_meta, base_class, acc, state, cursor, log) do
     with {:ok, entry, state, cursor, log} <-
            parse_assoc_expr(state, cursor, Context.container_expr(), log) do
       # Verify it's actually an assoc (has =>)
       case entry do
         {key, value} ->
-          # It's a proper assoc entry
-          {state, cursor} = EOE.skip(state, cursor)
+          if not valid_update_entry?({key, value}, base_class) do
+            {:not_update, state, cursor}
+          else
+            # It's a proper assoc entry
+            {state, cursor} = EOE.skip(state, cursor)
 
           case Cursor.peek(cursor) do
             {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
@@ -1044,6 +1098,7 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, _tok, _cursor} ->
               {:error, :expected_closing_brace, state, cursor, log}
           end
+        end
 
         _ ->
           {:error, :expected_assoc, state, cursor, log}
