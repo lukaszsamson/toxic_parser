@@ -16,6 +16,7 @@ defmodule ToxicParser.Pratt do
     Context,
     Cursor,
     EventLog,
+    ExprClass,
     Identifiers,
     NoParens,
     Precedence,
@@ -93,8 +94,6 @@ defmodule ToxicParser.Pratt do
     :rel_op,
     :arrow_op
   ]
-  @do_block_keywords [:case, :cond, :with, :try, :receive, :if, :unless, :for, :quote]
-
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
@@ -659,32 +658,8 @@ defmodule ToxicParser.Pratt do
             else
               operand_token_for_parse = operand_token
 
-              # Follow elixir_parser.yrl at_op rules:
-              # - matched_expr -> at_op_eol matched_expr
-              # - unmatched_expr -> at_op_eol expr
-              # - no_parens_expr -> at_op_eol no_parens_expr
-              {operand_ctx, operand_min_bp0} =
-                cond do
-                  # no_parens_expr -> at_op_eol no_parens_expr
-                  Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
-                    {Context.no_parens_expr(), at_bp}
-
-                  # unmatched_expr -> at_op_eol expr
-                  Context.allow_do_block?(context) ->
-                    {Context.expr(), at_bp}
-
-                  # matched_expr -> at_op_eol matched_expr
-                  true ->
-                    {Context.matched_expr(), at_bp}
-                end
-
-              operand_min_bp =
-                if operand_ctx.allow_do_block == false and
-                     operand_ctx.allow_no_parens_expr == false do
-                  10_000
-                else
-                  operand_min_bp0
-                end
+              operand_ctx = unary_operand_context(context)
+              operand_min_bp = at_bp
 
               {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
@@ -726,7 +701,7 @@ defmodule ToxicParser.Pratt do
                       end
 
                     {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
-                      if operand_ctx.allow_do_block and do_block_expr?(operand_base) do
+                      if operand_ctx.allow_do_block and ExprClass.classify(operand_base) == :unmatched do
                         case {next_tok_kind, bp(next_tok_kind)} do
                           {_, nil} ->
                             {:ok, operand_base,
@@ -780,79 +755,16 @@ defmodule ToxicParser.Pratt do
               end
             end
           else
-            # In Elixir's grammar, unary operators take different operand types:
-            # - ellipsis_op always takes matched_expr (min_bp=100)
-            # - @/& take call expressions (identifier with optional args/do-block)
-            #   but NOT trailing binary operators
-            #
-            # For @/&, we use Calls.parse_without_led to get the call without led(),
-            # then led() is called at the END of parse_unary to handle trailing ops.
-            # This ensures "@foo.bar" parses as "(@foo).bar" not "@(foo.bar)"
-            # Elixir's yecc grammar uses operator precedence for unary operands:
-            # - unary_op_eol (300): "+ a ** b" -> "(+ a) ** b" since 300 > 230
-            # - capture_op_eol (90): "& a ** b" -> "& (a ** b)" since 90 < 230
-            # - ellipsis_op (90): "... a ** b" -> "... (a ** b)" since 90 < 230
-            #
-            # For ellipsis/range, operand is always matched_expr (min_bp=100):
-            # - "... a ** b" parses as "...(a ** b)" (power_op bp=230 >= 100)
-            # - "... a | b" parses as "(... a) | b" (pipe_op bp=70 < 100)
-            #
-            # For other unary ops, use the unary op's precedence as min_bp.
-            # This implements the standard Pratt parser precedence model.
-            # - unary_op (300): "+a[e]" -> "+(a[e])" since bracket (310) > 300
-            # Exception: @ (at_op) should capture full expressions including low-precedence
-            # operators like `when` for module attributes (@spec foo() when ...).
-            # Bracket access for @ is handled separately in led_bracket.
-            {_next_token, next_token_kind, next_token_value} =
-              case Cursor.peek(cursor) do
-                {:ok, {kind, _meta, value} = tok, _cursor} -> {tok, kind, value}
-                _ -> {nil, nil, nil}
-              end
+            # Unary operands follow elixir_parser.yrl:
+            # - matched_expr -> unary_op_eol matched_expr
+            # - unmatched_expr -> unary_op_eol expr
+            # - no_parens_expr -> unary_op_eol no_parens_expr
+            operand_context = unary_operand_context(context)
 
             operand_min_bp =
-              cond do
-                operand_kind == :do_identifier and Context.allow_do_block?(context) ->
-                  0
-
-                operand_kind == :identifier and next_token_kind == :do_identifier and
-                    Context.allow_do_block?(context) ->
-                  0
-
-                operand_kind == :identifier and next_token_kind == :identifier and
-                  next_token_value in @do_block_keywords and Context.allow_do_block?(context) ->
-                  0
-
-                op_kind in [:ellipsis_op, :range_op] ->
-                  100
-
-                true ->
-                  case Precedence.unary(op_kind) do
-                    {bp, _assoc} -> bp
-                    nil -> 300
-                  end
-              end
-
-            # Most unary operator operands must NOT allow no_parens_expr extension.
-            # The extension bypasses min_bp which would break "-1 + 2" (making it "-(1+2)").
-            # Exception: ellipsis_op follows yecc rules and can take expr/no_parens_expr operands.
-            # The outer context is preserved for led() after the unary is built.
-            operand_context =
-              if op_kind == :ellipsis_op do
-                cond do
-                  # no_parens_expr -> ellipsis_op no_parens_expr
-                  Context.allow_no_parens_expr?(context) and not Context.allow_do_block?(context) ->
-                    Context.no_parens_expr()
-
-                  # unmatched_expr -> ellipsis_op expr
-                  Context.allow_do_block?(context) ->
-                    Context.expr()
-
-                  # matched_expr -> ellipsis_op matched_expr
-                  true ->
-                    Context.matched_expr()
-                end
-              else
-                restrict_no_parens_extension(context)
+              case Precedence.unary(op_kind) do
+                {bp, _assoc} -> bp
+                nil -> 300
               end
 
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
@@ -870,13 +782,8 @@ defmodule ToxicParser.Pratt do
               operand_result =
                 case Cursor.peek(cursor_after_base) do
                   {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
-                    # elixir_parser.yrl: unmatched_expr -> unary_op_eol expr
-                    # When the operand is a do-block expression, allow lower-precedence operators
-                    # to bind *inside* the unary operand by reparsing with min_bp=0.
                     if operand_context.allow_do_block and
-                         (do_block_expr?(operand_base) or
-                            (op_kind in [:ellipsis_op, :range_op] and
-                               contains_do_block?(operand_base))) and
+                         ExprClass.classify(operand_base) == :unmatched and
                          not (op_kind == :dual_op and has_parens_meta?(operand_base)) do
                       case bp(next_tok_kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
@@ -901,38 +808,8 @@ defmodule ToxicParser.Pratt do
                            cursor_after_base, log}
                       end
                     else
-                      if op_kind == :capture_op do
-                        function_capture? = function_capture_operand?(operand_base)
-
-                        case {function_capture?, contains_do_block?(operand_base),
-                              bp(next_tok_kind)} do
-                          {false, true, next_bp}
-                          when is_integer(next_bp) and next_bp < operand_min_bp ->
-                            {state_full, cursor_full} =
-                              TokenAdapter.rewind(state_after_base, cursor_after_base, ref)
-
-                            with {:ok, operand_full, state_full, cursor_full, log} <-
-                                   parse_rhs(
-                                     operand_token,
-                                     state_full,
-                                     cursor_full,
-                                     operand_context,
-                                     log,
-                                     0,
-                                     unary_operand: true
-                                   ) do
-                              {:ok, operand_full, state_full, cursor_full, log}
-                            end
-
-                          _ ->
-                            {:ok, operand_base,
-                             TokenAdapter.drop_checkpoint(state_after_base, ref),
-                             cursor_after_base, log}
-                        end
-                      else
-                        {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
-                         cursor_after_base, log}
-                      end
+                      {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
+                       cursor_after_base, log}
                     end
 
                   _ ->
@@ -2457,8 +2334,22 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  # Restrict context to prevent no_parens_expr extension in nested operands
-  defp restrict_no_parens_extension(%Context{} = ctx), do: %{ctx | allow_no_parens_expr: false}
+  # Unary operators share the same operand union across contexts in elixir_parser.yrl.
+  defp unary_operand_context(%Context{} = ctx) do
+    cond do
+      Context.allow_no_parens_expr?(ctx) and not Context.allow_do_block?(ctx) ->
+        Context.no_parens_expr()
+
+      Context.allow_do_block?(ctx) and Context.allow_no_parens_expr?(ctx) ->
+        Context.expr()
+
+      Context.allow_do_block?(ctx) ->
+        Context.unmatched_expr()
+
+      true ->
+        Context.matched_expr()
+    end
+  end
 
   defp has_parens_meta?({_, meta, _}) when is_list(meta), do: Keyword.has_key?(meta, :parens)
   defp has_parens_meta?(_), do: false
@@ -2690,23 +2581,6 @@ defmodule ToxicParser.Pratt do
     # Use cons instead of ++ to avoid allocating intermediate list
     [{:newlines, newlines} | token_meta]
   end
-
-  defp function_capture_operand?({:/, _meta, [callee, arity]}) when is_integer(arity) do
-    case callee do
-      {name, _meta, nil} when is_atom(name) -> true
-      {{:., _meta, _args}, _meta2, []} -> true
-      _ -> false
-    end
-  end
-
-  defp function_capture_operand?(_), do: false
-
-  defp contains_do_block?({_, meta, args}) when is_list(meta) and is_list(args) do
-    Keyword.has_key?(meta, :do) or Enum.any?(args, &contains_do_block?/1)
-  end
-
-  defp contains_do_block?(list) when is_list(list), do: Enum.any?(list, &contains_do_block?/1)
-  defp contains_do_block?(_), do: false
 
   defp parse_access_indices(acc, state, cursor, _ctx, log) do
     case Brackets.parse_bracket_arg_no_skip(state, cursor, log) do
