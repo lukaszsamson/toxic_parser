@@ -3769,6 +3769,15 @@ defmodule ToxicParser.ConformanceTest do
         "\n& if false do\n:ok\nend\n..\n:ok |\nif true do\n:ok\nend\n:ok &&& alpha Qux.Foo, eggs, Foo"
       )
     end
+
+    test "repro 179" do
+      assert_conforms("%{x | +@_ l,u => 1}")
+      assert_conforms("%{x | r/^n?e,u => 1}")
+      assert_conforms("%{x | c<+_?d,0 => 1}")
+      assert_conforms("%{x | +-n!l,? => 1}")
+      assert_conforms("%{x | -&t&c,w => 1}")
+      assert_conforms("%{x | i<@s^0,x => 1}")
+    end
   end
 
   # =============================================================================

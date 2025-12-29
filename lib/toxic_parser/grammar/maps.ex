@@ -840,19 +840,55 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp valid_update_entry?({key, _value}, base_class) do
     case ExprClass.classify(key) do
-      :no_parens -> allow_unary_no_parens_key?(key, base_class)
+      :no_parens -> allow_no_parens_update_key?(key, base_class)
       _ -> true
     end
   end
 
   defp valid_update_entry?(_, _base_class), do: true
 
-  # Allow unary-operator keys with no-parens calls only when the base is matched.
-  defp allow_unary_no_parens_key?({name, _meta, [arg]}, :matched) when is_atom(name) do
-    Macro.operator?(name, 1) and no_parens_call?(arg)
+  # Allow operator keys with no-parens calls only when the base is matched.
+  defp allow_no_parens_update_key?(key, :matched), do: operator_key_allows_no_parens?(key)
+
+  defp allow_no_parens_update_key?(_, _), do: false
+
+  defp operator_key_allows_no_parens?({name, _meta, args})
+       when is_atom(name) and is_list(args) do
+    case args do
+      [arg] ->
+        if operator_name?(name, 1) do
+          allow_unary_operand?(arg)
+        else
+          false
+        end
+
+      [left, right] ->
+        if operator_name?(name, 2) do
+          allow_binary_operand?(left) and allow_binary_operand?(right)
+        else
+          false
+        end
+
+      _ ->
+        false
+    end
   end
 
-  defp allow_unary_no_parens_key?(_, _), do: false
+  defp operator_key_allows_no_parens?(_), do: false
+
+  defp allow_unary_operand?(arg) do
+    case ExprClass.classify(arg) do
+      :no_parens -> no_parens_call?(arg) or operator_key_allows_no_parens?(arg)
+      _ -> true
+    end
+  end
+
+  defp allow_binary_operand?(arg) do
+    case ExprClass.classify(arg) do
+      :no_parens -> operator_key_allows_no_parens?(arg)
+      _ -> true
+    end
+  end
 
   defp no_parens_call?({name, meta, args}) when is_atom(name) and is_list(meta) and is_list(args) do
     not Macro.operator?(name, length(args)) and no_parens_meta?(meta) and args != []
@@ -866,6 +902,10 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp no_parens_meta?(meta) do
     not Keyword.has_key?(meta, :closing) and not Keyword.has_key?(meta, :parens)
+  end
+
+  defp operator_name?(name, arity) when is_atom(name) do
+    Macro.operator?(name, arity)
   end
 
   # Parse trailing entries after map update: %{base | k => v, more...}
