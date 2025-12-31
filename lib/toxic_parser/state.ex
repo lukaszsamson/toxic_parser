@@ -63,7 +63,8 @@ defmodule ToxicParser.State do
       mode: mode,
       preserve_comments: Keyword.get(opts, :preserve_comments, false),
       existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false),
-      max_peek: max_peek
+      max_peek: max_peek,
+      lexer_backend: Keyword.get(opts, :lexer_backend, :charlist)
     ]
 
     cursor = Cursor.new(source, cursor_opts)
