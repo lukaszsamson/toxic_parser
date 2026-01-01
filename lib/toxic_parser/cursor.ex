@@ -43,19 +43,27 @@ defmodule ToxicParser.Cursor do
     rest = normalize_input(source, cfg.lexer_backend)
     line = Keyword.get(driver_opts, :line, 1)
     column = Keyword.get(driver_opts, :column, 1)
-    lookbehind = Toxic.Util.lookbehind_from_token(nil)
+    lookbehind = {nil, false, 0}
 
     {rest, line, column, driver_hot, cfg, [], [], lookbehind}
   end
 
   @spec next(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
   def next({rest, line, column, driver_hot, cfg, [tok | lookahead], emitq, _lookbehind}) do
-    lookbehind = Toxic.Util.lookbehind_from_token(tok)
+    lookbehind =
+      case tok do
+        {kind, {_, _, count}, _} when kind in [:eol, :";"] -> {tok, true, count}
+        _ -> {tok, false, 0}
+      end
     {:ok, tok, {rest, line, column, driver_hot, cfg, lookahead, emitq, lookbehind}}
   end
 
   def next({rest, line, column, driver_hot, cfg, [], [tok | emitq], _lookbehind}) do
-    lookbehind = Toxic.Util.lookbehind_from_token(tok)
+    lookbehind =
+      case tok do
+        {kind, {_, _, count}, _} when kind in [:eol, :";"] -> {tok, true, count}
+        _ -> {tok, false, 0}
+      end
     {:ok, tok, {rest, line, column, driver_hot, cfg, [], emitq, lookbehind}}
   end
 
