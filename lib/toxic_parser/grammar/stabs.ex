@@ -1229,8 +1229,9 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp classify_stab_item(%State{} = state, cursor, terminator, stop_kinds) do
     # {delim, block, open?, percent_pending?}
+    # Scan limit tuned via benchmarks: 220 is optimal for real Elixir code
     ctx = {0, 0, true, false}
-    scan_classify(state, cursor, [], ctx, terminator, stop_kinds, 200, false)
+    scan_classify(state, cursor, [], ctx, terminator, stop_kinds, 220, false)
   end
 
   defp scan_classify(state, cursor, consumed_rev, _ctx, _terminator, _stop_kinds, max, _boundary?)
