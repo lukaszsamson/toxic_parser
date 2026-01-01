@@ -1012,113 +1012,17 @@ defmodule ToxicParser.Grammar.Stabs do
 
     case Cursor.peek(cursor) do
       {:ok, tok, _cursor} ->
-        if stop_token?(tok, terminator, stop_kinds) do
-          {:ok, acc, state, cursor, log}
-        else
-          {kind, state, cursor} = classify_stab_item(state, cursor, terminator, stop_kinds)
+        cond do
+          stop_token?(tok, terminator, stop_kinds) ->
+            {:ok, acc, state, cursor, log}
 
-          case kind do
-            :clause ->
-              case try_parse_stab_clause(state, cursor, ctx, log, terminator) do
-                {:ok, clause, state, cursor, log} ->
-                  {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
-
-                  parse_stab_items_until(
-                    [clause | acc],
-                    state,
-                    cursor,
-                    ctx,
-                    log,
-                    terminator,
-                    stop_kinds
-                  )
-
-                {:not_stab, _state, _cursor, log} ->
-                  with {:ok, expr, state, cursor, log} <-
-                         Pratt.parse_with_min_bp(
-                           state,
-                           cursor,
-                           Context.expr(),
-                           log,
-                           Precedence.stab_op_bp() + 1
-                         ) do
-                    {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
-
-                    parse_stab_items_until(
-                      [expr | acc],
-                      state,
-                      cursor,
-                      ctx,
-                      log,
-                      terminator,
-                      stop_kinds
-                    )
-                  end
-
-                {:error, reason, state, cursor, log} ->
-                  {:error, reason, state, cursor, log}
-              end
-
-            :unknown ->
-              {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
-
-              case try_parse_stab_clause(checkpoint_state, cursor, ctx, log, terminator) do
-                {:ok, clause, state, cursor, log} ->
-                  state = TokenAdapter.drop_checkpoint(state, ref)
-                  {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
-
-                  parse_stab_items_until(
-                    [clause | acc],
-                    state,
-                    cursor,
-                    ctx,
-                    log,
-                    terminator,
-                    stop_kinds
-                  )
-
-                {:not_stab, _state, _cursor, log} ->
-                  {state, cursor} = TokenAdapter.rewind(checkpoint_state, cursor, ref)
-
-                  with {:ok, expr, state, cursor, log} <-
-                         Pratt.parse_with_min_bp(
-                           state,
-                           cursor,
-                           Context.expr(),
-                           log,
-                           Precedence.stab_op_bp() + 1
-                         ) do
-                    {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
-
-                    parse_stab_items_until(
-                      [expr | acc],
-                      state,
-                      cursor,
-                      ctx,
-                      log,
-                      terminator,
-                      stop_kinds
-                    )
-                  end
-
-                {:error, reason, state, cursor, log} ->
-                  {:error, reason, state, cursor, log}
-              end
-
-            _ ->
-              # Parse as plain expr, stopping before `->`.
-              with {:ok, expr, state, cursor, log} <-
-                     Pratt.parse_with_min_bp(
-                       state,
-                       cursor,
-                       Context.expr(),
-                       log,
-                       Precedence.stab_op_bp() + 1
-                     ) do
-                {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
+          match?({:stab_op, _, _}, tok) ->
+            case try_parse_stab_clause(state, cursor, ctx, log, terminator) do
+              {:ok, clause, state, cursor, log} ->
+                {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
 
                 parse_stab_items_until(
-                  [expr | acc],
+                  [clause | acc],
                   state,
                   cursor,
                   ctx,
@@ -1126,8 +1030,146 @@ defmodule ToxicParser.Grammar.Stabs do
                   terminator,
                   stop_kinds
                 )
-              end
-          end
+
+              {:not_stab, _state, _cursor, log} ->
+                with {:ok, expr, state, cursor, log} <-
+                       Pratt.parse_with_min_bp(
+                         state,
+                         cursor,
+                         Context.expr(),
+                         log,
+                         Precedence.stab_op_bp() + 1
+                       ) do
+                  {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
+
+                  parse_stab_items_until(
+                    [expr | acc],
+                    state,
+                    cursor,
+                    ctx,
+                    log,
+                    terminator,
+                    stop_kinds
+                  )
+                end
+
+              {:error, reason, state, cursor, log} ->
+                {:error, reason, state, cursor, log}
+            end
+
+          true ->
+            {kind, state, cursor} = classify_stab_item(state, cursor, terminator, stop_kinds)
+
+            case kind do
+              :clause ->
+                case try_parse_stab_clause(state, cursor, ctx, log, terminator) do
+                  {:ok, clause, state, cursor, log} ->
+                    {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
+
+                    parse_stab_items_until(
+                      [clause | acc],
+                      state,
+                      cursor,
+                      ctx,
+                      log,
+                      terminator,
+                      stop_kinds
+                    )
+
+                  {:not_stab, _state, _cursor, log} ->
+                    with {:ok, expr, state, cursor, log} <-
+                           Pratt.parse_with_min_bp(
+                             state,
+                             cursor,
+                             Context.expr(),
+                             log,
+                             Precedence.stab_op_bp() + 1
+                           ) do
+                      {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
+
+                      parse_stab_items_until(
+                        [expr | acc],
+                        state,
+                        cursor,
+                        ctx,
+                        log,
+                        terminator,
+                        stop_kinds
+                      )
+                    end
+
+                  {:error, reason, state, cursor, log} ->
+                    {:error, reason, state, cursor, log}
+                end
+
+              :expr ->
+                with {:ok, expr, state, cursor, log} <-
+                       Pratt.parse_with_min_bp(
+                         state,
+                         cursor,
+                         Context.expr(),
+                         log,
+                         Precedence.stab_op_bp() + 1
+                       ) do
+                  {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
+
+                  parse_stab_items_until(
+                    [expr | acc],
+                    state,
+                    cursor,
+                    ctx,
+                    log,
+                    terminator,
+                    stop_kinds
+                  )
+                end
+
+              :unknown ->
+                {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+
+                case try_parse_stab_clause(checkpoint_state, cursor, ctx, log, terminator) do
+                  {:ok, clause, state, cursor, log} ->
+                    state = TokenAdapter.drop_checkpoint(state, ref)
+                    {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
+
+                    parse_stab_items_until(
+                      [clause | acc],
+                      state,
+                      cursor,
+                      ctx,
+                      log,
+                      terminator,
+                      stop_kinds
+                    )
+
+                  {:not_stab, _state, _cursor, log} ->
+                    {state, cursor} = TokenAdapter.rewind(checkpoint_state, cursor, ref)
+
+                    with {:ok, expr, state, cursor, log} <-
+                           Pratt.parse_with_min_bp(
+                             state,
+                             cursor,
+                             Context.expr(),
+                             log,
+                             Precedence.stab_op_bp() + 1
+                           ) do
+                      {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
+
+                      parse_stab_items_until(
+                        [expr | acc],
+                        state,
+                        cursor,
+                        ctx,
+                        log,
+                        terminator,
+                        stop_kinds
+                      )
+                    end
+
+                  {:error, reason, state, cursor, log} ->
+                    {:error, reason, state, cursor, log}
+                end
+            end
         end
 
       {:eof, _cursor} ->
@@ -1182,7 +1224,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp block_label?(_), do: false
 
   # Scan context tuple: {delim, block, open?, percent_pending?}
-  # Using tuple instead of map for zero-allocation updates (called 3.5M+ times)
+  # Using tuple instead of map for zero-allocation updates.
   @type scan_ctx :: {non_neg_integer(), non_neg_integer(), boolean(), boolean()}
 
   defp classify_stab_item(%State{} = state, cursor, terminator, stop_kinds) do
@@ -1194,7 +1236,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp scan_classify(state, cursor, consumed_rev, _ctx, _terminator, _stop_kinds, max, _boundary?)
        when max <= 0 do
     cursor = Cursor.pushback_many_rev(cursor, consumed_rev)
-    {:unknown, state, cursor}
+    {:expr, state, cursor}
   end
 
   defp scan_classify(state, cursor, consumed_rev, ctx, terminator, stop_kinds, max, boundary?) do
@@ -1208,8 +1250,6 @@ defmodule ToxicParser.Grammar.Stabs do
 
         cond do
           top? and tok_kind == :stab_op and boundary? ->
-            # If we've already hit an EOE boundary, `->` belongs to the next stab_expr,
-            # not the current item (which should be parsed as a plain expr).
             cursor3 = Cursor.pushback_many_rev(cursor2, consumed_rev)
             {:expr, state, cursor3}
 

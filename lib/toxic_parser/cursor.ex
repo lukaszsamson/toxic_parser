@@ -39,13 +39,13 @@ defmodule ToxicParser.Cursor do
       |> Keyword.put(:error_mode, if(mode == :strict, do: :strict, else: :tolerant))
 
     cfg = Toxic.Driver.build_cfg(driver_opts)
-    {scope, contexts} = Toxic.Driver.build_hot(driver_opts)
+    driver_hot = Toxic.Driver.build_hot(driver_opts)
     rest = normalize_input(source, cfg.lexer_backend)
     line = Keyword.get(driver_opts, :line, 1)
     column = Keyword.get(driver_opts, :column, 1)
     lookbehind = Toxic.Util.lookbehind_from_token(nil)
 
-    {rest, line, column, {scope, contexts}, cfg, [], [], lookbehind}
+    {rest, line, column, driver_hot, cfg, [], [], lookbehind}
   end
 
   @spec next(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
@@ -152,7 +152,10 @@ defmodule ToxicParser.Cursor do
 
   @doc "Pay-for-play terminator snapshot (does not run on every token)."
   @spec current_terminators(t()) :: [term()]
-  def current_terminators({_rest, _line, _column, {scope, contexts}, _cfg, _lookahead, _emitq, _lookbehind}) do
+  def current_terminators(
+        {_rest, _line, _column, {scope, contexts, _deferrals, _output, _recent_token}, _cfg,
+         _lookahead, _emitq, _lookbehind}
+      ) do
     Toxic.Driver.current_terminators_from(scope, contexts)
   end
 
