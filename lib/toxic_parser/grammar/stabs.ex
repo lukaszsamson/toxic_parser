@@ -1312,85 +1312,82 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # ctx = {delim, block, open?, percent_pending?}
-  defp scan_update_ctx({delim, block, _open?, percent_pending?}, tok) do
-    {d2, b2} = scan_update_delims(delim, block, tok)
-    pp2 = scan_update_percent(percent_pending?, tok)
-    open2 = scan_open?(tok, percent_pending?)
+  defp scan_update_ctx({delim, block, _open?, percent_pending?}, {kind, _meta, _value}) do
+    {d2, b2} =
+      case kind do
+        :"(" -> {delim + 1, block}
+        :"[" -> {delim + 1, block}
+        :"{" -> {delim + 1, block}
+        :"<<" -> {delim + 1, block}
+        :")" -> {max(delim - 1, 0), block}
+        :"]" -> {max(delim - 1, 0), block}
+        :"}" -> {max(delim - 1, 0), block}
+        :">>" -> {max(delim - 1, 0), block}
+        :do -> {delim, block + 1}
+        :fn -> {delim, block + 1}
+        :end when block > 0 -> {delim, block - 1}
+        _ -> {delim, block}
+      end
+
+    pp2 =
+      case {percent_pending?, kind} do
+        {true, :"{"} -> false
+        {false, :%} -> true
+        _ -> percent_pending?
+      end
+
+    open2 =
+      case percent_pending? do
+        true ->
+          case kind do
+            :identifier -> true
+            :alias -> true
+            _ -> false
+          end
+
+        false ->
+          open_kind?(kind)
+      end
+
     {d2, b2, open2, pp2}
   end
 
-  # Returns updated percent_pending? boolean
-  defp scan_update_percent(true = _percent_pending?, {:"{", _meta, _value}), do: false
-  defp scan_update_percent(true = pp, _tok), do: pp
-  defp scan_update_percent(false = _percent_pending?, {:%, _meta, _value}), do: true
-  defp scan_update_percent(false = pp, _tok), do: pp
-
-  # Returns {new_delim, new_block} tuple
-  defp scan_update_delims(d, b, {kind, _meta, _value}) when kind in [:"(", :"[", :"{", :"<<"],
-    do: {d + 1, b}
-
-  defp scan_update_delims(d, b, {kind, _meta, _value}) when kind in [:")", :"]", :"}", :">>"],
-    do: {max(d - 1, 0), b}
-
-  defp scan_update_delims(d, b, {:do, _meta, _value}), do: {d, b + 1}
-  defp scan_update_delims(d, b, {:fn, _meta, _value}), do: {d, b + 1}
-  defp scan_update_delims(d, b, {:end, _meta, _value}) when b > 0, do: {d, b - 1}
-  defp scan_update_delims(d, b, _tok), do: {d, b}
-
-  # scan_open? now takes percent_pending? boolean directly
-  defp scan_open?({kind, _meta, _value}, true = _percent_pending?)
-       when kind in [:identifier, :alias],
-       do: true
-
-  defp scan_open?({_kind, _meta, _value}, true = _percent_pending?), do: false
-
-  @binary_op [
-    :stab_op,
-    :in_match_op,
-    :when_op,
-    :type_op,
-    :pipe_op,
-    :assoc_op,
-    :match_op,
-    :or_op,
-    :and_op,
-    :comp_op,
-    :rel_op,
-    :arrow_op,
-    :in_op,
-    :xor_op,
-    :ternary_op,
-    :concat_op,
-    :range_op,
-    :dual_op,
-    :mult_op,
-    :power_op,
-    :.,
-    :dot_call_op
-  ]
-
-  @unary_op [
-    :capture_op,
-    :ellipsis_op,
-    :unary_op,
-    :at_op
-  ]
-
-  @open_kinds [
-                :",",
-                :kw_identifier,
-                :kw_identifier_unsafe_end,
-                :kw_identifier_safe_end,
-                :"(",
-                :"[",
-                :"{",
-                :"<<",
-                :%
-              ] ++ @binary_op ++ @unary_op
-
-  # When percent_pending? is false (or any value), check @open_kinds
-  defp scan_open?({kind, _meta, _value}, _percent_pending?) when kind in @open_kinds, do: true
-  defp scan_open?(_, _percent_pending?), do: false
+  defp open_kind?(:","), do: true
+  defp open_kind?(:kw_identifier), do: true
+  defp open_kind?(:kw_identifier_unsafe_end), do: true
+  defp open_kind?(:kw_identifier_safe_end), do: true
+  defp open_kind?(:"("), do: true
+  defp open_kind?(:"["), do: true
+  defp open_kind?(:"{"), do: true
+  defp open_kind?(:"<<"), do: true
+  defp open_kind?(:%), do: true
+  defp open_kind?(:stab_op), do: true
+  defp open_kind?(:in_match_op), do: true
+  defp open_kind?(:when_op), do: true
+  defp open_kind?(:type_op), do: true
+  defp open_kind?(:pipe_op), do: true
+  defp open_kind?(:assoc_op), do: true
+  defp open_kind?(:match_op), do: true
+  defp open_kind?(:or_op), do: true
+  defp open_kind?(:and_op), do: true
+  defp open_kind?(:comp_op), do: true
+  defp open_kind?(:rel_op), do: true
+  defp open_kind?(:arrow_op), do: true
+  defp open_kind?(:in_op), do: true
+  defp open_kind?(:xor_op), do: true
+  defp open_kind?(:ternary_op), do: true
+  defp open_kind?(:concat_op), do: true
+  defp open_kind?(:range_op), do: true
+  defp open_kind?(:dual_op), do: true
+  defp open_kind?(:mult_op), do: true
+  defp open_kind?(:power_op), do: true
+  defp open_kind?(:.), do: true
+  defp open_kind?(:dot_call_op), do: true
+  defp open_kind?(:capture_op), do: true
+  defp open_kind?(:ellipsis_op), do: true
+  defp open_kind?(:unary_op), do: true
+  defp open_kind?(:at_op), do: true
+  defp open_kind?(_kind), do: false
 
   @doc "Build the value for a do-block section (block or stab clauses)."
   @spec build_section_value([Macro.t()]) :: Macro.t()
