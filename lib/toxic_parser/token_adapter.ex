@@ -209,12 +209,56 @@ defmodule ToxicParser.TokenAdapter do
   """
   @spec next(State.t(), Cursor.t()) :: result()
   def next(%State{} = state, cursor) do
-    case consume_fuel(state) do
-      {:ok, state} ->
-        fetch_next(state, cursor)
+    case state.fuel do
+      :infinity ->
+        case Cursor.next(cursor) do
+          {:ok, raw, cursor} ->
+            case raw do
+              {:error_token, _meta, %Toxic.Error{} = err} ->
+                {:ok, raw, add_diagnostics(state, [err]), cursor}
 
-      {:error, :out_of_fuel, state} ->
-        {:error, :out_of_fuel, state, cursor}
+              {kind, _, _}
+              when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
+                {:ok, raw, update_terminators(state, cursor), cursor}
+
+              _ ->
+                {:ok, raw, state, cursor}
+            end
+
+          {:eof, cursor} ->
+            {:eof, state, cursor}
+
+          {:error, reason, cursor} ->
+            handle_error(reason, cursor, state)
+        end
+
+      fuel when is_integer(fuel) ->
+        if fuel > 0 do
+          state = %{state | fuel: fuel - 1}
+
+          case Cursor.next(cursor) do
+            {:ok, raw, cursor} ->
+              case raw do
+                {:error_token, _meta, %Toxic.Error{} = err} ->
+                  {:ok, raw, add_diagnostics(state, [err]), cursor}
+
+                {kind, _, _}
+                when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
+                  {:ok, raw, update_terminators(state, cursor), cursor}
+
+                _ ->
+                  {:ok, raw, state, cursor}
+              end
+
+            {:eof, cursor} ->
+              {:eof, state, cursor}
+
+            {:error, reason, cursor} ->
+              handle_error(reason, cursor, state)
+          end
+        else
+          {:error, :out_of_fuel, state, cursor}
+        end
     end
   end
 
@@ -338,41 +382,7 @@ defmodule ToxicParser.TokenAdapter do
   # Private helpers
   # ============================================================================
 
-  defp consume_fuel(%State{fuel: :infinity} = state), do: {:ok, state}
-
-  defp consume_fuel(%State{fuel: fuel} = state) when is_integer(fuel) do
-    if fuel > 0 do
-      {:ok, %{state | fuel: fuel - 1}}
-    else
-      {:error, :out_of_fuel, state}
-    end
-  end
-
   defguard is_delimiter(token) when elem(token, 0) in @delimiter_tokens
-
-  defp fetch_next(%State{} = state, cursor) do
-    case Cursor.next(cursor) do
-      {:ok, raw, cursor} ->
-        # Extract diagnostics from error tokens
-        case raw do
-          {:error_token, _meta, %Toxic.Error{} = err} ->
-            {:ok, raw, add_diagnostics(state, [err]), cursor}
-
-          {kind, _, _}
-          when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
-            {:ok, raw, update_terminators(state, cursor), cursor}
-
-          _ ->
-            {:ok, raw, state, cursor}
-        end
-
-      {:eof, cursor} ->
-        {:eof, state, cursor}
-
-      {:error, reason, cursor} ->
-        handle_error(reason, cursor, state)
-    end
-  end
 
   defp handle_error(reason, cursor, state) do
     terminators = Cursor.current_terminators(cursor)

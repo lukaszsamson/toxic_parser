@@ -64,8 +64,7 @@ defmodule ToxicParser.Cursor do
       {:ok, tok, rest, line, column, driver_hot, lookbehind} ->
         {:ok, tok, {rest, line, column, driver_hot, cfg, [], [], lookbehind}}
 
-      {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
-        lookbehind = Toxic.Util.lookbehind_from_token(tok)
+      {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, lookbehind} ->
         {:ok, tok, {rest, line, column, driver_hot, cfg, [], rest_tokens, lookbehind}}
 
       {:eof, driver_hot} ->
@@ -90,7 +89,7 @@ defmodule ToxicParser.Cursor do
       {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
         {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok], lookbehind}}
 
-      {:ok_many, [tok | _] = tokens, rest, line, column, driver_hot, _lookbehind} ->
+      {:ok_many, [tok | _] = tokens, rest, line, column, driver_hot, lookbehind} ->
         {:ok, tok, {rest, line, column, driver_hot, cfg, [], tokens, lookbehind}}
 
       {:eof, driver_hot} ->
