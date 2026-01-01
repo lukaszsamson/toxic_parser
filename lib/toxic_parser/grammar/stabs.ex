@@ -1125,49 +1125,25 @@ defmodule ToxicParser.Grammar.Stabs do
                 end
 
               :unknown ->
-                {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+                with {:ok, expr, state, cursor, log} <-
+                       Pratt.parse_with_min_bp(
+                         state,
+                         cursor,
+                         Context.expr(),
+                         log,
+                         Precedence.stab_op_bp() + 1
+                       ) do
+                  {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
 
-                case try_parse_stab_clause(checkpoint_state, cursor, ctx, log, terminator) do
-                  {:ok, clause, state, cursor, log} ->
-                    state = TokenAdapter.drop_checkpoint(state, ref)
-                    {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
-
-                    parse_stab_items_until(
-                      [clause | acc],
-                      state,
-                      cursor,
-                      ctx,
-                      log,
-                      terminator,
-                      stop_kinds
-                    )
-
-                  {:not_stab, _state, _cursor, log} ->
-                    {state, cursor} = TokenAdapter.rewind(checkpoint_state, cursor, ref)
-
-                    with {:ok, expr, state, cursor, log} <-
-                           Pratt.parse_with_min_bp(
-                             state,
-                             cursor,
-                             Context.expr(),
-                             log,
-                             Precedence.stab_op_bp() + 1
-                           ) do
-                      {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
-
-                      parse_stab_items_until(
-                        [expr | acc],
-                        state,
-                        cursor,
-                        ctx,
-                        log,
-                        terminator,
-                        stop_kinds
-                      )
-                    end
-
-                  {:error, reason, state, cursor, log} ->
-                    {:error, reason, state, cursor, log}
+                  parse_stab_items_until(
+                    [expr | acc],
+                    state,
+                    cursor,
+                    ctx,
+                    log,
+                    terminator,
+                    stop_kinds
+                  )
                 end
             end
         end
