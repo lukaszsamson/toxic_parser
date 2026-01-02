@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, Pratt, Precedence, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
 
@@ -1390,7 +1390,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp build_block([{:unquote_splicing, _, [_]} = single]), do: {:__block__, [], [single]}
   defp build_block([single]), do: single
-  defp build_block(items), do: Builder.Helpers.literal({:__block__, [], items})
+  defp build_block(items), do: {:__block__, [], items}
 
   defp check_stab(items_rev) do
     items = Enum.reverse(items_rev)

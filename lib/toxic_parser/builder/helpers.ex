@@ -7,10 +7,8 @@ defmodule ToxicParser.Builder.Helpers do
   """
 
   @doc "Returns a literal AST, optionally encoded using literal_encoder."
-  @spec literal(term(), keyword(), ToxicParser.State.t() | nil) :: term()
-  def literal(value, meta \\ [], state \\ nil)
-
-  def literal(value, meta, %{literal_encoder: literal_encoder}) do
+  @spec literal(term(), keyword(), ToxicParser.State.t()) :: term()
+  def literal(value, meta, %ToxicParser.State{literal_encoder: literal_encoder}) do
     case literal_encoder do
       nil ->
         value
@@ -22,8 +20,6 @@ defmodule ToxicParser.Builder.Helpers do
         end
     end
   end
-
-  def literal(value, _meta, nil), do: value
 
   @doc "Builds a unary op AST node."
   @spec unary(atom(), Macro.t(), keyword()) :: Macro.t()

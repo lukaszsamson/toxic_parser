@@ -10,6 +10,7 @@ defmodule ToxicParser.Grammar.Containers do
     EventLog,
     ExprClass,
     NoParensErrors,
+    ParseOpts,
     Pratt,
     State,
     TokenAdapter
@@ -23,7 +24,7 @@ defmodule ToxicParser.Grammar.Containers do
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
           | {:no_container, State.t(), Cursor.t()}
 
-  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), keyword()) ::
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), ParseOpts.t()) ::
           result()
   def parse(
         %State{} = state,
@@ -31,7 +32,7 @@ defmodule ToxicParser.Grammar.Containers do
         %Context{} = ctx,
         %EventLog{} = log,
         min_bp \\ 0,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     case Cursor.peek(cursor) do
       {:ok, {:"(", _meta, _value}, _cursor} ->

@@ -18,6 +18,7 @@ defmodule ToxicParser.Grammar.Calls do
     Identifiers,
     NoParens,
     NoParensErrors,
+    ParseOpts,
     Pratt,
     Result,
     State,
@@ -328,7 +329,7 @@ defmodule ToxicParser.Grammar.Calls do
         %Context{} = ctx,
         %EventLog{} = log,
         min_bp \\ 0,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     case Cursor.peek(cursor) do
       {:ok, {kind, _meta, _value}, _cursor} ->
@@ -375,7 +376,7 @@ defmodule ToxicParser.Grammar.Calls do
                     arg_context = Context.no_parens_expr()
 
                     case Pratt.parse_with_min_bp(state, cursor, arg_context, log, 0,
-                           stop_at_assoc: true
+                           ParseOpts.stop_at_assoc()
                          ) do
                       {:ok, arg, state, cursor, log} ->
                         handle_no_parens_arg(arg, acc, state, cursor, ctx, log, min_bp, opts)
@@ -407,7 +408,7 @@ defmodule ToxicParser.Grammar.Calls do
     else
       case Cursor.peek(cursor) do
         {:ok, {:",", _meta, _value}, _cursor} ->
-          if Keyword.get(opts, :stop_at_comma, false) do
+          if opts.stop_at_comma do
             {:ok, Enum.reverse([arg | acc]), state, cursor, log}
           else
             {:ok, comma_tok, state, cursor} = TokenAdapter.next(state, cursor)
@@ -460,7 +461,7 @@ defmodule ToxicParser.Grammar.Calls do
           Pratt.context(),
           EventLog.t(),
           non_neg_integer(),
-          keyword()
+          ParseOpts.t()
         ) ::
           result()
   def parse_without_led(
@@ -469,7 +470,7 @@ defmodule ToxicParser.Grammar.Calls do
         %Context{} = ctx,
         %EventLog{} = log,
         min_bp \\ 0,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     case Cursor.peek(cursor) do
       {:ok, {kind, _meta, _value} = tok, _cursor} ->
@@ -558,7 +559,7 @@ defmodule ToxicParser.Grammar.Calls do
     # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
     with {:ok, first_arg, state, cursor, log} <-
            Pratt.parse_with_min_bp(state, cursor, Context.no_parens_expr(), log, 0,
-             stop_at_assoc: true
+             ParseOpts.stop_at_assoc()
            ) do
       case Cursor.peek(cursor) do
         {:ok, {:",", _meta, _value}, _cursor} ->

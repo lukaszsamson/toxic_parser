@@ -13,8 +13,8 @@ defmodule ToxicParser.Cursor do
   @type lookbehind :: Toxic.Driver.lookbehind()
   @type last_token :: token() | nil
   @type step_result ::
-          {:ok, token(), input(), pos_integer(), pos_integer(), driver_hot(), lookbehind()}
-          | {:ok_many, [token()], input(), pos_integer(), pos_integer(), driver_hot(), lookbehind()}
+          {:ok, token(), input(), pos_integer(), pos_integer(), driver_hot()}
+          | {:ok_many, [token()], input(), pos_integer(), pos_integer(), driver_hot()}
           | {:eof, driver_hot()}
           | {:error, term(), input(), pos_integer(), pos_integer(), driver_hot()}
 
@@ -73,10 +73,10 @@ defmodule ToxicParser.Cursor do
       lookbehind = lookbehind_from_token(last_token)
 
       case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
-        {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
+        {:ok, tok, rest, line, column, driver_hot} ->
           {:ok, tok, {rest, line, column, driver_hot, cfg, [], [], tok}}
 
-        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
+        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot} ->
           {:ok, tok, {rest, line, column, driver_hot, cfg, [], rest_tokens, tok}}
 
         {:eof, driver_hot} ->
@@ -109,10 +109,10 @@ defmodule ToxicParser.Cursor do
       lookbehind = lookbehind_from_token(last_token)
 
       case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
-        {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
+        {:ok, tok, rest, line, column, driver_hot} ->
           {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok], last_token}}
 
-        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
+        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot} ->
           {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok | rest_tokens], last_token}}
 
         {:eof, driver_hot} ->

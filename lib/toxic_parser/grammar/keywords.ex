@@ -10,6 +10,7 @@ defmodule ToxicParser.Grammar.Keywords do
     EventLog,
     ExprClass,
     NoParensErrors,
+    ParseOpts,
     Pratt,
     State,
     TokenAdapter
@@ -578,7 +579,7 @@ defmodule ToxicParser.Grammar.Keywords do
       if min_bp > 0 do
         Pratt.parse_with_min_bp(state, cursor, value_ctx, log, min_bp)
       else
-        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, stop_at_assoc: true)
+        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, ParseOpts.stop_at_assoc())
       end
 
     with {:ok, value_ast, state, cursor, log} <- result do
@@ -619,7 +620,7 @@ defmodule ToxicParser.Grammar.Keywords do
         raise "dead code"
         Pratt.parse_with_min_bp(state, cursor, value_ctx, log, min_bp)
       else
-        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, stop_at_assoc: true)
+        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, ParseOpts.stop_at_assoc())
       end
 
     with {:ok, value_ast, state, cursor, log} <- result do

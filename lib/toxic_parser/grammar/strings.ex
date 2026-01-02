@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Strings do
   Parsing for strings, charlists, heredocs, sigils, and quoted atoms from Toxic token streams.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, EventLog, ParseOpts, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Expressions
 
@@ -24,14 +24,14 @@ defmodule ToxicParser.Grammar.Strings do
           | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
              Cursor.t(), EventLog.t()}
 
-  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer()) :: result()
+  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), ParseOpts.t()) :: result()
   def parse(
         %State{} = state,
         cursor,
         %Context{} = ctx,
         %EventLog{} = log,
         min_bp \\ 0,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     case Cursor.peek(cursor) do
       {:ok, {kind, _meta, _value}, _cursor} ->

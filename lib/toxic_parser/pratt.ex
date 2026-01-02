@@ -19,6 +19,7 @@ defmodule ToxicParser.Pratt do
     ExprClass,
     Identifiers,
     NoParens,
+    ParseOpts,
     Precedence,
     Result,
     State,
@@ -100,20 +101,6 @@ defmodule ToxicParser.Pratt do
           | {:keyword_key, term(), term(), term(), term(), term()}
           | {:keyword_key_interpolated, term(), term(), term(), term(), term(), term(), term()}
 
-  defp ensure_no_parens_extension_opt(opts) do
-    case Keyword.get(opts, :allow_no_parens_extension?) do
-      nil ->
-        Keyword.put(
-          opts,
-          :allow_no_parens_extension?,
-          not Keyword.get(opts, :unary_operand, false)
-        )
-
-      _ ->
-        opts
-    end
-  end
-
   defguardp is_no_parens_op_expr?(kind) when kind in @no_parens_op_expr_operators
 
   defp do_block_expr?({_, meta, _}) when is_list(meta) do
@@ -146,12 +133,10 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base(State.t(), Cursor.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, cursor, %Context{} = context, %EventLog{} = log) do
+    parse_opts = %ParseOpts{min_bp: 10000, allow_containers: false, string_min_bp: 10000}
+
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
-         {:ok, ast, state, cursor, log} <-
-           nud(token, state, cursor, context, log,
-             min_bp: 10000,
-             allow_containers: false
-           ) do
+         {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
       {:ok, ast, state, cursor, log}
     else
       {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
@@ -170,12 +155,10 @@ defmodule ToxicParser.Pratt do
         %Context{} = context,
         %EventLog{} = log
       ) do
+    parse_opts = %ParseOpts{min_bp: 10000, allow_containers: false, string_min_bp: 10000}
+
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
-         {:ok, ast, state, cursor, log} <-
-           nud(token, state, cursor, context, log,
-             min_bp: 10000,
-             allow_containers: false
-           ) do
+         {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
       led_dots_and_calls(ast, state, cursor, log, context)
     else
       {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
@@ -194,7 +177,7 @@ defmodule ToxicParser.Pratt do
           context(),
           EventLog.t(),
           non_neg_integer(),
-          keyword()
+          ParseOpts.t()
         ) ::
           result()
   def parse_with_min_bp(
@@ -203,15 +186,14 @@ defmodule ToxicParser.Pratt do
         %Context{} = context,
         %EventLog{} = log,
         min_bp,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
-    # Merge opts with min_bp for nud - preserve stop_at_assoc for string parsing
-    # Use Keyword.put instead of Keyword.merge for single key (avoids list traversal)
-    nud_opts = Keyword.put(opts, :min_bp, min_bp)
+    # Update opts with min_bp for this parse level
+    parse_opts = %{opts | min_bp: min_bp, string_min_bp: min_bp}
 
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
-         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, nud_opts) do
-      led(left, state, cursor, log, min_bp, context, opts)
+         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
+      led(left, state, cursor, log, min_bp, context, parse_opts)
     else
       {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
@@ -241,15 +223,11 @@ defmodule ToxicParser.Pratt do
 
   # Handle unary operators in nud (null denotation)
   defp nud(token, state, cursor, context, log) do
-    nud(token, state, cursor, context, log, [])
+    nud(token, state, cursor, context, log, %ParseOpts{})
   end
 
-  defp nud({token_kind, _meta, token_value} = token, state, cursor, context, log, opts) do
-    min_bp = Keyword.get(opts, :min_bp, 0)
-    allow_containers = Keyword.get(opts, :allow_containers, true)
-    string_min_bp = Keyword.get(opts, :string_min_bp, min_bp)
-    # Pass through options like stop_at_assoc to string parsing
-    led_opts = Keyword.take(opts, [:stop_at_assoc])
+  defp nud({token_kind, _meta, token_value} = token, state, cursor, context, log, %ParseOpts{} = opts) do
+    %{min_bp: min_bp, allow_containers: allow_containers, string_min_bp: string_min_bp} = opts
 
     case token_kind do
       :error_token ->
@@ -274,7 +252,7 @@ defmodule ToxicParser.Pratt do
         if allow_containers do
           {state, cursor} = TokenAdapter.pushback(state, cursor, token)
           alias ToxicParser.Grammar.Containers
-          Containers.parse(state, cursor, context, log, min_bp, led_opts)
+          Containers.parse(state, cursor, context, log, min_bp, opts)
         else
           nud_literal_or_unary(token, state, cursor, context, log, min_bp, false, opts)
         end
@@ -283,7 +261,7 @@ defmodule ToxicParser.Pratt do
       kind when kind in [:atom_unsafe_start, :atom_safe_start] ->
         {state, cursor} = TokenAdapter.pushback(state, cursor, token)
         alias ToxicParser.Grammar.Strings
-        Strings.parse(state, cursor, context, log, string_min_bp, led_opts)
+        Strings.parse(state, cursor, context, log, string_min_bp, opts)
 
       # Other string/sigil tokens - always parse strings, they're not containers
       # This allows %''{}` (struct with empty charlist) to work
@@ -297,7 +275,7 @@ defmodule ToxicParser.Pratt do
            ] ->
         {state, cursor} = TokenAdapter.pushback(state, cursor, token)
         alias ToxicParser.Grammar.Strings
-        Strings.parse(state, cursor, context, log, min_bp, led_opts)
+        Strings.parse(state, cursor, context, log, min_bp, opts)
 
       # fn tokens need to be handled by Blocks.parse unless restricted
       :fn ->
@@ -433,7 +411,7 @@ defmodule ToxicParser.Pratt do
         if token_kind not in excluded_kinds and
              allow_no_parens and
              allow_containers do
-          call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
+          call_min_bp = if opts.unary_operand, do: 0, else: min_bp
 
           parse_no_parens_call_nud_with_min_bp(
             token,
@@ -650,7 +628,7 @@ defmodule ToxicParser.Pratt do
 
               case Cursor.peek(cursor) do
                 {:ok, tok, _cursor} when is_kind(tok, :"[") ->
-                  led_bracket(ast, state, cursor, log, at_bp, context, [])
+                  led_bracket(ast, state, cursor, log, at_bp, context, %ParseOpts{})
 
                 _ ->
                   {:ok, ast, state, cursor, log}
@@ -662,6 +640,7 @@ defmodule ToxicParser.Pratt do
               operand_min_bp = at_bp
 
               {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+              unary_opts = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
 
               with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
                      parse_rhs(
@@ -671,7 +650,7 @@ defmodule ToxicParser.Pratt do
                        operand_ctx,
                        log,
                        operand_min_bp,
-                       unary_operand: true
+                       unary_opts
                      ) do
                 operand_result =
                   case Cursor.peek(cursor_after_base) do
@@ -689,7 +668,7 @@ defmodule ToxicParser.Pratt do
                                  log,
                                  at_bp,
                                  operand_ctx,
-                                 []
+                                 unary_opts
                                ) do
                           {:ok, operand_with_bracket,
                            TokenAdapter.drop_checkpoint(state_after_bracket, ref),
@@ -720,6 +699,8 @@ defmodule ToxicParser.Pratt do
                             {state_full, cursor_full} =
                               TokenAdapter.rewind(state_after_base, ref)
 
+                            full_unary_opts = %ParseOpts{unary_operand: true, min_bp: 0}
+
                             with {:ok, operand_full, state_full, cursor_full, log} <-
                                    parse_rhs(
                                      operand_token_for_parse,
@@ -728,7 +709,7 @@ defmodule ToxicParser.Pratt do
                                      operand_ctx,
                                      log,
                                      0,
-                                     unary_operand: true
+                                     full_unary_opts
                                    ) do
                               {:ok, operand_full, state_full, cursor_full, log}
                             end
@@ -770,6 +751,7 @@ defmodule ToxicParser.Pratt do
               end
 
             {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+            unary_opts_operand = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
 
             with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
                    parse_rhs(
@@ -779,7 +761,7 @@ defmodule ToxicParser.Pratt do
                      operand_context,
                      log,
                      operand_min_bp,
-                     unary_operand: true
+                     unary_opts_operand
                    ) do
               operand_result =
                 case Cursor.peek(cursor_after_base) do
@@ -792,6 +774,8 @@ defmodule ToxicParser.Pratt do
                           {state_full, cursor_full} =
                             TokenAdapter.rewind(state_after_base, ref)
 
+                          unary_opts_full = %ParseOpts{unary_operand: true, min_bp: 0}
+
                           with {:ok, operand_full, state_full, cursor_full, log} <-
                                  parse_rhs(
                                    operand_token,
@@ -800,7 +784,7 @@ defmodule ToxicParser.Pratt do
                                    operand_context,
                                    log,
                                    0,
-                                   unary_operand: true
+                                   unary_opts_full
                                  ) do
                             {:ok, operand_full, state_full, cursor_full, log}
                           end
@@ -912,9 +896,11 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.next(checkpoint_state, cursor) do
       {:ok, operand_token, checkpoint_state, cursor_after_next} ->
         # Base case: unary_op_eol precedence is 300 in elixir_parser.yrl (higher than power_op_eol=230).
+        ternary_unary_opts = %ParseOpts{unary_operand: true, min_bp: 300}
+
         with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
                parse_rhs(operand_token, checkpoint_state, cursor_after_next, context, log, 300,
-                 unary_operand: true
+                 ternary_unary_opts
                ) do
           operand_result =
             case Cursor.peek(cursor_after_base) do
@@ -931,11 +917,13 @@ defmodule ToxicParser.Pratt do
                       {state_full, cursor_full} =
                         TokenAdapter.rewind(state_after_base, ref)
 
+                      ternary_full_opts = %ParseOpts{unary_operand: true, min_bp: 0}
+
                       with {:ok, tok, state_full, cursor_full} <-
                              TokenAdapter.next(state_full, cursor_full),
                            {:ok, operand_full, state_full, cursor_full, log} <-
                              parse_rhs(tok, state_full, cursor_full, context, log, 0,
-                               unary_operand: true
+                               ternary_full_opts
                              ) do
                         {:ok, operand_full, state_full, cursor_full, log}
                       end
@@ -974,6 +962,8 @@ defmodule ToxicParser.Pratt do
   # For identifiers that could be calls with do-blocks (like `if true do...end`),
   # we need special handling but must preserve min_bp for associativity
   # opts can contain :unary_operand to indicate we're parsing a unary operator's operand
+  defp parse_rhs(token, state, cursor, context, log, min_bp, opts \\ %ParseOpts{})
+
   defp parse_rhs(
          {token_kind, _meta, _value} = token,
          state,
@@ -981,7 +971,7 @@ defmodule ToxicParser.Pratt do
          context,
          log,
          min_bp,
-         opts \\ []
+         %ParseOpts{} = opts
        ) do
     # Check if this is an identifier that could be a call with arguments
     cond do
@@ -1014,10 +1004,9 @@ defmodule ToxicParser.Pratt do
         Strings.parse(state, cursor, context, log, min_bp, opts)
 
       true ->
-        nud_opts = Keyword.put(opts, :min_bp, min_bp)
+        nud_opts = %{opts | min_bp: min_bp}
 
         with {:ok, right, state, cursor, log} <- nud(token, state, cursor, context, log, nud_opts) do
-          opts = ensure_no_parens_extension_opt(opts)
           led(right, state, cursor, log, min_bp, context, opts)
         end
     end
@@ -1032,7 +1021,7 @@ defmodule ToxicParser.Pratt do
          context,
          log,
          min_bp,
-         opts
+         %ParseOpts{} = opts
        ) do
     case Cursor.peek(cursor) do
       {:ok, {:"(", _meta, _value}, _cursor} when is_kind(token, :paren_identifier) ->
@@ -1041,7 +1030,6 @@ defmodule ToxicParser.Pratt do
         # Pass opts through so do-blocks after paren call know the context.
         with {:ok, ast, state, cursor, log} <-
                parse_paren_call_base(token, state, cursor, context, log) do
-          opts = ensure_no_parens_extension_opt(opts)
           maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, opts)
         end
 
@@ -1055,9 +1043,7 @@ defmodule ToxicParser.Pratt do
         with {:ok, right, state, cursor, log} <-
                Calls.parse_without_led(state, cursor, context, log, min_bp, opts) do
           # Preserve min_bp so unary operands do not swallow lower-precedence operators.
-          led_min_bp = min_bp
-          opts = ensure_no_parens_extension_opt(opts)
-          led(right, state, cursor, log, led_min_bp, context, opts)
+          led(right, state, cursor, log, min_bp, context, opts)
         end
 
       {:ok, {:do, _meta, _value}, _cursor} when context.allow_do_block ->
@@ -1067,15 +1053,12 @@ defmodule ToxicParser.Pratt do
         with {:ok, right, state, cursor, log} <-
                Calls.parse_without_led(state, cursor, context, log, min_bp, opts) do
           # Preserve min_bp so unary operands do not swallow lower-precedence operators.
-          led_min_bp = min_bp
-          opts = ensure_no_parens_extension_opt(opts)
-          led(right, state, cursor, log, led_min_bp, context, opts)
+          led(right, state, cursor, log, min_bp, context, opts)
         end
 
       {:ok, tok, _cursor} when is_kind(tok, :do) ->
         # Do-blocks not allowed in this context (matched_expr); leave `do` for the caller.
         ast = Builder.Helpers.from_token(token)
-        opts = ensure_no_parens_extension_opt(opts)
         led(ast, state, cursor, log, min_bp, context, opts)
 
       {:ok, {next_tok_kind, _meta, _value} = next_tok, _cursor} ->
@@ -1085,7 +1068,6 @@ defmodule ToxicParser.Pratt do
           # Build alias AST and let led handle the [ as bracket access
           token_kind == :alias and next_tok_kind == :"[" ->
             ast = Builder.Helpers.from_token(token)
-            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, cursor, log, min_bp, context, opts)
 
           # op_identifier means tokenizer determined this is a no-parens call
@@ -1099,14 +1081,12 @@ defmodule ToxicParser.Pratt do
             with {:ok, right, state, cursor, log} <-
                    Calls.parse_without_led(state, cursor, context, log, min_bp, opts) do
               # Preserve the original min_bp for proper associativity
-              opts = ensure_no_parens_extension_opt(opts)
               led(right, state, cursor, log, min_bp, context, opts)
             end
 
           # Binary operator follows - just return identifier, led will handle with min_bp
           bp(next_tok_kind) ->
             ast = Builder.Helpers.from_token(token)
-            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, cursor, log, min_bp, context, opts)
 
           # Could be no-parens call argument - delegate to Calls
@@ -1114,28 +1094,23 @@ defmodule ToxicParser.Pratt do
           NoParens.can_start_no_parens_arg?(next_tok) or Keywords.starts_kw?(next_tok) ->
             {state, cursor} = TokenAdapter.pushback(state, cursor, token)
 
-            call_min_bp = if Keyword.get(opts, :unary_operand, false), do: 0, else: min_bp
+            call_min_bp = if opts.unary_operand, do: 0, else: min_bp
 
             with {:ok, right, state, cursor, log} <-
                    Calls.parse_without_led(state, cursor, context, log, call_min_bp, opts) do
               # Preserve min_bp so unary operands do not swallow lower-precedence operators.
-              led_min_bp = min_bp
-
-              opts = ensure_no_parens_extension_opt(opts)
-              led(right, state, cursor, log, led_min_bp, context, opts)
+              led(right, state, cursor, log, min_bp, context, opts)
             end
 
           # Just a bare identifier
           true ->
             ast = Builder.Helpers.from_token(token)
-            opts = ensure_no_parens_extension_opt(opts)
             led(ast, state, cursor, log, min_bp, context, opts)
         end
 
       _ ->
         # EOF or error - just return identifier
         ast = Builder.Helpers.from_token(token)
-        opts = ensure_no_parens_extension_opt(opts)
         led(ast, state, cursor, log, min_bp, context, opts)
     end
   end
@@ -1185,7 +1160,7 @@ defmodule ToxicParser.Pratt do
         %EventLog{} = log,
         min_bp,
         %Context{} = context,
-        opts \\ []
+        %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
@@ -1313,9 +1288,7 @@ defmodule ToxicParser.Pratt do
       # Example: @spec foo() when a: term - the `when` (bp=50) can extend `spec foo()`
       # even though @ has bp=320, because the operand context allows no_parens extension.
       {kind, {bp, assoc}} when is_tuple({bp, assoc}) ->
-        allow_extension? = Keyword.get(opts, :allow_no_parens_extension?, true)
-
-        if allow_extension? and min_bp == 0 and is_no_parens_op_expr?(kind) and
+        if opts.allow_no_parens_extension? and min_bp == 0 and is_no_parens_op_expr?(kind) and
              Context.allow_no_parens_expr?(context) do
           led_binary(
             left,
@@ -1608,11 +1581,8 @@ defmodule ToxicParser.Pratt do
     end
   end
 
-  defp led_bracket(left, state, cursor, log, min_bp, context, opts) do
-    # Check allows_bracket flag (defaults to true for backward compatibility)
-    allows_bracket = Keyword.get(opts, :allows_bracket, true)
-
-    if not allows_bracket do
+  defp led_bracket(left, state, cursor, log, min_bp, context, %ParseOpts{} = opts) do
+    if not opts.allows_bracket do
       # Space before [ means this is NOT bracket access, but a no-parens call with list arg
       # Return left as-is (no-parens call parsing will be handled by caller)
       {:ok, left, state, cursor, log}
@@ -1780,8 +1750,7 @@ defmodule ToxicParser.Pratt do
   # When unary_operand: true, this is parsing a unary operator's operand.
   # In that context, do-blocks should allow ALL binary ops to attach (min_bp=0).
   # Otherwise (binary RHS), preserve min_bp for proper associativity.
-  defp maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, opts) do
-    unary_operand = Keyword.get(opts, :unary_operand, false)
+  defp maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, %ParseOpts{} = opts) do
 
     case Cursor.peek(cursor) do
       {:ok, tok, _cursor} when is_kind(tok, :"(") ->
@@ -1863,10 +1832,10 @@ defmodule ToxicParser.Pratt do
               # - For binary RHS: preserve min_bp for proper associativity.
               #   E.g., `A ** B do x end ** C` -> `(A ** B do x end) ** C` (left-assoc)
               {led_min_bp, led_opts} =
-                if unary_operand do
-                  {0, [stop_at_assoc: true]}
+                if opts.unary_operand do
+                  {0, %{opts | stop_at_assoc: true, min_bp: 0}}
                 else
-                  {min_bp, []}
+                  {min_bp, %{opts | min_bp: min_bp}}
                 end
 
               led(combined, state, cursor, log, led_min_bp, context, led_opts)
@@ -2315,11 +2284,8 @@ defmodule ToxicParser.Pratt do
 
     case TokenAdapter.next(state, cursor) do
       {:ok, rhs_token, state, cursor} ->
-        # Build rhs_opts directly instead of Keyword.merge (avoids list traversal)
-        rhs_opts =
-          opts
-          |> Keyword.put(:allow_no_parens_extension?, context.allow_no_parens_expr)
-          |> Keyword.put(:unary_operand, false)
+        # Update opts struct for RHS parsing
+        rhs_opts = %{opts | allow_no_parens_extension?: context.allow_no_parens_expr, unary_operand: false}
 
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
@@ -2419,7 +2385,7 @@ defmodule ToxicParser.Pratt do
   # Encode a literal value using the literal_encoder if provided
   # The encoder receives (literal, metadata) and returns {:ok, encoded} or {:error, reason}
   @doc false
-  def encode_literal(value, meta, state) do
+  def encode_literal(value, meta, state = %State{}) do
     case state.literal_encoder do
       nil ->
         value

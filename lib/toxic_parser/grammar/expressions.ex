@@ -214,7 +214,7 @@ defmodule ToxicParser.Grammar.Expressions do
         other -> other
       end)
 
-    block = Builder.Helpers.literal({:__block__, [], exprs})
+    block = {:__block__, [], exprs}
     {:ok, block, state, cursor, log}
   end
 
