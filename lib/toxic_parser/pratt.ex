@@ -2420,7 +2420,7 @@ defmodule ToxicParser.Pratt do
   # The encoder receives (literal, metadata) and returns {:ok, encoded} or {:error, reason}
   @doc false
   def encode_literal(value, meta, state) do
-    case Keyword.get(state.opts, :literal_encoder) do
+    case state.literal_encoder do
       nil ->
         value
 

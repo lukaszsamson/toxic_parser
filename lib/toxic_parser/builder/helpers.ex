@@ -10,8 +10,8 @@ defmodule ToxicParser.Builder.Helpers do
   @spec literal(term(), keyword(), ToxicParser.State.t() | nil) :: term()
   def literal(value, meta \\ [], state \\ nil)
 
-  def literal(value, meta, %{opts: opts} = _state) do
-    case Keyword.get(opts, :literal_encoder) do
+  def literal(value, meta, %{literal_encoder: literal_encoder}) do
+    case literal_encoder do
       nil ->
         value
 

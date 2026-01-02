@@ -32,7 +32,8 @@ defmodule ToxicParser.State do
           terminators: [term()],
           max_peek: pos_integer(),
           source: binary(),
-          event_log: ToxicParser.EventLog.t()
+          event_log: ToxicParser.EventLog.t(),
+          literal_encoder: (term(), Macro.metadata() -> term()) | nil
         }
 
   defstruct diagnostics: [],
@@ -47,7 +48,8 @@ defmodule ToxicParser.State do
             terminators: [],
             max_peek: 4,
             source: "",
-            event_log: EventLog.new()
+            event_log: EventLog.new(),
+            literal_encoder: nil
 
   @doc """
   Builds an initial state from source with parser options.
@@ -82,7 +84,8 @@ defmodule ToxicParser.State do
        terminators: terminators,
        max_peek: max_peek,
        source: source_bin,
-       event_log: EventLog.new()
+       event_log: EventLog.new(),
+       literal_encoder: Keyword.get(opts, :literal_encoder)
      }, cursor}
   end
 
