@@ -344,7 +344,7 @@ defmodule ToxicParser.TokenAdapter do
 
     saved = %{
       ref: ref,
-      cursor: Cursor.mark(cursor),
+      cursor: cursor,
       diagnostics: state.diagnostics,
       terminators: state.terminators,
       event_log: state.event_log
@@ -356,17 +356,17 @@ defmodule ToxicParser.TokenAdapter do
   @doc """
   Rewind to a previously created checkpoint.
   """
-  @spec rewind(State.t(), Cursor.t(), reference()) :: {State.t(), Cursor.t()}
-  def rewind(%State{} = state, cursor, ref) do
-    checkpoint = Map.fetch!(state.checkpoints, ref)
+  @spec rewind(State.t(), reference()) :: {State.t(), Cursor.t()}
+  def rewind(%State{} = state, ref) do
+    {checkpoint, checkpoints} = Map.pop!(state.checkpoints, ref)
 
     {%{
        state
        | diagnostics: checkpoint.diagnostics,
          terminators: checkpoint.terminators,
          event_log: checkpoint.event_log,
-         checkpoints: Map.delete(state.checkpoints, ref)
-     }, Cursor.rewind(cursor, checkpoint.cursor)}
+         checkpoints: checkpoints
+     }, checkpoint.cursor}
   end
 
   @doc """
@@ -374,7 +374,7 @@ defmodule ToxicParser.TokenAdapter do
   """
   @spec drop_checkpoint(State.t(), reference()) :: State.t()
   def drop_checkpoint(%State{} = state, ref) do
-    {_checkpoint, checkpoints} = Map.pop!(state.checkpoints, ref)
+    checkpoints = Map.delete(state.checkpoints, ref)
     %{state | checkpoints: checkpoints}
   end
 

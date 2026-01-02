@@ -482,13 +482,13 @@ defmodule ToxicParser.Grammar.Stabs do
 
               _ ->
                 # No, it's just a parenthesized expression - rewind and parse normally
-                {state, cursor} = TokenAdapter.rewind(checkpoint_state, cursor, ref)
+                {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
                 parse_stab_pattern_exprs(acc, state, cursor, ctx, log)
             end
 
           {:error, _reason, _state2, _cursor2, _log2} ->
             # Error parsing as stab_parens_many - try as regular pattern
-            {state, cursor} = TokenAdapter.rewind(checkpoint_state, cursor, ref)
+            {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
             parse_stab_pattern_exprs(acc, state, cursor, ctx, log)
         end
 
@@ -1183,21 +1183,11 @@ defmodule ToxicParser.Grammar.Stabs do
     end
   end
 
-  defp stop_token?(tok, terminator, stop_kinds) do
-    case tok do
-      {kind, _meta, _value} ->
-        kind == terminator or kind in stop_kinds or block_label?(tok)
-
-      _ ->
-        false
-    end
+  defp stop_token?({terminator, _meta, _value}, terminator, _stop_kinds), do: true
+  defp stop_token?({:block_identifier, _meta, _value}, _terminator, _stop_kinds), do: true
+  defp stop_token?({kind, _meta, _value}, _terminator, stop_kinds) do
+    kind in stop_kinds
   end
-
-  defp block_label?({:block_identifier, _, value}),
-    do: value in [:else, :catch, :rescue, :after]
-
-  defp block_label?({kind, _meta, _value}) when kind in [:else, :catch, :rescue, :after], do: true
-  defp block_label?(_), do: false
 
   # Scan context tuple: {delim, block, open?, percent_pending?}
   # Using tuple instead of map for zero-allocation updates.

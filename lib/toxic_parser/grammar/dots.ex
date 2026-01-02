@@ -221,17 +221,17 @@ defmodule ToxicParser.Grammar.Dots do
 
             case Keywords.try_parse_kw_data(checkpoint_state, cursor, container_ctx, log) do
               {:ok, kw_list, _checkpoint_state, _checkpoint_cursor, log} ->
-                {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+                {state, cursor} = TokenAdapter.rewind(state, ref)
                 meta = Helpers.token_meta(tok)
                 token_display = kw_data_first_key_display(kw_list)
                 {:error, syntax_error_before(meta, token_display), state, cursor, log}
 
               {:no_kw, _checkpoint_state, _checkpoint_cursor, log} ->
-                {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+                {state, cursor} = TokenAdapter.rewind(state, ref)
                 {:ok, state, cursor, log}
 
               {:error, reason, _checkpoint_state, _checkpoint_cursor, log} ->
-                {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+                {state, cursor} = TokenAdapter.rewind(state, ref)
                 {:error, reason, state, cursor, log}
             end
 

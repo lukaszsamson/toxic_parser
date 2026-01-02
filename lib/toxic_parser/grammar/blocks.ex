@@ -151,14 +151,10 @@ defmodule ToxicParser.Grammar.Blocks do
       acc = [{encoded_label, section_value} | acc]
 
       case Cursor.peek(cursor) do
-        {:ok, tok, _cursor} ->
-          if block_label?(tok) do
-            {:ok, label_tok, state, cursor} = TokenAdapter.next(state, cursor)
-            next_label_meta = TokenAdapter.token_meta(label_tok)
-            parse_labeled_sections(acc, label_from(tok), next_label_meta, state, cursor, ctx, log)
-          else
-            {:ok, Enum.reverse(acc), state, cursor, log}
-          end
+        {:ok, {:block_identifier, _meta, value}, _cursor} ->
+          {:ok, label_tok, state, cursor} = TokenAdapter.next(state, cursor)
+          next_label_meta = TokenAdapter.token_meta(label_tok)
+          parse_labeled_sections(acc, value, next_label_meta, state, cursor, ctx, log)
 
         _ ->
           {:ok, Enum.reverse(acc), state, cursor, log}
@@ -173,11 +169,4 @@ defmodule ToxicParser.Grammar.Blocks do
   defp exit_scope(log, scope, meta) do
     EventLog.env(log, %{action: :exit_scope, scope: scope, name: nil}, meta)
   end
-
-  defp block_label?({:block_identifier, _meta, value}),
-    do: value in [:else, :catch, :rescue, :after]
-
-  defp block_label?(_), do: false
-
-  defp label_from({:block_identifier, _meta, value}), do: value
 end

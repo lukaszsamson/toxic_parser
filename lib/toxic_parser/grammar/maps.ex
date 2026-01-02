@@ -573,12 +573,12 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, checkpoint_id),
              cursor, log}
 
-          {:not_update, state, cursor} ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, checkpoint_id)
+          {:not_update, state, _cursor} ->
+            {state, cursor} = TokenAdapter.rewind(state, checkpoint_id)
             {:not_update, state, cursor}
 
-          {:error, diag, state, cursor, log} ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, checkpoint_id)
+          {:error, diag, state, _cursor, log} ->
+            {state, cursor} = TokenAdapter.rewind(state, checkpoint_id)
             {:error, diag, state, cursor, log}
         end
     end
@@ -612,7 +612,7 @@ defmodule ToxicParser.Grammar.Maps do
               handle_map_update_after_base_expr(base_expr, state, cursor, log)
             else
               # Rewind and reparse with min_bp to not consume |
-              {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+              {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
               parse_map_update_with_min_bp(state, cursor, log)
             end
 
@@ -620,7 +620,7 @@ defmodule ToxicParser.Grammar.Maps do
             if not Keyword.has_key?(pipe_meta, :parens) and is_list(rhs) and
                  rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) do
               # Reparse to distinguish between kw_data and bracketed list `[kw]`.
-              {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+              {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
               parse_map_update_with_min_bp(state, cursor, log)
             else
               state = TokenAdapter.drop_checkpoint(state, reparse_ref)
@@ -637,7 +637,7 @@ defmodule ToxicParser.Grammar.Maps do
           state = TokenAdapter.drop_checkpoint(state, reparse_ref)
           {:not_update, state, cursor}
         else
-          {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+          {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
           parse_map_update_with_min_bp(state, cursor, log)
         end
 
@@ -646,14 +646,14 @@ defmodule ToxicParser.Grammar.Maps do
           state = TokenAdapter.drop_checkpoint(state, reparse_ref)
           {:not_update, state, cursor}
         else
-          {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+          {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
           parse_map_update_with_min_bp(state, cursor, log)
         end
 
       {:error, _diag, _state, _cursor, _log} ->
         # Parsing failed - likely due to keyword after |
         # Retry with min_bp above pipe_op to not consume |
-        {state, cursor} = TokenAdapter.rewind(state, cursor, reparse_ref)
+        {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
         parse_map_update_with_min_bp(state, cursor, log)
     end
   end

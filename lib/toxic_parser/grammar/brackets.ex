@@ -48,8 +48,8 @@ defmodule ToxicParser.Grammar.Brackets do
       {:ok, [expr], state, cursor, log} ->
         {:ok, expr, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
-      {:ok, [_first, _second | _rest], state, cursor, log} ->
-        {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+      {:ok, [_first, _second | _rest], state, _cursor, log} ->
+        {state, cursor} = TokenAdapter.rewind(state, ref)
 
         with {:ok, _first_expr, state, cursor, log} <- Expressions.expr(state, cursor, ctx, log) do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)

@@ -46,12 +46,12 @@ defmodule ToxicParser.CursorTest do
     c = Cursor.new("a;b", mode: :tolerant)
 
     assert {:ok, _a, c} = Cursor.next(c)
-    mark = Cursor.mark(c)
+    mark = c
 
-    assert {:ok, semi, c} = Cursor.next(c)
+    assert {:ok, semi, _c} = Cursor.next(c)
     assert kind(semi) == :";"
 
-    c = Cursor.rewind(c, mark)
+    c = mark
     assert {:ok, semi2, _c} = Cursor.next(c)
     assert kind(semi2) == :";"
   end

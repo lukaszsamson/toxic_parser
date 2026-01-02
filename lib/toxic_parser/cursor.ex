@@ -7,15 +7,20 @@ defmodule ToxicParser.Cursor do
   """
 
   @type token :: Toxic.token()
-  @type input :: charlist() | binary()
+  @type input :: [] | [char()] | binary()
   @type driver_hot :: Toxic.Driver.driver_hot()
   @type cfg :: Toxic.Driver.cfg()
   @type lookbehind :: Toxic.Driver.lookbehind()
   @type last_token :: token() | nil
+  @type step_result ::
+          {:ok, token(), input(), pos_integer(), pos_integer(), driver_hot(), lookbehind()}
+          | {:ok_many, [token()], input(), pos_integer(), pos_integer(), driver_hot(), lookbehind()}
+          | {:eof, driver_hot()}
+          | {:error, term(), input(), pos_integer(), pos_integer(), driver_hot()}
 
   # {rest, line, column, driver_hot, cfg, lookahead, emitq, last_token}
-  @opaque t :: {input(), pos_integer(), pos_integer(), driver_hot(), cfg(), [token()],
-                [token()], last_token()}
+  @opaque t :: {input(), pos_integer(), pos_integer(), driver_hot(), cfg(), list(token()),
+                list(token()), last_token()}
 
   @spec new(binary() | charlist(), keyword()) :: t()
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
@@ -56,21 +61,30 @@ defmodule ToxicParser.Cursor do
     {:ok, tok, {rest, line, column, driver_hot, cfg, [], emitq, tok}}
   end
 
-  def next({rest, line, column, driver_hot, cfg, [], [], last_token}) do
-    lookbehind = lookbehind_from_token(last_token)
+  def next(
+        {rest, line, column,
+         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [], [],
+         last_token}
+      ) do
+    if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
+         cfg.error_mode == :strict do
+      strict_eof_or_error(line, column, scope, contexts, driver_hot, cfg, last_token)
+    else
+      lookbehind = lookbehind_from_token(last_token)
 
-    case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
-      {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
-        {:ok, tok, {rest, line, column, driver_hot, cfg, [], [], tok}}
+      case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
+        {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [], tok}}
 
-      {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
-        {:ok, tok, {rest, line, column, driver_hot, cfg, [], rest_tokens, tok}}
+        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [], rest_tokens, tok}}
 
-      {:eof, driver_hot} ->
-        {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+        {:eof, driver_hot} ->
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
 
-      {:error, reason, rest, line, column, driver_hot} ->
-        {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+        {:error, reason, rest, line, column, driver_hot} ->
+          {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+      end
     end
   end
 
@@ -83,21 +97,30 @@ defmodule ToxicParser.Cursor do
     {:ok, tok, cursor}
   end
 
-  def peek({rest, line, column, driver_hot, cfg, [], [], last_token}) do
-    lookbehind = lookbehind_from_token(last_token)
+  def peek(
+        {rest, line, column,
+         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [], [],
+         last_token}
+      ) do
+    if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
+         cfg.error_mode == :strict do
+      strict_eof_or_error(line, column, scope, contexts, driver_hot, cfg, last_token)
+    else
+      lookbehind = lookbehind_from_token(last_token)
 
-    case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
-      {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
-        {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok], last_token}}
+      case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
+        {:ok, tok, rest, line, column, driver_hot, _lookbehind} ->
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok], last_token}}
 
-      {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
-        {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok | rest_tokens], last_token}}
+        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot, _lookbehind} ->
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok | rest_tokens], last_token}}
 
-      {:eof, driver_hot} ->
-        {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+        {:eof, driver_hot} ->
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
 
-      {:error, reason, rest, line, column, driver_hot} ->
-        {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+        {:error, reason, rest, line, column, driver_hot} ->
+          {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+      end
     end
   end
 
@@ -137,19 +160,6 @@ defmodule ToxicParser.Cursor do
     {rest, line, column, driver_hot, cfg, :lists.reverse(tokens_rev, lookahead), emitq, last_token}
   end
 
-  @doc """
-  Create a lightweight checkpoint (just saves the cursor tuple).
-  Use for backtracking token consumption only.
-  """
-  @spec mark(t()) :: t()
-  def mark(cursor), do: cursor
-
-  @doc """
-  Rewind to a previously marked cursor state.
-  """
-  @spec rewind(t(), t()) :: t()
-  def rewind(_cursor, mark), do: mark
-
   @doc "Pay-for-play terminator snapshot (does not run on every token)."
   @spec current_terminators(t()) :: [term()]
   def current_terminators(
@@ -185,6 +195,32 @@ defmodule ToxicParser.Cursor do
   defp empty_input(:binary), do: <<>>
   defp empty_input(_backend), do: []
 
+  defp empty_input?(rest, :binary), do: rest == <<>>
+  defp empty_input?(rest, _backend), do: rest == []
+
+  defp strict_eof_or_error(line, column, scope, contexts, driver_hot, cfg, last_token) do
+    case Toxic.Driver.Contexts.pending_error(contexts, scope) do
+      nil ->
+        {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+
+      error ->
+        reason =
+          case error do
+            {:missing_interpolation, interp_context} ->
+              Toxic.Driver.Contexts.missing_interpolation_reason(interp_context, line, column)
+
+            {:missing_context, interp_context} ->
+              Toxic.Driver.Contexts.missing_terminator_reason(interp_context, line, column)
+
+            {:missing_scope, entry} ->
+              Toxic.Driver.Contexts.missing_scope_terminator_reason(entry, line, column, scope)
+          end
+
+        {:error, Toxic.Error.to_reason_tuple(reason),
+         {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+    end
+  end
+
   defp lookbehind_from_token(nil), do: {nil, false, 0}
 
   defp lookbehind_from_token({kind, {_, _, count}, _} = token) when kind in [:eol, :";"] do
@@ -193,5 +229,5 @@ defmodule ToxicParser.Cursor do
 
   defp lookbehind_from_token(token), do: {token, false, 0}
 
-  @compile {:inline, lookbehind_from_token: 1}
+  @compile {:inline, lookbehind_from_token: 1, empty_input?: 2}
 end

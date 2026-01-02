@@ -82,12 +82,12 @@ defmodule ToxicParser.Grammar.CallsPrivate do
             {:ok, [expr], TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
           _ ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+            {state, cursor} = TokenAdapter.rewind(state, ref)
             fallback.(state, cursor, log)
         end
 
-      {:error, _reason, state, cursor, log} ->
-        {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+      {:error, _reason, state, _cursor, log} ->
+        {state, cursor} = TokenAdapter.rewind(state, ref)
         fallback.(state, cursor, log)
     end
   end

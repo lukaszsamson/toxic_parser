@@ -718,7 +718,7 @@ defmodule ToxicParser.Pratt do
 
                           {_, next_bp} when next_bp < at_bp ->
                             {state_full, cursor_full} =
-                              TokenAdapter.rewind(state_after_base, cursor_after_base, ref)
+                              TokenAdapter.rewind(state_after_base, ref)
 
                             with {:ok, operand_full, state_full, cursor_full, log} <-
                                    parse_rhs(
@@ -790,7 +790,7 @@ defmodule ToxicParser.Pratt do
                       case bp(next_tok_kind) do
                         next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                           {state_full, cursor_full} =
-                            TokenAdapter.rewind(state_after_base, cursor_after_base, ref)
+                            TokenAdapter.rewind(state_after_base, ref)
 
                           with {:ok, operand_full, state_full, cursor_full, log} <-
                                  parse_rhs(
@@ -929,7 +929,7 @@ defmodule ToxicParser.Pratt do
                       # Elixir parses `// foo do ... end ** 2` as `// (foo do ... end ** 2)`.
                       # Reparse the operand allowing trailing operators when the base is a do-block expr.
                       {state_full, cursor_full} =
-                        TokenAdapter.rewind(state_after_base, cursor_after_base, ref)
+                        TokenAdapter.rewind(state_after_base, ref)
 
                       with {:ok, tok, state_full, cursor_full} <-
                              TokenAdapter.next(state_full, cursor_full),
@@ -2035,18 +2035,18 @@ defmodule ToxicParser.Pratt do
         {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
         case Keywords.try_parse_kw_data(checkpoint_state, cursor, container_ctx, log) do
-          {:ok, kw_list, state, cursor, log} ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+          {:ok, kw_list, state, _cursor, log} ->
+            {state, cursor} = TokenAdapter.rewind(state, ref)
             meta = TokenAdapter.token_meta(tok)
             token_display = kw_data_first_key_display(kw_list)
             {:error, syntax_error_before(meta, token_display), state, cursor, log}
 
-          {:no_kw, state, cursor, log} ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+          {:no_kw, state, _cursor, log} ->
+            {state, cursor} = TokenAdapter.rewind(state, ref)
             {:ok, state, cursor, log}
 
-          {:error, reason, state, cursor, log} ->
-            {state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+          {:error, reason, state, _cursor, log} ->
+            {state, cursor} = TokenAdapter.rewind(state, ref)
             {:error, reason, state, cursor, log}
         end
 

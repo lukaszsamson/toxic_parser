@@ -60,7 +60,7 @@ defmodule ToxicParser.TokenAdapterTest do
     state = %{state | event_log: EventLog.token(state.event_log, %{kind: :int, value: 1}, meta)}
 
     {ref, state} = TokenAdapter.checkpoint(state, cursor)
-    {:ok, eol, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, eol, state, _cursor} = TokenAdapter.next(state, cursor)
     # Raw eol token
     assert TokenAdapter.kind(eol) == :eol
     checkpoint_log = state.checkpoints[ref].event_log
@@ -68,7 +68,7 @@ defmodule ToxicParser.TokenAdapterTest do
     mutated_log = EventLog.token(state.event_log, %{kind: :int, value: 2}, meta)
     state = %{state | event_log: mutated_log}
 
-    {rewound, cursor} = TokenAdapter.rewind(state, cursor, ref)
+    {rewound, cursor} = TokenAdapter.rewind(state, ref)
     {:ok, eol_again, _, _} = TokenAdapter.next(rewound, cursor)
     assert TokenAdapter.kind(eol_again) == :eol
 
@@ -111,9 +111,9 @@ defmodule ToxicParser.TokenAdapterTest do
     {:ok, {:identifier, _, :a}, state, cursor} = TokenAdapter.next(state, cursor)
     {ref, state} = TokenAdapter.checkpoint(state, cursor)
     {:ok, {:";", _meta, _value}, state, cursor} = TokenAdapter.next(state, cursor)
-    {:ok, {:identifier, _, :b}, state, cursor} = TokenAdapter.next(state, cursor)
+    {:ok, {:identifier, _, :b}, state, _cursor} = TokenAdapter.next(state, cursor)
 
-    {rewound_state, cursor} = TokenAdapter.rewind(state, cursor, ref)
+    {rewound_state, cursor} = TokenAdapter.rewind(state, ref)
     {:ok, next_after_rewind, _, _} = TokenAdapter.next(rewound_state, cursor)
     assert TokenAdapter.kind(next_after_rewind) == :";"
   end
