@@ -3,9 +3,10 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Context, Cursor, EventLog, Pratt, Precedence, State, TokenAdapter}
+  alias ToxicParser.{Context, Cursor, EventLog, Pratt, Precedence, State, TokenAdapter, NoParens}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
+  require NoParens
 
   # Stab pattern parsing uses min_bp one higher than stab_op (bp=10) to stop before `->`
   # but allow all other operators including `when` (bp=50) and `<-`/`\` (bp=40).
@@ -1302,7 +1303,7 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   # ctx = {delim, block, open?, percent_pending?}
-  defp scan_update_ctx({delim, block, _open?, percent_pending?}, {kind, _meta, _value}) do
+  defp scan_update_ctx({delim, block, _open?, percent_pending?}, {kind, _meta, _value} = tok) do
     {d2, b2} =
       case kind do
         :"(" -> {delim + 1, block}
@@ -1328,18 +1329,15 @@ defmodule ToxicParser.Grammar.Stabs do
 
     open2 =
       case percent_pending? do
-        true ->
-          case kind do
-            :identifier -> true
-            :alias -> true
-            _ -> false
-          end
-
-        false ->
-          open_kind?(kind)
+        true -> map_base_expr_start?(tok)
+        false -> open_kind?(kind)
       end
 
     {d2, b2, open2, pp2}
+  end
+
+  defp map_base_expr_start?({kind, _meta, _value} = tok) do
+    NoParens.can_start_no_parens_arg?(tok) or kind in [:range_op, :ternary_op]
   end
 
   defp open_kind?(:","), do: true

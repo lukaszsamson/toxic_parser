@@ -3779,10 +3779,18 @@ defmodule ToxicParser.ConformanceTest do
       assert_conforms("%{x | i<@s^0,x => 1}")
     end
 
-    @tag :skip
     test "repro 180" do
       assert_conforms(
         "case x do 1 -> :ok; %-\nn{} -> :error end"
+      )
+      assert_conforms(
+        "case x do 1 -> :ok; %!\nn{} -> :error end"
+      )
+      assert_conforms(
+        "case x do 1 -> :ok; %//\nn{} -> :error end"
+      )
+      assert_conforms(
+        "case x do 1 -> :ok; %@\nn{} -> :error end"
       )
     end
   end
