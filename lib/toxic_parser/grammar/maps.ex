@@ -606,14 +606,30 @@ defmodule ToxicParser.Grammar.Maps do
     case Pratt.parse(state, cursor, Context.container_expr(), log) do
       {:ok, base_expr, state, cursor, log} ->
         case {base_expr, Cursor.peek(cursor)} do
-          {{:|, pipe_meta, _}, {:ok, {:assoc_op, _, _}, _cursor}} ->
+          {{:|, pipe_meta, [base, rhs]}, {:ok, {:assoc_op, _, _}, _cursor}} ->
             if Keyword.has_key?(pipe_meta, :parens) do
               state = TokenAdapter.drop_checkpoint(state, reparse_ref)
               handle_map_update_after_base_expr(base_expr, state, cursor, log)
             else
-              # Rewind and reparse with min_bp to not consume |
-              {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
-              parse_map_update_with_min_bp(state, cursor, log)
+              if expr_contains_pipe?(base) do
+                case parse_map_update_from_parsed_pipe(base, pipe_meta, rhs, state, cursor, log) do
+                  {:ok, update_ast, close_meta, state, cursor, log} ->
+                    {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, reparse_ref),
+                     cursor, log}
+
+                  {:not_update, _state, _cursor} ->
+                    {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
+                    {:not_update, state, cursor}
+
+                  {:error, diag, _state, _cursor, log} ->
+                    {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
+                    {:error, diag, state, cursor, log}
+                end
+              else
+                # Rewind and reparse with min_bp to not consume |
+                {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
+                parse_map_update_with_min_bp(state, cursor, log)
+              end
             end
 
           {{:|, pipe_meta, [_base, rhs]}, _} ->
@@ -667,7 +683,7 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
             {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = Helpers.token_meta(close_tok)
-            update_ast = {:|, pipe_meta, [base, rhs_entries]}
+            update_ast = map_update_ast(pipe_meta, base, rhs_entries)
             {:ok, update_ast, close_meta, state, cursor, log}
 
           {:ok, {:",", _meta, _value}, _cursor} ->
@@ -885,7 +901,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp allow_binary_operand?(arg) do
     case ExprClass.classify(arg) do
-      :no_parens -> operator_key_allows_no_parens?(arg)
+      :no_parens -> no_parens_call?(arg) or operator_key_allows_no_parens?(arg)
       _ -> true
     end
   end
@@ -915,7 +931,7 @@ defmodule ToxicParser.Grammar.Maps do
       {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
         close_meta = Helpers.token_meta(close_tok)
-        update_ast = {:|, pipe_meta, [base, initial_entries]}
+        update_ast = map_update_ast(pipe_meta, base, initial_entries)
         {:ok, update_ast, close_meta, state, cursor, log}
 
       {:ok, _tok, _cursor} ->
@@ -926,7 +942,7 @@ defmodule ToxicParser.Grammar.Maps do
         with {:ok, more_entries, close_meta, state, cursor, log} <-
                parse_map_close(state, cursor, Context.container_expr(), log) do
           all_entries = initial_entries ++ more_entries
-          update_ast = {:|, pipe_meta, [base, all_entries]}
+          update_ast = map_update_ast(pipe_meta, base, all_entries)
           {:ok, update_ast, close_meta, state, cursor, log}
         end
 
@@ -996,7 +1012,7 @@ defmodule ToxicParser.Grammar.Maps do
                   {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
                     {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
                     close_meta = Helpers.token_meta(close_tok)
-                    update_ast = {:|, pipe_meta, [base, entries]}
+                    update_ast = map_update_ast(pipe_meta, base, entries)
                     {:ok, update_ast, close_meta, state, cursor, log}
 
                   {:ok, {:",", _meta, _value}, _cursor} ->
@@ -1005,7 +1021,7 @@ defmodule ToxicParser.Grammar.Maps do
 
                     with {:ok, more_entries, close_meta, state, cursor, log} <-
                            parse_map_close(state, cursor, Context.container_expr(), log) do
-                      update_ast = {:|, pipe_meta, [base, entries ++ more_entries]}
+                      update_ast = map_update_ast(pipe_meta, base, entries ++ more_entries)
                       {:ok, update_ast, close_meta, state, cursor, log}
                     end
 
@@ -1017,7 +1033,7 @@ defmodule ToxicParser.Grammar.Maps do
             {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
               {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
               close_meta = Helpers.token_meta(close_tok)
-              update_ast = {:|, pipe_meta, [base, [rhs_expr]]}
+              update_ast = map_update_ast(pipe_meta, base, [rhs_expr])
               {:ok, update_ast, close_meta, state, cursor, log}
 
             {:ok, {:",", _meta, _value}, _cursor} ->
@@ -1029,13 +1045,13 @@ defmodule ToxicParser.Grammar.Maps do
                   # Trailing comma after bracketed list.
                   {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
                   close_meta = Helpers.token_meta(close_tok)
-                  update_ast = {:|, pipe_meta, [base, [rhs_expr]]}
+                  update_ast = map_update_ast(pipe_meta, base, [rhs_expr])
                   {:ok, update_ast, close_meta, state, cursor, log}
 
                 _ ->
                   with {:ok, more_entries, close_meta, state, cursor, log} <-
                          parse_map_close(state, cursor, Context.container_expr(), log) do
-                    update_ast = {:|, pipe_meta, [base, [rhs_expr | more_entries]]}
+                    update_ast = map_update_ast(pipe_meta, base, [rhs_expr | more_entries])
                     {:ok, update_ast, close_meta, state, cursor, log}
                   end
               end
@@ -1056,7 +1072,7 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
                 {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
                 close_meta = Helpers.token_meta(close_tok)
-                update_ast = {:|, pipe_meta, [base, kw_list]}
+                update_ast = map_update_ast(pipe_meta, base, kw_list)
                 {:ok, update_ast, close_meta, state, cursor, log}
 
               _ ->
@@ -1079,6 +1095,65 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
+  defp parse_map_update_from_parsed_pipe(base, pipe_meta, key_expr, state, cursor, log) do
+    base_class = ExprClass.classify(base)
+
+    case Cursor.peek(cursor) do
+      {:ok, {:assoc_op, _, _} = assoc_tok, _cursor} ->
+        {:ok, _assoc, state, cursor} = TokenAdapter.next(state, cursor)
+        assoc_meta = Helpers.token_meta(assoc_tok)
+        {state, cursor} = EOE.skip(state, cursor)
+
+        with {:ok, value, state, cursor, log} <-
+               Expressions.expr(state, cursor, Context.container_expr(), log) do
+          if not valid_update_entry?({key_expr, value}, base_class) do
+            {:not_update, state, cursor}
+          else
+            annotated_key = annotate_assoc(key_expr, assoc_meta)
+            entries = [{annotated_key, value}]
+            {state, cursor} = EOE.skip(state, cursor)
+
+            case Cursor.peek(cursor) do
+              {:ok, {:"}", _meta, _value} = close_tok, _cursor} ->
+                {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                close_meta = Helpers.token_meta(close_tok)
+                update_ast = map_update_ast(pipe_meta, base, entries)
+                {:ok, update_ast, close_meta, state, cursor, log}
+
+              {:ok, {:",", _meta, _value}, _cursor} ->
+                {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor} = EOE.skip(state, cursor)
+                parse_map_update_trailing_entries(base, pipe_meta, entries, state, cursor, log)
+
+              {:eof, _cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
+
+              {:error, diag, _cursor} ->
+                {:error, diag, state, cursor, log}
+
+              {:ok, _tok, _cursor} ->
+                {:error, :expected_closing_brace, state, cursor, log}
+            end
+          end
+        end
+
+      _ ->
+        {:not_update, state, cursor}
+    end
+  end
+
+  defp expr_contains_pipe?({:|, _meta, _args}), do: true
+
+  defp expr_contains_pipe?({callee, _meta, args}) when is_list(args) do
+    expr_contains_pipe?(callee) or Enum.any?(args, &expr_contains_pipe?/1)
+  end
+
+  defp expr_contains_pipe?(list) when is_list(list) do
+    Enum.any?(list, &expr_contains_pipe?/1)
+  end
+
+  defp expr_contains_pipe?(_), do: false
+
   # Parse assoc entries for map update RHS
   defp parse_map_update_assoc_entries(base, pipe_meta, base_class, acc, state, cursor, log) do
     with {:ok, entry, state, cursor, log} <-
@@ -1097,7 +1172,7 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
               close_meta = Helpers.token_meta(close_tok)
               entries = Enum.reverse([{key, value} | acc])
-              update_ast = {:|, pipe_meta, [base, entries]}
+              update_ast = map_update_ast(pipe_meta, base, entries)
               {:ok, update_ast, close_meta, state, cursor, log}
 
             {:ok, {:",", _meta, _value}, _cursor} ->
@@ -1110,7 +1185,7 @@ defmodule ToxicParser.Grammar.Maps do
                   {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
                   close_meta = Helpers.token_meta(close_tok)
                   entries = Enum.reverse([{key, value} | acc])
-                  update_ast = {:|, pipe_meta, [base, entries]}
+                  update_ast = map_update_ast(pipe_meta, base, entries)
                   {:ok, update_ast, close_meta, state, cursor, log}
 
                 {:ok, _tok, _cursor} ->
@@ -1118,7 +1193,7 @@ defmodule ToxicParser.Grammar.Maps do
                   with {:ok, more_entries, close_meta, state, cursor, log} <-
                          parse_map_close(state, cursor, Context.container_expr(), log) do
                     entries = :lists.reverse([{key, value} | acc], more_entries)
-                    update_ast = {:|, pipe_meta, [base, entries]}
+                    update_ast = map_update_ast(pipe_meta, base, entries)
                     {:ok, update_ast, close_meta, state, cursor, log}
                   end
 
@@ -1159,6 +1234,10 @@ defmodule ToxicParser.Grammar.Maps do
     else
       base_meta
     end
+  end
+
+  defp map_update_ast(pipe_meta, base, entries) do
+    {:|, Keyword.delete(pipe_meta, :assoc), [base, entries]}
   end
 
   # Build map AST: %{...} or %Base{...}

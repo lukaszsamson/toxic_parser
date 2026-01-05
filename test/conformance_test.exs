@@ -3793,6 +3793,12 @@ defmodule ToxicParser.ConformanceTest do
         "case x do 1 -> :ok; %@\nn{} -> :error end"
       )
     end
+
+    test "repro 181" do
+      assert_conforms(
+        "& %{\n\n(! bar.eggs | delta -44, foo: gamma baz spam.qux spam, bar, foo.delta, delta: bar if, qux, unless, gamma: bar.bar;unless :: alpha.qux -1\n;).foo|\n... qux && foo for, bar=>\n\ndelta +++ eggs,qux -58 = beta=>\n& &\n\nbar - gamma\n}\n\nspam **\n... baz.gamma\n\n;alpha;& bar -baz\n"
+      )
+    end
   end
 
   # =============================================================================
