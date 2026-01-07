@@ -15,7 +15,7 @@ defmodule ToxicParser.Recovery do
 
   defp skip_until(state, cursor, kinds, log) do
     case Cursor.peek(cursor) do
-      {:ok, {kind, _meta, _value}, _cursor} ->
+      {:ok, {kind, _meta, _value}, cursor} ->
         if kind in kinds do
           {:ok, state, cursor, log}
         else
@@ -26,10 +26,10 @@ defmodule ToxicParser.Recovery do
           end
         end
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:ok, state, cursor, log}
 
-      {:error, _reason, _cursor} ->
+      {:error, _reason, cursor} ->
         {:ok, state, cursor, log}
     end
   end

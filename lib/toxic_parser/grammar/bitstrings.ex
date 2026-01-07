@@ -50,16 +50,16 @@ defmodule ToxicParser.Grammar.Bitstrings do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case Cursor.peek(cursor) do
-            {:ok, {:">>", _meta, _value}, _cursor} ->
+            {:ok, {:">>", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, _cursor} ->
+            {:ok, {kind, _meta, _value}, cursor} ->
               {:error, {:expected, :">>", got: kind}, state, cursor, log}
 
-            {:eof, _cursor} ->
+            {:eof, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, _cursor} ->
+            {:error, diag, cursor} ->
               {:error, diag, state, cursor, log}
           end
 

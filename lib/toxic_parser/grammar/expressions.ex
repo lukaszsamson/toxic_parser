@@ -27,14 +27,14 @@ defmodule ToxicParser.Grammar.Expressions do
     {state, cursor, leading_eoe_meta} = EOE.skip_with_meta(state, cursor)
 
     case Cursor.peek(cursor) do
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         ast = build_empty_block(leading_eoe_meta)
         {:ok, ast, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
 
-      _ ->
+      {:ok, _, cursor} ->
         # Proceed with expression parsing
         case expr(state, cursor, ctx, log) do
           {:ok, first, state, cursor, log} ->
@@ -157,17 +157,17 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp collect_exprs(acc, state, cursor, ctx, log) do
     case Cursor.peek(cursor) do
-      {:ok, {kind, _meta, _value}, _cursor} when kind in [:eol, :";"] ->
+      {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
         # Skip all consecutive separator tokens (handles cases like "1\n;2")
         {state, cursor} = EOE.skip(state, cursor)
 
         # Check if we've reached EOF or terminator after trailing EOE
         case Cursor.peek(cursor) do
-          {:eof, _cursor} ->
+          {:eof, cursor} ->
             finalize_exprs(acc, state, cursor, log)
 
           # Stop at terminators that shouldn't start new expressions
-          {:ok, {kind, _meta, _value}, _cursor} ->
+          {:ok, {kind, _meta, _value}, cursor} ->
             case kind do
               kind when kind in [:end_interpolation, :"}"] ->
                 finalize_exprs(acc, state, cursor, log)
@@ -184,17 +184,17 @@ defmodule ToxicParser.Grammar.Expressions do
                 end
             end
 
-          {:error, diag, _cursor} ->
+          {:error, diag, cursor} ->
             {:error, diag, state, cursor, log}
         end
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         finalize_exprs(acc, state, cursor, log)
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
 
-      _ ->
+      {:ok, _, cursor} ->
         finalize_exprs(acc, state, cursor, log)
     end
   end
@@ -222,12 +222,18 @@ defmodule ToxicParser.Grammar.Expressions do
   # This implements the `annotate_eoe` pattern from elixir_parser.yrl.
   defp maybe_annotate_eoe(ast, state, cursor) do
     case Cursor.peek(cursor) do
-      {:ok, {kind, _meta, _value} = sep_token, _cursor} when kind in [:eol, :";"] ->
+      {:ok, {kind, _meta, _value} = sep_token, cursor} when kind in [:eol, :";"] ->
         sep_meta = EOE.build_sep_meta(sep_token)
         annotated = EOE.annotate_eoe(ast, sep_meta)
         {annotated, state, cursor}
 
-      _ ->
+      {:ok, _, cursor} ->
+        {ast, state, cursor}
+
+      {:eof, cursor} ->
+        {ast, state, cursor}
+
+      {:error, _, cursor} ->
         {ast, state, cursor}
     end
   end
@@ -237,12 +243,12 @@ defmodule ToxicParser.Grammar.Expressions do
 
     with {:ok, state, cursor, log} <- Recovery.sync_expr(state, cursor, log) do
       case Cursor.peek(cursor) do
-        {:ok, {kind, _meta, _value}, _cursor} when kind in [:eol, :";"] ->
+        {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
           # consume separator to make progress before continuing
           {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
           collect_exprs([error_ast | acc], state, cursor, ctx, log)
 
-        _ ->
+        {:ok, _, cursor} ->
           collect_exprs([error_ast | acc], state, cursor, ctx, log)
       end
     end

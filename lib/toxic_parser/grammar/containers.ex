@@ -35,31 +35,31 @@ defmodule ToxicParser.Grammar.Containers do
         %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     case Cursor.peek(cursor) do
-      {:ok, {:"(", _meta, _value}, _cursor} ->
+      {:ok, {:"(", _meta, _value}, cursor} ->
         parse_paren(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:"[", _meta, _value}, _cursor} ->
+      {:ok, {:"[", _meta, _value}, cursor} ->
         parse_list(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:"{", _meta, _value}, _cursor} ->
+      {:ok, {:"{", _meta, _value}, cursor} ->
         parse_tuple(state, cursor, ctx, log, min_bp, opts)
 
-      {:ok, {:%{}, _meta, _value}, _cursor} ->
+      {:ok, {:%{}, _meta, _value}, cursor} ->
         Maps.parse_map(state, cursor, ctx, log, min_bp)
 
-      {:ok, {:%, _meta, _value}, _cursor} ->
+      {:ok, {:%, _meta, _value}, cursor} ->
         Maps.parse_map(state, cursor, ctx, log, min_bp)
 
-      {:ok, {:"<<", _meta, _value}, _cursor} ->
+      {:ok, {:"<<", _meta, _value}, cursor} ->
         Bitstrings.parse(state, cursor, ctx, log, min_bp)
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:no_container, state, cursor}
 
-      {:error, _reason, _cursor} ->
+      {:error, _reason, cursor} ->
         {:no_container, state, cursor}
 
-      _ ->
+      {:ok, _next_tok, cursor} ->
         {:no_container, state, cursor}
     end
   end
@@ -71,22 +71,22 @@ defmodule ToxicParser.Grammar.Containers do
   @spec parse_container_base(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse_container_base(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case Cursor.peek(cursor) do
-      {:ok, {:"[", _meta, _value}, _cursor} ->
+      {:ok, {:"[", _meta, _value}, cursor} ->
         parse_list_base(state, cursor, ctx, log)
 
-      {:ok, {:"{", _meta, _value}, _cursor} ->
+      {:ok, {:"{", _meta, _value}, cursor} ->
         parse_tuple_base(state, cursor, ctx, log)
 
-      {:ok, {:"<<", _meta, _value}, _cursor} ->
+      {:ok, {:"<<", _meta, _value}, cursor} ->
         Bitstrings.parse_base(state, cursor, ctx, log)
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:no_container, state, cursor}
 
-      {:error, _reason, _cursor} ->
+      {:error, _reason, cursor} ->
         {:no_container, state, cursor}
 
-      _ ->
+      {:ok, _next_tok, cursor} ->
         {:no_container, state, cursor}
     end
   end
@@ -106,7 +106,7 @@ defmodule ToxicParser.Grammar.Containers do
 
     # Check for leading semicolon (forces stab interpretation)
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} ->
+      {:ok, tok, cursor} ->
         if semicolon?(tok) do
           # Leading semicolon - parse as stab or empty
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
@@ -138,7 +138,7 @@ defmodule ToxicParser.Grammar.Containers do
           )
         end
 
-      _ ->
+      {:eof, cursor} ->
         # Skip any remaining EOE tokens and count newlines
         {state, cursor, more_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
@@ -160,7 +160,7 @@ defmodule ToxicParser.Grammar.Containers do
     case Cursor.peek(cursor) do
       # Empty parens: () -> {:__block__, [parens: ...], []}
       # NOTE: parens: metadata doesn't include newlines (only line, column, closing)
-      {:ok, {:")", _close_meta, _value} = close_tok, _cursor} ->
+      {:ok, {:")", _close_meta, _value} = close_tok, cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
         close_meta_kw = TokenAdapter.token_meta(close_tok)
 
@@ -172,20 +172,20 @@ defmodule ToxicParser.Grammar.Containers do
         Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
 
       # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
-      {:ok, _, _cursor} ->
+      {:ok, _, cursor} ->
         Stabs.parse_paren_stab(open_meta, newlines, state, cursor, ctx, log, min_bp)
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
 
   defp skip_eoe_not_semicolon_with_count(state, cursor, count) do
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} ->
+      {:ok, tok, cursor} ->
         if semicolon?(tok) do
           {state, cursor, count}
         else
@@ -237,16 +237,16 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case Cursor.peek(cursor) do
-            {:ok, {:"]", _meta, _value}, _cursor} ->
+            {:ok, {:"]", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, _cursor} ->
+            {:ok, {kind, _meta, _value}, cursor} ->
               {:error, {:expected, :"]", got: kind}, state, cursor, log}
 
-            {:eof, _cursor} ->
+            {:eof, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, _cursor} ->
+            {:error, diag, cursor} ->
               {:error, diag, state, cursor, log}
           end
 
@@ -362,16 +362,16 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case Cursor.peek(cursor) do
-            {:ok, {:"}", _meta, _value}, _cursor} ->
+            {:ok, {:"}", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, _cursor} ->
+            {:ok, {kind, _meta, _value}, cursor} ->
               {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
-            {:eof, _cursor} ->
+            {:eof, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, _cursor} ->
+            {:error, diag, cursor} ->
               {:error, diag, state, cursor, log}
           end
 

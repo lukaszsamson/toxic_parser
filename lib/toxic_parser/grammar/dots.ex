@@ -79,10 +79,13 @@ defmodule ToxicParser.Grammar.Dots do
             alias_ast = Helpers.from_token(tok)
 
             case Cursor.peek(cursor) do
-              {:ok, {:"[", _meta, _value}, _cursor} ->
+              {:ok, {:"[", _meta, _value}, cursor} ->
                 {:ok, {alias_ast, :allows_bracket}, state, cursor, log}
 
-              _ ->
+              {:ok, _next_tok, cursor} ->
+                {:ok, alias_ast, state, cursor, log}
+
+              {:eof, cursor} ->
                 {:ok, alias_ast, state, cursor, log}
             end
 
@@ -174,16 +177,16 @@ defmodule ToxicParser.Grammar.Dots do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case Cursor.peek(cursor) do
-            {:ok, {:"}", _meta, _value}, _cursor} ->
+            {:ok, {:"}", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, _cursor} ->
+            {:ok, {kind, _meta, _value}, cursor} ->
               {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
-            {:eof, _cursor} ->
+            {:eof, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
 
-            {:error, diag, _cursor} ->
+            {:error, diag, cursor} ->
               {:error, diag, state, cursor, log}
           end
 
@@ -205,10 +208,10 @@ defmodule ToxicParser.Grammar.Dots do
 
   defp reject_initial_kw_data(state, cursor, container_ctx, log) do
     case Cursor.peek(cursor) do
-      {:ok, {:"}", _meta, _value}, _cursor} ->
+      {:ok, {:"}", _meta, _value}, cursor} ->
         {:ok, state, cursor, log}
 
-      {:ok, {_kind, _meta, tok_value} = tok, _cursor} ->
+      {:ok, {_kind, _meta, tok_value} = tok, cursor} ->
         cond do
           # Definite kw_data start - no need to checkpoint/parse.
           Keywords.starts_kw?(tok) ->
@@ -239,10 +242,10 @@ defmodule ToxicParser.Grammar.Dots do
             {:ok, state, cursor, log}
         end
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -316,36 +319,46 @@ defmodule ToxicParser.Grammar.Dots do
           meta_with_no_parens = [{:no_parens, true} | meta_with_delimiter]
           {:ok, {atom, meta_with_no_parens, []}, state, cursor, log}
 
-        # quoted_paren_identifier_end or ( immediately follows: D."foo"()
-        end_kind == :quoted_paren_identifier_end or
-            match?({:ok, {:"(", _, _}, _}, Cursor.peek(cursor)) ->
-          {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
-
-          # Skip leading EOE and count newlines
-          {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-
-          with {:ok, args, state, cursor, log} <-
-                 ToxicParser.Grammar.CallsPrivate.parse_paren_args(
-                   [],
-                   state,
-                   cursor,
-                   Context.matched_expr(),
-                   log
-                 ),
-               {:ok, close_meta, trailing_newlines, state, cursor} <-
-                 Meta.consume_closing(state, cursor, :")") do
-            total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
-            call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
-
-            # Return as call AST: {atom, call_meta, args}
-            {:ok, {atom, call_meta, Enum.reverse(args)}, state, cursor, log}
+        true ->
+          {quoted_paren_identifier_end_or_immediately_parens, cursor} = if end_kind == :quoted_paren_identifier_end do
+            {true, cursor}
           else
-            other -> Result.normalize_error(other, cursor, log)
+            case Cursor.peek(cursor) do
+              {:ok, {:"(", _, _}, cursor} -> {true, cursor}
+              {:ok, _, cursor} -> {false, cursor}
+              {:eof, cursor} -> {false, cursor}
+            end
           end
 
-        true ->
-          # Simple quoted identifier without parens
-          {:ok, {atom, meta_with_delimiter}, state, cursor, log}
+          if quoted_paren_identifier_end_or_immediately_parens do
+            # quoted_paren_identifier_end or ( immediately follows: D."foo"()
+            {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
+
+            # Skip leading EOE and count newlines
+            {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+
+            with {:ok, args, state, cursor, log} <-
+                  ToxicParser.Grammar.CallsPrivate.parse_paren_args(
+                    [],
+                    state,
+                    cursor,
+                    Context.matched_expr(),
+                    log
+                  ),
+                {:ok, close_meta, trailing_newlines, state, cursor} <-
+                  Meta.consume_closing(state, cursor, :")") do
+              total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
+              call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
+
+              # Return as call AST: {atom, call_meta, args}
+              {:ok, {atom, call_meta, Enum.reverse(args)}, state, cursor, log}
+            else
+              other -> Result.normalize_error(other, cursor, log)
+            end
+          else
+            # Simple quoted identifier without parens
+            {:ok, {atom, meta_with_delimiter}, state, cursor, log}
+          end
       end
     end
   end
@@ -366,7 +379,7 @@ defmodule ToxicParser.Grammar.Dots do
 
   defp collect_fragments(acc, state, cursor, target_end, log) do
     case Cursor.peek(cursor) do
-      {:ok, {tok_kind, _meta, fragment}, _cursor} ->
+      {:ok, {tok_kind, _meta, fragment}, cursor} ->
         cond do
           tok_kind == target_end ->
             {:ok, acc, target_end, state, cursor, log}
@@ -383,10 +396,10 @@ defmodule ToxicParser.Grammar.Dots do
             {:error, {:unexpected_string_token, tok_kind}, state, cursor, log}
         end
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end

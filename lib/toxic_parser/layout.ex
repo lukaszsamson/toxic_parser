@@ -50,7 +50,7 @@ defmodule ToxicParser.Layout do
           {State.t(), Cursor.t(), non_neg_integer()}
   def skip_newlines_only(%State{} = state, cursor, ctx \\ nil, count \\ 0) when count >= 0 do
     case peek_sep(state, cursor, ctx) do
-      {:ok, {:";", _meta, _value}, _cursor} ->
+      {:ok, {:";", _meta, _value}, cursor} ->
         # Stop at semicolon - don't consume it
         {state, cursor, count}
 

@@ -379,7 +379,7 @@ defmodule ToxicParser.Pratt do
     allow_do_blocks = Context.allow_do_block?(context)
 
     case Cursor.peek(cursor) do
-      {:ok, {next_kind, _meta, _value} = next_tok, _cursor} ->
+      {:ok, {next_kind, _meta, _value} = next_tok, cursor} ->
         binary_bp = bp(next_kind)
 
         allow_no_parens =
@@ -512,9 +512,15 @@ defmodule ToxicParser.Pratt do
       # Check if there's a do-block following that will attach to this call.
       # Only counts as "has do-block" if context allows do-block attachment.
       # When context has allow_do_block: false, the do-block belongs to an outer call.
-      has_do_block =
-        Context.allow_do_block?(context) and
-          match?({:ok, {:do, _, _}, _cursor}, Cursor.peek(cursor))
+      {has_do_block, cursor} =
+        if Context.allow_do_block?(context) do
+          case Cursor.peek(cursor) do
+            {:ok, {:do, _, _}, cursor} -> {true, cursor}
+            _ -> {false, cursor}
+          end
+        else
+          {false, cursor}
+        end
 
       # For op_identifier with a single argument AND no do-block, add ambiguous_op: nil
       # This matches elixir_parser.yrl behavior for no_parens_one_ambig
@@ -540,12 +546,16 @@ defmodule ToxicParser.Pratt do
     # and doesn't skip it, allowing `led` to see the EOE separation
     if op_kind in [:ellipsis_op, :range_op] do
       case Cursor.peek(cursor) do
-        {:ok, {kind, _meta, _value}, _cursor} when kind in [:eol, :";"] ->
+        {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
           # Separator is a terminator for ellipsis/range - return standalone
           ast = {op_value, TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, cursor, log}
 
-        _ ->
+        {:ok, _, cursor} ->
+          # Not a separator, proceed with normal parsing
+          parse_unary_operand_or_standalone(op_token, state, cursor, context, log)
+
+        {:eof, cursor} ->
           # Not a separator, proceed with normal parsing
           parse_unary_operand_or_standalone(op_token, state, cursor, context, log)
       end
@@ -627,10 +637,10 @@ defmodule ToxicParser.Pratt do
               ast = Builder.Helpers.unary(op, operand, meta)
 
               case Cursor.peek(cursor) do
-                {:ok, tok, _cursor} when is_kind(tok, :"[") ->
+                {:ok, {:"[", _, _}, cursor} ->
                   led_bracket(ast, state, cursor, log, at_bp, context, %ParseOpts{})
 
-                _ ->
+                {:ok, _, cursor} ->
                   {:ok, ast, state, cursor, log}
               end
             else
@@ -657,7 +667,7 @@ defmodule ToxicParser.Pratt do
                     # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
                     # This matches cases like `@ @ (case ... end)[x]` where the bracket applies to the inner @,
                     # and the outer @ wraps the whole access_expr.
-                    {:ok, tok, _cursor} when is_kind(tok, :"[") ->
+                    {:ok, {:"[", _, _}, cursor_after_base} ->
                       if match?({:@, _, [_]}, operand_base) do
                         with {:ok, operand_with_bracket, state_after_bracket,
                               cursor_after_bracket, log} <-
@@ -679,7 +689,7 @@ defmodule ToxicParser.Pratt do
                          cursor_after_base, log}
                       end
 
-                    {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
+                    {:ok, {next_tok_kind, _meta, _value}, cursor_after_base} ->
                       if operand_ctx.allow_do_block and
                            ExprClass.classify(operand_base) == :unmatched and
                            not has_parens_meta?(operand_base) do
@@ -724,7 +734,7 @@ defmodule ToxicParser.Pratt do
                          cursor_after_base, log}
                       end
 
-                    _ ->
+                    {:eof, cursor_after_base} ->
                       {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
                        cursor_after_base, log}
                   end
@@ -765,7 +775,7 @@ defmodule ToxicParser.Pratt do
                    ) do
               operand_result =
                 case Cursor.peek(cursor_after_base) do
-                  {:ok, {next_tok_kind, _meta, _value}, _cursor} ->
+                  {:ok, {next_tok_kind, _meta, _value}, cursor_after_base} ->
                     if operand_context.allow_do_block and
                          ExprClass.classify(operand_base) == :unmatched and
                          not has_parens_meta?(operand_base) do
@@ -798,7 +808,7 @@ defmodule ToxicParser.Pratt do
                        cursor_after_base, log}
                     end
 
-                  _ ->
+                  {:eof, cursor_after_base} ->
                     {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
                      cursor_after_base, log}
                 end
@@ -904,7 +914,7 @@ defmodule ToxicParser.Pratt do
                ) do
           operand_result =
             case Cursor.peek(cursor_after_base) do
-              {:ok, {next_kind, _meta, _value}, _cursor} ->
+              {:ok, {next_kind, _meta, _value}, cursor_after_base} ->
                 if do_block_expr?(operand_base) do
                   case bp(next_kind) do
                     nil ->
@@ -937,7 +947,7 @@ defmodule ToxicParser.Pratt do
                    cursor_after_base, log}
                 end
 
-              _ ->
+              {:eof, cursor_after_base} ->
                 {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
                  cursor_after_base, log}
             end
@@ -1024,7 +1034,7 @@ defmodule ToxicParser.Pratt do
          %ParseOpts{} = opts
        ) do
     case Cursor.peek(cursor) do
-      {:ok, {:"(", _meta, _value}, _cursor} when is_kind(token, :paren_identifier) ->
+      {:ok, {:"(", _meta, _value}, cursor} when is_kind(token, :paren_identifier) ->
         # Paren call (no space before '(') - parse directly to preserve min_bp.
         # Don't use Calls.parse because it calls led(_, 0, _) which loses min_bp.
         # Pass opts through so do-blocks after paren call know the context.
@@ -1033,7 +1043,7 @@ defmodule ToxicParser.Pratt do
           maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, opts)
         end
 
-      {:ok, tok, _cursor} when is_kind(tok, :"(") ->
+      {:ok, tok, cursor} when is_kind(tok, :"(") ->
         # `foo (expr)` is a no-parens call where the `(` begins a parenthesized
         # expression argument (it is NOT a paren-call like `foo(expr)`).
         # This matters because trailing operators (e.g. `foo (1 <<< 7) - 1`)
@@ -1046,7 +1056,7 @@ defmodule ToxicParser.Pratt do
           led(right, state, cursor, log, min_bp, context, opts)
         end
 
-      {:ok, {:do, _meta, _value}, _cursor} when context.allow_do_block ->
+      {:ok, {:do, _meta, _value}, cursor} when context.allow_do_block ->
         # Do-block - delegate to Calls.parse_without_led
         {state, cursor} = TokenAdapter.pushback(state, cursor, token)
 
@@ -1056,12 +1066,12 @@ defmodule ToxicParser.Pratt do
           led(right, state, cursor, log, min_bp, context, opts)
         end
 
-      {:ok, tok, _cursor} when is_kind(tok, :do) ->
+      {:ok, {:do, _meta, _value}, cursor} ->
         # Do-blocks not allowed in this context (matched_expr); leave `do` for the caller.
         ast = Builder.Helpers.from_token(token)
         led(ast, state, cursor, log, min_bp, context, opts)
 
-      {:ok, {next_tok_kind, _meta, _value} = next_tok, _cursor} ->
+      {:ok, {next_tok_kind, _meta, _value} = next_tok, cursor} ->
         cond do
           # Alias followed by [ is bracket access, not a no-parens call
           # Grammar: bracket_expr -> access_expr bracket_arg
@@ -1168,7 +1178,7 @@ defmodule ToxicParser.Pratt do
     {state, cursor, sep_tokens, newlines_before_op} = peek_past_sep(state, cursor)
 
     case Cursor.peek(cursor) do
-      {:ok, next_token, _cursor} ->
+      {:ok, next_token, cursor} ->
         led_dispatch(
           left,
           next_token,
@@ -1182,12 +1192,12 @@ defmodule ToxicParser.Pratt do
           newlines_before_op
         )
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         # At EOF, push back EOE tokens so they're available for expr_list
         {state, cursor} = pushback_sep_tokens(state, cursor, sep_tokens)
         {:ok, left, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -1371,7 +1381,7 @@ defmodule ToxicParser.Pratt do
 
     # Check for dot_container: expr.{...}
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} when is_kind(tok, :"{") ->
+      {:ok, {:"{", _, _}, cursor} ->
         {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
 
         with {:ok, args, newlines, close_meta, state, cursor, log} <-
@@ -1382,7 +1392,12 @@ defmodule ToxicParser.Pratt do
           led(combined, state, cursor, log, min_bp, context, opts)
         end
 
-      _ ->
+      other ->
+        cursor = case other do
+          {:ok, _, cursor} -> cursor
+          {:eof, cursor} -> cursor
+          {:error, _, cursor} -> cursor
+        end
         # Pass dot_meta for curly calls where the call metadata uses the dot's position
         with {:ok, rhs, state, cursor, log} <-
                Dots.parse_member(state, cursor, context, log, dot_meta) do
@@ -1445,7 +1460,7 @@ defmodule ToxicParser.Pratt do
                 # it's a nested paren call: foo.bar()()
                 # When ( follows a simple identifier (allows_bracket = false), it means there's
                 # whitespace before (, so ( starts a no-parens argument: foo.e ()
-                {:ok, {:"(", _meta, _value}, _cursor} when not allows_bracket ->
+                {:ok, {:"(", _meta, _value}, cursor} when not allows_bracket ->
                   with {:ok, args, state, cursor, log} <-
                          Calls.parse_no_parens_args([], state, cursor, context, log) do
                     combined = dot_to_no_parens_call(combined, args)
@@ -1462,7 +1477,7 @@ defmodule ToxicParser.Pratt do
                   end
 
                 # Nested paren call: foo.bar()() - rhs was already a call (allows_bracket = true)
-                {:ok, tok, _cursor} when is_kind(tok, :"(") ->
+                {:ok, {:"(", _meta, _value}, cursor} ->
                   {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
                   # Skip leading EOE and count newlines
                   {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
@@ -1517,12 +1532,12 @@ defmodule ToxicParser.Pratt do
                     end
                   end
 
-                {:ok, {:"[", _meta, _value}, _cursor} when allows_bracket ->
+                {:ok, {:"[", _meta, _value}, cursor} when allows_bracket ->
                   # Bracket access: foo.bar[:key] - only when bracket access is allowed
                   # (no whitespace before [)
                   led(combined, state, cursor, log, min_bp, context, opts)
 
-                {:ok, tok, _cursor} when is_kind(tok, :do) ->
+                {:ok, {:do, _meta, _value}, cursor} ->
                   # Do-block after dot call: foo.bar() do...end
                   # Only handle when rhs was a call (combined has args list)
                   maybe_nested_call_or_do_block(
@@ -1535,7 +1550,7 @@ defmodule ToxicParser.Pratt do
                     opts
                   )
 
-                {:ok, {next_kind, _meta, _value} = next_tok, _cursor} ->
+                {:ok, {next_kind, _meta, _value} = next_tok, cursor} ->
                   # Check for no-parens call argument after dot expression
                   # Only parse as no-parens call if:
                   # 1. The member was tokenized as op_identifier/dot_op_identifier (expects_no_parens_call)
@@ -1662,12 +1677,11 @@ defmodule ToxicParser.Pratt do
         if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
       end
 
-    case Cursor.peek(cursor) do
+    cond do
       # Special case: when operator followed by keyword list
       # Grammar rule: no_parens_op_expr -> when_op_eol call_args_no_parens_kw
       # Only valid when no-parens extension is enabled.
-      {:ok, _rhs_tok, _cursor}
-      when is_kind(op_token, :when_op) and context.allow_no_parens_expr ->
+      op_kind == :when_op and context.allow_no_parens_expr ->
         case Keywords.try_parse_call_args_no_parens_kw(state, cursor, context, log) do
           {:ok, kw_list, state, cursor, log} ->
             op = op_value
@@ -1694,7 +1708,7 @@ defmodule ToxicParser.Pratt do
         end
 
       # Special case: when operator in contexts without no-parens extension
-      {:ok, _rhs_tok, _cursor} when is_kind(op_token, :when_op) ->
+      op_kind == :when_op ->
         parse_when_binary_rhs(
           state,
           cursor,
@@ -1711,7 +1725,7 @@ defmodule ToxicParser.Pratt do
       # Grammar rule: assoc_expr -> container_expr assoc_op_eol container_expr
       # The value of => should be a container_expr which includes pipe_op
       # So use min_bp=0 to allow | and other low-precedence operators in the value
-      {:ok, _rhs_tok, _cursor} when is_kind(op_token, :assoc_op) ->
+      op_kind == :assoc_op ->
         parse_binary_rhs(
           state,
           cursor,
@@ -1726,7 +1740,7 @@ defmodule ToxicParser.Pratt do
           opts
         )
 
-      _ ->
+      true ->
         parse_binary_rhs(
           state,
           cursor,
@@ -1753,7 +1767,7 @@ defmodule ToxicParser.Pratt do
   defp maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, %ParseOpts{} = opts) do
 
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} when is_kind(tok, :"(") ->
+      {:ok, {:"(", _, _}, cursor} ->
         # Another paren call - parse it
         {:ok, _open_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
@@ -1776,7 +1790,7 @@ defmodule ToxicParser.Pratt do
           other -> Result.normalize_error(other, cursor, log)
         end
 
-      {:ok, tok, _cursor} when is_kind(tok, :do) ->
+      {:ok, {:do, _, _}, cursor} ->
         # When allow_do_block is false (e.g. parsing no-parens call arguments), do-blocks
         # belong to the outer call (e.g. `foo bar do ... end`) and must NOT attach to
         # the final argument expression (e.g. `bar do ... end`).
@@ -1845,7 +1859,11 @@ defmodule ToxicParser.Pratt do
           end
         end
 
-      _ ->
+      {:ok, _, cursor} ->
+        # No nested call or do-block - continue with led
+        led(ast, state, cursor, log, min_bp, context)
+
+      {:eof, cursor} ->
         # No nested call or do-block - continue with led
         led(ast, state, cursor, log, min_bp, context)
     end
@@ -1944,16 +1962,16 @@ defmodule ToxicParser.Pratt do
             {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
             case Cursor.peek(cursor) do
-              {:ok, tok, _cursor} when is_kind(tok, :"}") ->
+              {:ok, tok, cursor} when is_kind(tok, :"}") ->
                 {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-              {:ok, {got_kind, _meta, _value}, _cursor} ->
+              {:ok, {got_kind, _meta, _value}, cursor} ->
                 {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
 
-              {:eof, _cursor} ->
+              {:eof, cursor} ->
                 {:error, :unexpected_eof, state, cursor, log}
 
-              {:error, diag, _cursor} ->
+              {:error, diag, cursor} ->
                 {:error, diag, state, cursor, log}
             end
 
@@ -1997,10 +2015,10 @@ defmodule ToxicParser.Pratt do
 
   defp reject_initial_kw_data(state, cursor, container_ctx, log) do
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} when is_kind(tok, :"}") ->
+      {:ok, tok, cursor} when is_kind(tok, :"}") ->
         {:ok, state, cursor, log}
 
-      {:ok, tok, _cursor} ->
+      {:ok, tok, cursor} ->
         {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
         case Keywords.try_parse_kw_data(checkpoint_state, cursor, container_ctx, log) do
@@ -2019,10 +2037,10 @@ defmodule ToxicParser.Pratt do
             {:error, reason, state, cursor, log}
         end
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, _cursor} ->
+      {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
@@ -2053,23 +2071,29 @@ defmodule ToxicParser.Pratt do
   # The sep_tokens_list can be used to push back if we don't find a continuation operator
   defp peek_past_sep(state, cursor, sep_tokens \\ [], newlines \\ 0) do
     case Cursor.peek(cursor) do
-      {:ok, {:eol, {_, _, n}, _value} = sep_tok, _cursor} when is_integer(n) ->
+      {:ok, {:eol, {_, _, n}, _value} = sep_tok, cursor} when is_integer(n) ->
         {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
         peek_past_sep(state, cursor, [sep_tok | sep_tokens], newlines + n)
 
-      {:ok, {:eol, _meta, _value} = sep_tok, _cursor} ->
+      {:ok, {:eol, _meta, _value} = sep_tok, cursor} ->
         {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
         peek_past_sep(state, cursor, [sep_tok | sep_tokens], newlines)
 
-      {:ok, {:";", {_, _, n}, _value} = sep_tok, _cursor} when is_integer(n) ->
+      {:ok, {:";", {_, _, n}, _value} = sep_tok, cursor} when is_integer(n) ->
         {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
         peek_past_sep(state, cursor, [sep_tok | sep_tokens], newlines + n)
 
-      {:ok, {:";", _meta, _value} = sep_tok, _cursor} ->
+      {:ok, {:";", _meta, _value} = sep_tok, cursor} ->
         {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
         peek_past_sep(state, cursor, [sep_tok | sep_tokens], newlines)
 
-      _ ->
+      {:ok, _, cursor} ->
+        {state, cursor, Enum.reverse(sep_tokens), newlines}
+
+      {:eof, cursor} ->
+        {state, cursor, Enum.reverse(sep_tokens), newlines}
+
+      {:error, _, cursor} ->
         {state, cursor, Enum.reverse(sep_tokens), newlines}
     end
   end
@@ -2209,12 +2233,12 @@ defmodule ToxicParser.Pratt do
          log
        ) do
     case Cursor.peek(cursor) do
-      {:ok, tok, _cursor} when is_kind(tok, :",") ->
+      {:ok, {:",", _, _}, cursor} ->
         {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
         {state, cursor} = EOE.skip(state, cursor)
 
         case Cursor.peek(cursor) do
-          {:ok, {kind, _meta, _value} = tok, _cursor} ->
+          {:ok, {kind, _meta, _value} = tok, cursor} ->
             cond do
               Keywords.starts_kw?(tok) ->
                 with {:ok, more_kw, state, cursor, log} <-
@@ -2253,12 +2277,12 @@ defmodule ToxicParser.Pratt do
                 led(combined, state, cursor, log, min_bp, context)
             end
 
-          _ ->
+          {:ok, _, cursor} ->
             combined = build_binary_op(op_token, left, kw_list, newlines)
             led(combined, state, cursor, log, min_bp, context)
         end
 
-      _ ->
+      {:ok, _, cursor} ->
         combined = build_binary_op(op_token, left, kw_list, newlines)
         led(combined, state, cursor, log, min_bp, context)
     end
@@ -2567,7 +2591,7 @@ defmodule ToxicParser.Pratt do
     case Cursor.peek(cursor) do
       # Handle dot-call: foo.() (tokenized as dot_call_op followed by parens)
       # dot_call_op is a 3-tuple: {:dot_call_op, meta, :.}
-      {:ok, {:dot_call_op, _, _} = _dot_tok, _cursor} ->
+      {:ok, {:dot_call_op, _, _} = _dot_tok, cursor} ->
         {:ok, dot_tok, state, cursor} = TokenAdapter.next(state, cursor)
         dot_meta = TokenAdapter.token_meta(dot_tok)
 
@@ -2606,7 +2630,7 @@ defmodule ToxicParser.Pratt do
             {:error, diag, state, cursor, log}
         end
 
-      {:ok, tok, _cursor} when is_kind(tok, :.) ->
+      {:ok, {:., _, _}, cursor} ->
         {:ok, dot_tok, state, cursor} = TokenAdapter.next(state, cursor)
         dot_meta = TokenAdapter.token_meta(dot_tok)
 
@@ -2659,7 +2683,7 @@ defmodule ToxicParser.Pratt do
         end
 
       # Handle paren calls: foo(args) or unquote(struct)
-      {:ok, tok, _cursor} when is_kind(tok, :"(") ->
+      {:ok, {:"(", _, _}, cursor} ->
         {:ok, _open_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
         # Skip leading EOE and count newlines
@@ -2691,7 +2715,7 @@ defmodule ToxicParser.Pratt do
 
       # Handle bracket access: 0[l] for structs like %0[l]{}
       # Grammar: bracket_expr -> access_expr bracket_arg
-      {:ok, tok, _cursor} when is_kind(tok, :"[") ->
+      {:ok, {:"[", _, _}, cursor} ->
         {:ok, open_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
         # Skip leading EOE and count newlines
@@ -2728,7 +2752,7 @@ defmodule ToxicParser.Pratt do
           end
         end
 
-      _ ->
+      {:ok, _, cursor} ->
         # Not a dot, paren, or bracket - return what we have
         {:ok, left, state, cursor, log}
     end

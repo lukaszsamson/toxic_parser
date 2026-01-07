@@ -28,16 +28,16 @@ defmodule ToxicParser.Grammar.Blocks do
   @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t()) :: result()
   def parse(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     case Cursor.peek(cursor) do
-      {:ok, {:fn, _meta, _value} = tok, _cursor} ->
+      {:ok, {:fn, _meta, _value} = tok, cursor} ->
         parse_fn(tok, state, cursor, ctx, log)
 
-      {:eof, _cursor} ->
+      {:eof, cursor} ->
         {:no_block, state, cursor}
 
-      {:error, _reason, _cursor} ->
+      {:error, _reason, cursor} ->
         {:no_block, state, cursor}
 
-      {:ok, _tok, _cursor} ->
+      {:ok, _tok, cursor} ->
         {:no_block, state, cursor}
     end
   end
@@ -51,23 +51,29 @@ defmodule ToxicParser.Grammar.Blocks do
     # only that token contributes to fn's `newlines` metadata (via next_is_eol/2).
     {state, cursor, newlines} =
       case Cursor.peek(cursor) do
-        {:ok, {:eol, {_, _, n}, _value}, _cursor} when is_integer(n) ->
+        {:ok, {:eol, {_, _, n}, _value}, cursor} when is_integer(n) ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:eol, _meta, _value}, _cursor} ->
+        {:ok, {:eol, _meta, _value}, cursor} ->
           {:ok, _eol, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
-        {:ok, {:";", {_, _, n}, _value}, _cursor} when is_integer(n) ->
+        {:ok, {:";", {_, _, n}, _value}, cursor} when is_integer(n) ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, n}
 
-        {:ok, {:";", _meta, _value}, _cursor} ->
+        {:ok, {:";", _meta, _value}, cursor} ->
           {:ok, _semi, state, cursor} = TokenAdapter.next(state, cursor)
           {state, cursor, 0}
 
-        _ ->
+        {:ok, _, cursor} ->
+          {state, cursor, 0}
+
+        {:eof, cursor} ->
+          {state, cursor, 0}
+
+        {:error, _, cursor} ->
           {state, cursor, 0}
       end
 
@@ -151,12 +157,12 @@ defmodule ToxicParser.Grammar.Blocks do
       acc = [{encoded_label, section_value} | acc]
 
       case Cursor.peek(cursor) do
-        {:ok, {:block_identifier, _meta, value}, _cursor} ->
+        {:ok, {:block_identifier, _meta, value}, cursor} ->
           {:ok, label_tok, state, cursor} = TokenAdapter.next(state, cursor)
           next_label_meta = TokenAdapter.token_meta(label_tok)
           parse_labeled_sections(acc, value, next_label_meta, state, cursor, ctx, log)
 
-        _ ->
+        {:ok, _, cursor} ->
           {:ok, Enum.reverse(acc), state, cursor, log}
       end
     end
