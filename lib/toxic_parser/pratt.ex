@@ -206,7 +206,7 @@ defmodule ToxicParser.Pratt do
   @doc "Exposes binary binding power."
   @spec bp(atom()) :: Precedence.bp() | nil
   def bp(kind) do
-    case Precedence.binary(kind) do
+    case precedence_binary(kind) do
       {bp, _assoc} -> bp
       _ -> nil
     end
@@ -215,7 +215,7 @@ defmodule ToxicParser.Pratt do
   @doc "Exposes unary binding power."
   @spec unary_bp(atom()) :: Precedence.bp() | nil
   def unary_bp(kind) do
-    case Precedence.unary(kind) do
+    case precedence_unary(kind) do
       {bp, _assoc} -> bp
       _ -> nil
     end
@@ -309,7 +309,7 @@ defmodule ToxicParser.Pratt do
          allow_containers,
          opts
        ) do
-    case Precedence.unary(token_kind) do
+    case precedence_unary(token_kind) do
       {_bp, _assoc} ->
         # Pass outer min_bp for trailing led(), not the unary's own precedence.
         # The operand_min_bp is computed inside parse_unary from the operator's precedence.
@@ -609,7 +609,7 @@ defmodule ToxicParser.Pratt do
         # so they should NOT trigger standalone ellipsis
         is_pure_binary_op =
           operand_kind not in [:dual_op, :ternary_op] and
-            Precedence.binary(operand_kind) != nil
+            precedence_binary(operand_kind) != nil
 
         if op_kind in [:ellipsis_op, :range_op] and
              (is_pure_binary_op or operand_kind in ellipsis_terminators) do
@@ -622,7 +622,7 @@ defmodule ToxicParser.Pratt do
         else
           if op_kind == :at_op do
             at_bp =
-              case Precedence.unary(:at_op) do
+              case precedence_unary(:at_op) do
                 {bp, _assoc} -> bp
                 _ -> 320
               end
@@ -755,7 +755,7 @@ defmodule ToxicParser.Pratt do
             operand_context = unary_operand_context(context)
 
             operand_min_bp =
-              case Precedence.unary(op_kind) do
+              case precedence_unary(op_kind) do
                 {bp, _assoc} -> bp
                 nil -> 300
               end
@@ -848,7 +848,7 @@ defmodule ToxicParser.Pratt do
     {:ok, {_op_kind, _op_meta, op_value} = op_token, state, cursor} =
       TokenAdapter.next(state, cursor)
 
-    {bp, _assoc} = Precedence.binary(:ternary_op)
+    {bp, _assoc} = precedence_binary(:ternary_op)
 
     # Skip EOE after operator
     {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
@@ -1214,7 +1214,7 @@ defmodule ToxicParser.Pratt do
          sep_tokens,
          newlines_before_op
        ) do
-    precedence = Precedence.binary(next_token_kind)
+    precedence = precedence_binary(next_token_kind)
 
     case {next_token_kind, precedence} do
       # Parens call: identifier(args) or expr()(args) (nested call)
@@ -2757,4 +2757,48 @@ defmodule ToxicParser.Pratt do
         {:ok, left, state, cursor, log}
     end
   end
+
+  # Inlined from ToxicParser.Precedence for cross-module call elimination
+  # Generated function heads for fast pattern matching
+  for {kind, bp, assoc} <- [
+        {:stab_op, 10, :right},
+        {:in_match_op, 40, :left},
+        {:when_op, 50, :right},
+        {:type_op, 60, :right},
+        {:pipe_op, 70, :right},
+        {:assoc_op, 80, :right},
+        {:match_op, 100, :right},
+        {:or_op, 120, :left},
+        {:and_op, 130, :left},
+        {:comp_op, 140, :left},
+        {:rel_op, 150, :left},
+        {:arrow_op, 160, :left},
+        {:in_op, 170, :left},
+        {:xor_op, 180, :left},
+        {:ternary_op, 190, :right},
+        {:concat_op, 200, :right},
+        {:range_op, 200, :right},
+        {:dual_op, 210, :left},
+        {:mult_op, 220, :left},
+        {:power_op, 230, :left},
+        {:., 310, :left},
+        {:dot_call_op, 310, :left}
+      ] do
+    defp precedence_binary(unquote(kind)), do: {unquote(bp), unquote(assoc)}
+  end
+
+  defp precedence_binary(_), do: nil
+
+  for {kind, bp, assoc} <- [
+        {:capture_op, 90, :nonassoc},
+        {:ellipsis_op, 90, :nonassoc},
+        {:unary_op, 300, :nonassoc},
+        {:at_op, 320, :nonassoc}
+      ] do
+    defp precedence_unary(unquote(kind)), do: {unquote(bp), unquote(assoc)}
+  end
+
+  defp precedence_unary(_), do: nil
+
+  @compile {:inline, precedence_binary: 1, precedence_unary: 1}
 end

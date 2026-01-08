@@ -3,15 +3,18 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Context, Cursor, EventLog, Pratt, Precedence, State, TokenAdapter, NoParens}
+  alias ToxicParser.{Context, Cursor, EventLog, Pratt, State, TokenAdapter, NoParens}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
   require NoParens
 
+  # Inlined from ToxicParser.Precedence - stab_op binding power is 10
+  @stab_op_bp 10
+
   # Stab pattern parsing uses min_bp one higher than stab_op (bp=10) to stop before `->`
   # but allow all other operators including `when` (bp=50) and `<-`/`\` (bp=40).
   # The `when` at the TOP LEVEL of patterns is handled specially after parsing (to extract guards).
-  @stab_pattern_min_bp Precedence.stab_op_bp() + 1
+  @stab_pattern_min_bp @stab_op_bp + 1
 
   # After leading semicolon: either close paren (empty) or stab content
   def parse_paren_stab_or_empty(
@@ -262,7 +265,7 @@ defmodule ToxicParser.Grammar.Stabs do
                   # `no_parens_op_expr -> when_op_eol call_args_no_parens_kw`.
                   #
                   # If it is followed by `->`, treat it as part of the patterns (not a guard).
-                  min_bp = Precedence.stab_op_bp() + 1
+                  min_bp = @stab_op_bp + 1
 
                   with {:ok, kw_list, state, cursor, log} <-
                          Keywords.parse_kw_no_parens_call_with_min_bp(
@@ -316,7 +319,7 @@ defmodule ToxicParser.Grammar.Stabs do
                        cursor,
                        Context.expr(),
                        log,
-                       Precedence.stab_op_bp() + 1
+                       @stab_op_bp + 1
                      ) do
                 case TokenAdapter.next(state, cursor) do
                   {:ok, {:stab_op, _, _} = stab_tok, state, cursor} ->
@@ -506,7 +509,7 @@ defmodule ToxicParser.Grammar.Stabs do
                      cursor,
                      ctx,
                      log,
-                     Precedence.stab_op_bp() + 1,
+                     @stab_op_bp + 1,
                      allow_no_parens: true
                    ) do
               {:ok, [kw_list], state, cursor, log}
@@ -785,7 +788,7 @@ defmodule ToxicParser.Grammar.Stabs do
                            cursor,
                            Context.matched_expr(),
                            log,
-                           Precedence.stab_op_bp() + 1
+                           @stab_op_bp + 1
                          ) do
                     # If expr was a keyword list from quoted key, merge them
                     if is_keyword_list(expr) do
@@ -852,7 +855,7 @@ defmodule ToxicParser.Grammar.Stabs do
                              cursor,
                              Context.matched_expr(),
                              log,
-                             Precedence.stab_op_bp() + 1
+                             @stab_op_bp + 1
                            ) do
                       {:ok, Enum.reverse(acc, [acc_kw ++ expr ++ more_kw]), state, cursor, log}
                     end
@@ -1053,7 +1056,7 @@ defmodule ToxicParser.Grammar.Stabs do
                          cursor,
                          Context.expr(),
                          log,
-                         Precedence.stab_op_bp() + 1
+                         @stab_op_bp + 1
                        ) do
                   {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
 
@@ -1098,7 +1101,7 @@ defmodule ToxicParser.Grammar.Stabs do
                              cursor,
                              Context.expr(),
                              log,
-                             Precedence.stab_op_bp() + 1
+                             @stab_op_bp + 1
                            ) do
                       {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
 
@@ -1124,7 +1127,7 @@ defmodule ToxicParser.Grammar.Stabs do
                          cursor,
                          Context.expr(),
                          log,
-                         Precedence.stab_op_bp() + 1
+                         @stab_op_bp + 1
                        ) do
                   {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
 
@@ -1146,7 +1149,7 @@ defmodule ToxicParser.Grammar.Stabs do
                          cursor,
                          Context.expr(),
                          log,
-                         Precedence.stab_op_bp() + 1
+                         @stab_op_bp + 1
                        ) do
                   {expr, state, cursor} = maybe_annotate_and_consume_eoe(expr, state, cursor)
 
