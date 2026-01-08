@@ -2,7 +2,7 @@ defmodule ToxicParser.Cursor do
   @moduledoc """
   Tuple hot-state cursor over `Toxic.Driver`.
 
-  Cursor owns lookahead, emit queue, and lookbehind to avoid per-token driver
+  Cursor owns pending token buffer and lookbehind to avoid per-token driver
   struct churn in the parser loop.
   """
 
@@ -18,9 +18,10 @@ defmodule ToxicParser.Cursor do
           | {:eof, driver_hot()}
           | {:error, term(), input(), pos_integer(), pos_integer(), driver_hot()}
 
-  # {rest, line, column, driver_hot, cfg, lookahead, emitq, last_token}
+  # {rest, line, column, driver_hot, cfg, pending, last_token}
+  # pending = merged lookahead + emitq for reduced tuple size
   @opaque t :: {input(), pos_integer(), pos_integer(), driver_hot(), cfg(), list(token()),
-                list(token()), last_token()}
+                last_token()}
 
   @spec new(binary() | charlist(), keyword()) :: t()
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
@@ -49,21 +50,17 @@ defmodule ToxicParser.Cursor do
     rest = normalize_input(source, cfg.lexer_backend)
     line = Keyword.get(driver_opts, :line, 1)
     column = Keyword.get(driver_opts, :column, 1)
-    {rest, line, column, driver_hot, cfg, [], [], nil}
+    {rest, line, column, driver_hot, cfg, [], nil}
   end
 
   @spec next(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
-  def next({rest, line, column, driver_hot, cfg, [tok | lookahead], emitq, _last_token}) do
-    {:ok, tok, {rest, line, column, driver_hot, cfg, lookahead, emitq, tok}}
-  end
-
-  def next({rest, line, column, driver_hot, cfg, [], [tok | emitq], _last_token}) do
-    {:ok, tok, {rest, line, column, driver_hot, cfg, [], emitq, tok}}
+  def next({rest, line, column, driver_hot, cfg, [tok | pending], _last_token}) do
+    {:ok, tok, {rest, line, column, driver_hot, cfg, pending, tok}}
   end
 
   def next(
         {rest, line, column,
-         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [], [],
+         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [],
          last_token}
       ) do
     if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
@@ -74,32 +71,28 @@ defmodule ToxicParser.Cursor do
 
       case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
         {:ok, tok, rest, line, column, driver_hot} ->
-          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [], tok}}
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [], tok}}
 
         {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot} ->
-          {:ok, tok, {rest, line, column, driver_hot, cfg, [], rest_tokens, tok}}
+          {:ok, tok, {rest, line, column, driver_hot, cfg, rest_tokens, tok}}
 
         {:eof, driver_hot} ->
-          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
-          {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+          {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
       end
     end
   end
 
   @spec peek(t()) :: {:ok, token(), t()} | {:eof, t()} | {:error, term(), t()}
-  def peek({_rest, _line, _column, _driver_hot, _cfg, [tok | _], _emitq, _last_token} = cursor) do
-    {:ok, tok, cursor}
-  end
-
-  def peek({_rest, _line, _column, _driver_hot, _cfg, [], [tok | _], _last_token} = cursor) do
+  def peek({_rest, _line, _column, _driver_hot, _cfg, [tok | _], _last_token} = cursor) do
     {:ok, tok, cursor}
   end
 
   def peek(
         {rest, line, column,
-         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [], [],
+         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [],
          last_token}
       ) do
     if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
@@ -110,42 +103,42 @@ defmodule ToxicParser.Cursor do
 
       case Toxic.Driver.step(rest, line, column, driver_hot, cfg, lookbehind) do
         {:ok, tok, rest, line, column, driver_hot} ->
-          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok], last_token}}
+          {:ok, tok, {rest, line, column, driver_hot, cfg, [tok], last_token}}
 
-        {:ok_many, [tok | rest_tokens], rest, line, column, driver_hot} ->
-          {:ok, tok, {rest, line, column, driver_hot, cfg, [], [tok | rest_tokens], last_token}}
+        {:ok_many, tokens, rest, line, column, driver_hot} ->
+          {:ok, hd(tokens), {rest, line, column, driver_hot, cfg, tokens, last_token}}
 
         {:eof, driver_hot} ->
-          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
-          {:error, reason, {rest, line, column, driver_hot, cfg, [], [], last_token}}
+          {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
       end
     end
   end
 
   @doc """
-  Push a token back to the front of the lookahead.
+  Push a token back to the front of the pending buffer.
   The pushed token will be the next one returned by next/1.
   """
   @spec pushback(t(), token()) :: t()
-  def pushback({rest, line, column, driver_hot, cfg, lookahead, emitq, last_token}, token) do
-    {rest, line, column, driver_hot, cfg, [token | lookahead], emitq, last_token}
+  def pushback({rest, line, column, driver_hot, cfg, pending, last_token}, token) do
+    {rest, line, column, driver_hot, cfg, [token | pending], last_token}
   end
 
   @doc """
-  Push multiple tokens back to the front of the lookahead.
+  Push multiple tokens back to the front of the pending buffer.
   Tokens must be in source order (first token in list = next to be consumed).
   """
   @spec pushback_many(t(), [token()]) :: t()
   def pushback_many(cursor, []), do: cursor
 
-  def pushback_many({rest, line, column, driver_hot, cfg, lookahead, emitq, last_token}, tokens) do
-    {rest, line, column, driver_hot, cfg, tokens ++ lookahead, emitq, last_token}
+  def pushback_many({rest, line, column, driver_hot, cfg, pending, last_token}, tokens) do
+    {rest, line, column, driver_hot, cfg, tokens ++ pending, last_token}
   end
 
   @doc """
-  Push multiple tokens back to the front of the lookahead.
+  Push multiple tokens back to the front of the pending buffer.
 
   Tokens must be in reverse source order (last token in list = next to be consumed).
   This avoids allocating an intermediate reversed list at hot callsites.
@@ -154,37 +147,37 @@ defmodule ToxicParser.Cursor do
   def pushback_many_rev(cursor, []), do: cursor
 
   def pushback_many_rev(
-        {rest, line, column, driver_hot, cfg, lookahead, emitq, last_token},
+        {rest, line, column, driver_hot, cfg, pending, last_token},
         tokens_rev
       ) do
-    {rest, line, column, driver_hot, cfg, :lists.reverse(tokens_rev, lookahead), emitq, last_token}
+    {rest, line, column, driver_hot, cfg, :lists.reverse(tokens_rev, pending), last_token}
   end
 
   @doc "Pay-for-play terminator snapshot (does not run on every token)."
   @spec current_terminators(t()) :: [term()]
   def current_terminators(
         {_rest, _line, _column, {scope, contexts, _deferrals, _output, _recent_token}, _cfg,
-         _lookahead, _emitq, _last_token}
+         _pending, _last_token}
       ) do
     Toxic.Driver.current_terminators_from(scope, contexts)
   end
 
   @doc "Get current position (line, column) from the cursor."
   @spec position(t()) :: {pos_integer(), pos_integer()}
-  def position({_rest, line, column, _driver_hot, _cfg, _lookahead, _emitq, _last_token}) do
+  def position({_rest, line, column, _driver_hot, _cfg, _pending, _last_token}) do
     {line, column}
   end
 
-  @doc "Check if cursor is at EOF (no more tokens in lookahead or source)."
+  @doc "Check if cursor is at EOF (no more tokens in pending buffer or source)."
   @spec eof?(t()) :: boolean()
-  def eof?({rest, _line, _column, _driver_hot, cfg, lookahead, emitq, _last_token}) do
+  def eof?({rest, _line, _column, _driver_hot, cfg, pending, _last_token}) do
     empty? =
       case cfg.lexer_backend do
         :binary -> rest == <<>>
         _ -> rest == []
       end
 
-    empty? and lookahead == [] and emitq == []
+    empty? and pending == []
   end
 
   defp normalize_input(source, :binary) when is_binary(source), do: source
@@ -201,7 +194,7 @@ defmodule ToxicParser.Cursor do
   defp strict_eof_or_error(line, column, scope, contexts, driver_hot, cfg, last_token) do
     case Toxic.Driver.Contexts.pending_error(contexts, scope) do
       nil ->
-        {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+        {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
       error ->
         reason =
@@ -217,7 +210,7 @@ defmodule ToxicParser.Cursor do
           end
 
         {:error, Toxic.Error.to_reason_tuple(reason),
-         {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], [], last_token}}
+         {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
     end
   end
 
