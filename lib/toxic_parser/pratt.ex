@@ -226,7 +226,14 @@ defmodule ToxicParser.Pratt do
     nud(token, state, cursor, context, log, %ParseOpts{})
   end
 
-  defp nud({token_kind, _meta, token_value} = token, state, cursor, context, log, %ParseOpts{} = opts) do
+  defp nud(
+         {token_kind, _meta, token_value} = token,
+         state,
+         cursor,
+         context,
+         log,
+         %ParseOpts{} = opts
+       ) do
     %{min_bp: min_bp, allow_containers: allow_containers, string_min_bp: string_min_bp} = opts
 
     case token_kind do
@@ -845,7 +852,7 @@ defmodule ToxicParser.Pratt do
   # When left is a range {:.., meta, [start, stop]}, combines into {:..//, meta, [start, stop, step]}
   # Otherwise, produces an error (// must follow ..)
   defp parse_ternary_op(left, state, cursor, min_bp, context, log) do
-    {:ok, {_op_kind, _op_meta, op_value} = op_token, state, cursor} =
+    {:ok, {_op_kind, _op_meta, _op_value} = op_token, state, cursor} =
       TokenAdapter.next(state, cursor)
 
     {bp, _assoc} = precedence_binary(:ternary_op)
@@ -863,11 +870,9 @@ defmodule ToxicParser.Pratt do
               combined = {:..//, range_meta, [start, stop, step]}
               led(combined, state, cursor, log, min_bp, context)
 
-            # Not a range - this is an error but we still parse it as {:"//", meta, [left, step]}
+            # Not a range - emit the same error as elixir_parser.yrl
             _ ->
-              op_meta = TokenAdapter.token_meta(op_token)
-              combined = {op_value, op_meta, [left, step]}
-              led(combined, state, cursor, log, min_bp, context)
+              {:error, range_step_error(op_token), state, cursor, log}
           end
         end
 
@@ -909,7 +914,13 @@ defmodule ToxicParser.Pratt do
         ternary_unary_opts = %ParseOpts{unary_operand: true, min_bp: 300}
 
         with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
-               parse_rhs(operand_token, checkpoint_state, cursor_after_next, context, log, 300,
+               parse_rhs(
+                 operand_token,
+                 checkpoint_state,
+                 cursor_after_next,
+                 context,
+                 log,
+                 300,
                  ternary_unary_opts
                ) do
           operand_result =
@@ -932,7 +943,13 @@ defmodule ToxicParser.Pratt do
                       with {:ok, tok, state_full, cursor_full} <-
                              TokenAdapter.next(state_full, cursor_full),
                            {:ok, operand_full, state_full, cursor_full, log} <-
-                             parse_rhs(tok, state_full, cursor_full, context, log, 0,
+                             parse_rhs(
+                               tok,
+                               state_full,
+                               cursor_full,
+                               context,
+                               log,
+                               0,
                                ternary_full_opts
                              ) do
                         {:ok, operand_full, state_full, cursor_full, log}
@@ -1393,11 +1410,13 @@ defmodule ToxicParser.Pratt do
         end
 
       other ->
-        cursor = case other do
-          {:ok, _, cursor} -> cursor
-          {:eof, cursor} -> cursor
-          {:error, _, cursor} -> cursor
-        end
+        cursor =
+          case other do
+            {:ok, _, cursor} -> cursor
+            {:eof, cursor} -> cursor
+            {:error, _, cursor} -> cursor
+          end
+
         # Pass dot_meta for curly calls where the call metadata uses the dot's position
         with {:ok, rhs, state, cursor, log} <-
                Dots.parse_member(state, cursor, context, log, dot_meta) do
@@ -1764,8 +1783,15 @@ defmodule ToxicParser.Pratt do
   # When unary_operand: true, this is parsing a unary operator's operand.
   # In that context, do-blocks should allow ALL binary ops to attach (min_bp=0).
   # Otherwise (binary RHS), preserve min_bp for proper associativity.
-  defp maybe_nested_call_or_do_block(ast, state, cursor, log, min_bp, context, %ParseOpts{} = opts) do
-
+  defp maybe_nested_call_or_do_block(
+         ast,
+         state,
+         cursor,
+         log,
+         min_bp,
+         context,
+         %ParseOpts{} = opts
+       ) do
     case Cursor.peek(cursor) do
       {:ok, {:"(", _, _}, cursor} ->
         # Another paren call - parse it
@@ -2309,7 +2335,11 @@ defmodule ToxicParser.Pratt do
     case TokenAdapter.next(state, cursor) do
       {:ok, rhs_token, state, cursor} ->
         # Update opts struct for RHS parsing
-        rhs_opts = %{opts | allow_no_parens_extension?: context.allow_no_parens_expr, unary_operand: false}
+        rhs_opts = %{
+          opts
+          | allow_no_parens_extension?: context.allow_no_parens_expr,
+            unary_operand: false
+        }
 
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
@@ -2553,6 +2583,16 @@ defmodule ToxicParser.Pratt do
   end
 
   defp extract_meta(_), do: []
+
+  defp range_step_error(op_token) do
+    meta = TokenAdapter.token_meta(op_token)
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+
+    {[line: line, column: column],
+     "the range step operator (//) must immediately follow the range definition operator (..), for example: 1..9//2. If you wanted to define a default argument, use (\\) instead. Syntax error before: ",
+     "'//'"}
+  end
 
   # Check if AST can receive a paren call in led()
   # Bare identifiers need paren_call: true marker (from :paren_identifier token)

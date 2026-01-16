@@ -62,7 +62,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_conforms("1..foo do end//bar bat")
     end
 
-    @tag :skip
     test "errors" do
       assert_error_conforms("foo..bar baz//bat")
       assert_error_conforms("foo++bar//bat")
