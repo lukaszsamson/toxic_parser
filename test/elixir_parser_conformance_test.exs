@@ -470,7 +470,6 @@ defmodule ToxicParser.ElixirParserConformanceTest do
       assert_error_conforms(":\"+\".Bar")
     end
 
-    @tag :skip
     test "invalid map/struct" do
       assert_error_conforms("%{foo bar, baz}")
       assert_error_conforms("%{a, b}{a: :b}")

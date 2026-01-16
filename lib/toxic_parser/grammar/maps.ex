@@ -614,8 +614,8 @@ defmodule ToxicParser.Grammar.Maps do
               if expr_contains_pipe?(base) do
                 case parse_map_update_from_parsed_pipe(base, pipe_meta, rhs, state, cursor, log) do
                   {:ok, update_ast, close_meta, state, cursor, log} ->
-                    {:ok, update_ast, close_meta, TokenAdapter.drop_checkpoint(state, reparse_ref),
-                     cursor, log}
+                    {:ok, update_ast, close_meta,
+                     TokenAdapter.drop_checkpoint(state, reparse_ref), cursor, log}
 
                   {:not_update, _state, _cursor} ->
                     {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
@@ -906,7 +906,8 @@ defmodule ToxicParser.Grammar.Maps do
     end
   end
 
-  defp no_parens_call?({name, meta, args}) when is_atom(name) and is_list(meta) and is_list(args) do
+  defp no_parens_call?({name, meta, args})
+       when is_atom(name) and is_list(meta) and is_list(args) do
     not Macro.operator?(name, length(args)) and no_parens_meta?(meta) and args != []
   end
 
@@ -1084,7 +1085,15 @@ defmodule ToxicParser.Grammar.Maps do
             # assoc_expr(s): %{base | k => v, ...}
             base_class = ExprClass.classify(base)
 
-            case parse_map_update_assoc_entries(base, pipe_meta, base_class, [], state, cursor, log) do
+            case parse_map_update_assoc_entries(
+                   base,
+                   pipe_meta,
+                   base_class,
+                   [],
+                   state,
+                   cursor,
+                   log
+                 ) do
               {:not_update, state, cursor} -> {:not_update, state, cursor}
               other -> other
             end
@@ -1167,53 +1176,53 @@ defmodule ToxicParser.Grammar.Maps do
             # It's a proper assoc entry
             {state, cursor} = EOE.skip(state, cursor)
 
-          case Cursor.peek(cursor) do
-            {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-              {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-              close_meta = Helpers.token_meta(close_tok)
-              entries = Enum.reverse([{key, value} | acc])
-              update_ast = map_update_ast(pipe_meta, base, entries)
-              {:ok, update_ast, close_meta, state, cursor, log}
+            case Cursor.peek(cursor) do
+              {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+                {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                close_meta = Helpers.token_meta(close_tok)
+                entries = Enum.reverse([{key, value} | acc])
+                update_ast = map_update_ast(pipe_meta, base, entries)
+                {:ok, update_ast, close_meta, state, cursor, log}
 
-            {:ok, {:",", _meta, _value}, cursor} ->
-              {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
-              {state, cursor} = EOE.skip(state, cursor)
+              {:ok, {:",", _meta, _value}, cursor} ->
+                {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor} = EOE.skip(state, cursor)
 
-              case Cursor.peek(cursor) do
-                {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-                  # Trailing comma
-                  {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-                  close_meta = Helpers.token_meta(close_tok)
-                  entries = Enum.reverse([{key, value} | acc])
-                  update_ast = map_update_ast(pipe_meta, base, entries)
-                  {:ok, update_ast, close_meta, state, cursor, log}
-
-                {:ok, _tok, cursor} ->
-                  # Parse the remaining entries using map_close (assoc and/or kw tail)
-                  with {:ok, more_entries, close_meta, state, cursor, log} <-
-                         parse_map_close(state, cursor, Context.container_expr(), log) do
-                    entries = :lists.reverse([{key, value} | acc], more_entries)
+                case Cursor.peek(cursor) do
+                  {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+                    # Trailing comma
+                    {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                    close_meta = Helpers.token_meta(close_tok)
+                    entries = Enum.reverse([{key, value} | acc])
                     update_ast = map_update_ast(pipe_meta, base, entries)
                     {:ok, update_ast, close_meta, state, cursor, log}
-                  end
 
-                {:eof, cursor} ->
-                  {:error, :unexpected_eof, state, cursor, log}
+                  {:ok, _tok, cursor} ->
+                    # Parse the remaining entries using map_close (assoc and/or kw tail)
+                    with {:ok, more_entries, close_meta, state, cursor, log} <-
+                           parse_map_close(state, cursor, Context.container_expr(), log) do
+                      entries = :lists.reverse([{key, value} | acc], more_entries)
+                      update_ast = map_update_ast(pipe_meta, base, entries)
+                      {:ok, update_ast, close_meta, state, cursor, log}
+                    end
 
-                {:error, diag, cursor} ->
-                  {:error, diag, state, cursor, log}
-              end
+                  {:eof, cursor} ->
+                    {:error, :unexpected_eof, state, cursor, log}
 
-            {:eof, cursor} ->
-              {:error, :unexpected_eof, state, cursor, log}
+                  {:error, diag, cursor} ->
+                    {:error, diag, state, cursor, log}
+                end
 
-            {:error, diag, cursor} ->
-              {:error, diag, state, cursor, log}
+              {:eof, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
 
-            {:ok, _tok, cursor} ->
-              {:error, :expected_closing_brace, state, cursor, log}
+              {:error, diag, cursor} ->
+                {:error, diag, state, cursor, log}
+
+              {:ok, _tok, cursor} ->
+                {:error, :expected_closing_brace, state, cursor, log}
+            end
           end
-        end
 
         _ ->
           {:error, :expected_assoc, state, cursor, log}
@@ -1393,8 +1402,13 @@ defmodule ToxicParser.Grammar.Maps do
           end
 
         {:ok, _, cursor} ->
-          # No assoc operator - return as-is
-          {:ok, left, state, cursor, log}
+          if ExprClass.classify(left) == :no_parens do
+            {:error, ToxicParser.NoParensErrors.error_no_parens_container_strict(left), state,
+             cursor, log}
+          else
+            # No assoc operator - return as-is
+            {:ok, left, state, cursor, log}
+          end
       end
     end
   end
