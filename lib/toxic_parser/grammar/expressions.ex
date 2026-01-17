@@ -92,7 +92,7 @@ defmodule ToxicParser.Grammar.Expressions do
       {:no_block, state, cursor} ->
         case Containers.parse(state, cursor, ctx, log) do
           {:ok, ast, state, cursor, log} ->
-            {:ok, ast, state, cursor, log}
+            handle_literal_encoder(ast, state, cursor, log)
 
           {:error, reason, state, cursor, log} ->
             {:error, reason, state, cursor, log}
@@ -100,7 +100,7 @@ defmodule ToxicParser.Grammar.Expressions do
           {:no_container, state, cursor} ->
             case ToxicParser.Grammar.Strings.parse(state, cursor, ctx, log) do
               {:ok, ast, state, cursor, log} ->
-                {:ok, ast, state, cursor, log}
+                handle_literal_encoder(ast, state, cursor, log)
 
               {:keyword_key, key_atom, key_meta, state, cursor, log} ->
                 {state, cursor} = EOE.skip(state, cursor)
@@ -108,7 +108,7 @@ defmodule ToxicParser.Grammar.Expressions do
                 with {:ok, value_ast, state, cursor, log} <-
                        expr(state, cursor, keyword_value_context(ctx), log) do
                   key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
-                  {:ok, [{key_ast, value_ast}], state, cursor, log}
+                  handle_literal_encoder([{key_ast, value_ast}], state, cursor, log)
                 end
 
               {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor, log} ->
@@ -117,13 +117,13 @@ defmodule ToxicParser.Grammar.Expressions do
                 with {:ok, value_ast, state, cursor, log} <-
                        expr(state, cursor, keyword_value_context(ctx), log) do
                   key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-                  {:ok, [{key_ast, value_ast}], state, cursor, log}
+                  handle_literal_encoder([{key_ast, value_ast}], state, cursor, log)
                 end
 
               {:no_string, state, cursor} ->
                 case Calls.parse(state, cursor, ctx, log) do
                   {:ok, ast, state, cursor, log} ->
-                    {:ok, ast, state, cursor, log}
+                    handle_literal_encoder(ast, state, cursor, log)
 
                   {:keyword_key, key_atom, key_meta, state, cursor, log} ->
                     {state, cursor} = EOE.skip(state, cursor)
@@ -131,7 +131,7 @@ defmodule ToxicParser.Grammar.Expressions do
                     with {:ok, value_ast, state, cursor, log} <-
                            expr(state, cursor, keyword_value_context(ctx), log) do
                       key_ast = ToxicParser.Builder.Helpers.literal(key_atom, key_meta, state)
-                      {:ok, [{key_ast, value_ast}], state, cursor, log}
+                      handle_literal_encoder([{key_ast, value_ast}], state, cursor, log)
                     end
 
                   {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor,
@@ -141,7 +141,7 @@ defmodule ToxicParser.Grammar.Expressions do
                     with {:ok, value_ast, state, cursor, log} <-
                            expr(state, cursor, keyword_value_context(ctx), log) do
                       key_ast = build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
-                      {:ok, [{key_ast, value_ast}], state, cursor, log}
+                      handle_literal_encoder([{key_ast, value_ast}], state, cursor, log)
                     end
 
                   {:error, reason, state, cursor, log} ->
@@ -216,6 +216,25 @@ defmodule ToxicParser.Grammar.Expressions do
 
     block = {:__block__, [], exprs}
     {:ok, block, state, cursor, log}
+  end
+
+  defp handle_literal_encoder({:literal_encoder_error, reason, meta}, state, cursor, log) do
+    location = Keyword.take(meta, [:line, :column])
+    {:error, {location, to_string(reason) <> ": ", "literal"}, state, cursor, log}
+  end
+
+  defp handle_literal_encoder(ast, state, cursor, log) when is_list(ast) do
+    case Enum.find(ast, &match?({:literal_encoder_error, _, _}, &1)) do
+      {:literal_encoder_error, reason, meta} ->
+        {:error, {meta, to_string(reason) <> ": ", "literal"}, state, cursor, log}
+
+      _ ->
+        {:ok, ast, state, cursor, log}
+    end
+  end
+
+  defp handle_literal_encoder(ast, state, cursor, log) do
+    {:ok, ast, state, cursor, log}
   end
 
   # Annotate an expression with end_of_expression metadata if followed by separator.

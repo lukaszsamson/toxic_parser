@@ -16,7 +16,7 @@ defmodule ToxicParser.Builder.Helpers do
       encoder when is_function(encoder, 2) ->
         case encoder.(value, meta) do
           {:ok, encoded} -> encoded
-          {:error, _reason} -> value
+          {:error, reason} -> {:literal_encoder_error, reason, meta}
         end
     end
   end

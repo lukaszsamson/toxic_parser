@@ -554,41 +554,41 @@ defmodule ToxicParser.Grammar.Stabs do
         # Force fallback to regular parenthesized-expression parsing.
         {:error, :paren_semicolon, state, cursor, log}
 
-          # Empty parens: fn () -> body end
-          {:ok, {:")", _meta, _value} = close_tok, cursor} ->
-            {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-            close_meta = TokenAdapter.token_meta(close_tok)
-            # Return empty patterns with parens metadata attached to the clause later
-            # Store parens meta for use in try_parse_stab_clause
-            {:ok, [], state, cursor, log, {open_meta, close_meta}}
+      # Empty parens: fn () -> body end
+      {:ok, {:")", _meta, _value} = close_tok, cursor} ->
+        {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+        close_meta = TokenAdapter.token_meta(close_tok)
+        # Return empty patterns with parens metadata attached to the clause later
+        # Store parens meta for use in try_parse_stab_clause
+        {:ok, [], state, cursor, log, {open_meta, close_meta}}
 
-          # Content inside parens - parse as call_args_parens
-          {:ok, _, cursor} ->
-            with {:ok, args, state, cursor, log} <-
-                   parse_call_args_parens(state, cursor, ctx, log) do
-              {state, cursor} = EOE.skip(state, cursor)
+      # Content inside parens - parse as call_args_parens
+      {:ok, _, cursor} ->
+        with {:ok, args, state, cursor, log} <-
+               parse_call_args_parens(state, cursor, ctx, log) do
+          {state, cursor} = EOE.skip(state, cursor)
 
-              case TokenAdapter.next(state, cursor) do
-                {:ok, {:")", _meta, _value} = close_tok, state, cursor} ->
-                  close_meta = TokenAdapter.token_meta(close_tok)
-                  {:ok, args, state, cursor, log, {open_meta, close_meta}}
+          case TokenAdapter.next(state, cursor) do
+            {:ok, {:")", _meta, _value} = close_tok, state, cursor} ->
+              close_meta = TokenAdapter.token_meta(close_tok)
+              {:ok, args, state, cursor, log, {open_meta, close_meta}}
 
-                {:ok, {got_kind, _meta, _value}, state, cursor} ->
-                  {:error, {:expected, :")", got: got_kind}, state, cursor, log}
+            {:ok, {got_kind, _meta, _value}, state, cursor} ->
+              {:error, {:expected, :")", got: got_kind}, state, cursor, log}
 
-                {:eof, state, cursor} ->
-                  {:error, :unexpected_eof, state, cursor, log}
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
 
-                {:error, diag, state, cursor} ->
-                  {:error, diag, state, cursor, log}
-              end
-            end
+            {:error, diag, state, cursor} ->
+              {:error, diag, state, cursor, log}
+          end
+        end
 
-          {:eof, cursor} ->
-            {:error, :unexpected_eof, state, cursor, log}
+      {:eof, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, cursor} ->
-            {:error, diag, state, cursor, log}
+      {:error, diag, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -629,8 +629,11 @@ defmodule ToxicParser.Grammar.Stabs do
 
             if acc == [] do
               case Cursor.peek(cursor) do
-                {:ok, {:")", _, _}, cursor} -> {EOE.annotate_eoe(expr, sep_meta), state_after_sep, cursor}
-                {:ok, _, cursor} -> {expr, state_after_sep, cursor}
+                {:ok, {:")", _, _}, cursor} ->
+                  {EOE.annotate_eoe(expr, sep_meta), state_after_sep, cursor}
+
+                {:ok, _, cursor} ->
+                  {expr, state_after_sep, cursor}
               end
             else
               {expr, state_after_sep, cursor}
@@ -1082,7 +1085,8 @@ defmodule ToxicParser.Grammar.Stabs do
               :clause ->
                 case try_parse_stab_clause(state, cursor, ctx, log, terminator) do
                   {:ok, clause, state, cursor, log} ->
-                    {clause, state, cursor} = maybe_annotate_and_consume_eoe(clause, state, cursor)
+                    {clause, state, cursor} =
+                      maybe_annotate_and_consume_eoe(clause, state, cursor)
 
                     parse_stab_items_until(
                       [clause | acc],
@@ -1203,6 +1207,7 @@ defmodule ToxicParser.Grammar.Stabs do
 
   defp stop_token?({terminator, _meta, _value}, terminator, _stop_kinds), do: true
   defp stop_token?({:block_identifier, _meta, _value}, _terminator, _stop_kinds), do: true
+
   defp stop_token?({kind, _meta, _value}, _terminator, stop_kinds) do
     kind in stop_kinds
   end
@@ -1450,8 +1455,11 @@ defmodule ToxicParser.Grammar.Stabs do
         :stab ->
           {:ok, collect_stab(items), state, cursor, log}
 
-        _ ->
-          {:error, {:expected, :stab_op, got: :expression}, state, cursor, log}
+        :invalid ->
+          {:error, invalid_stab_error(items), state, cursor, log}
+
+        :block ->
+          {:error, fn_missing_stab_error(items), state, cursor, log}
       end
     end
   end
@@ -1498,6 +1506,55 @@ defmodule ToxicParser.Grammar.Stabs do
     # but handle gracefully by returning them
     exprs ++ stabs
   end
+
+  defp fn_missing_stab_error([{:__block__, meta, _} | _]) when is_list(meta) do
+    {Keyword.take(meta, [:line, :column]),
+     "expected anonymous functions to be defined with -> inside: ", "'fn'"}
+  end
+
+  defp fn_missing_stab_error([first | _]) do
+    meta = extract_meta(first)
+
+    location =
+      if meta == [] do
+        [line: 1, column: 1]
+      else
+        meta
+      end
+
+    {location, "expected anonymous functions to be defined with -> inside: ", "'fn'"}
+  end
+
+  defp fn_missing_stab_error([first | _]) do
+    meta = extract_meta(first)
+    {meta, "expected anonymous functions to be defined with -> inside: ", "'fn'"}
+  end
+
+  defp fn_missing_stab_error([]) do
+    {[line: 1, column: 1], "expected anonymous functions to be defined with -> inside: ", "'fn'"}
+  end
+
+  defp invalid_stab_error(items) do
+    case Enum.find(items, &match?({:->, _, _}, &1)) do
+      {:->, meta, _} when is_list(meta) ->
+        location = Keyword.take(meta, [:line, :column])
+
+        {location,
+         "unexpected operator ->. If you want to define multiple clauses, the first expression must use ->. Syntax error before: ",
+         "'->'"}
+
+      _ ->
+        {[],
+         "unexpected operator ->. If you want to define multiple clauses, the first expression must use ->. Syntax error before: ",
+         "'->'"}
+    end
+  end
+
+  defp extract_meta({_name, meta, _args}) when is_list(meta) do
+    Keyword.take(meta, [:line, :column])
+  end
+
+  defp extract_meta(_), do: []
 
   # Build a block from multiple expressions, or return single expression as-is
   defp build_stab_block([single]), do: single

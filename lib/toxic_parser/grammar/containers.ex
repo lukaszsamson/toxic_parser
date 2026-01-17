@@ -24,7 +24,14 @@ defmodule ToxicParser.Grammar.Containers do
           | {:error, term(), State.t(), Cursor.t(), EventLog.t()}
           | {:no_container, State.t(), Cursor.t()}
 
-  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), ParseOpts.t()) ::
+  @spec parse(
+          State.t(),
+          Cursor.t(),
+          Pratt.context(),
+          EventLog.t(),
+          non_neg_integer(),
+          ParseOpts.t()
+        ) ::
           result()
   def parse(
         %State{} = state,
@@ -237,6 +244,10 @@ defmodule ToxicParser.Grammar.Containers do
           {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
           case Cursor.peek(cursor) do
+            {:ok, {:",", comma_meta, _value}, cursor} ->
+              {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+              {:error, handle_invalid_kw_tail_error_at(comma_meta), state, cursor, log}
+
             {:ok, {:"]", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
 
@@ -263,6 +274,9 @@ defmodule ToxicParser.Grammar.Containers do
                 {:ok, {:expr, expr}, state, cursor, log}
             end
           end
+
+        {:error, {:expected, :keyword, _details}, state, cursor, log} ->
+          {:error, handle_invalid_kw_tail_error(state, cursor), state, cursor, log}
 
         {:error, reason, state, cursor, log} ->
           {:error, reason, state, cursor, log}
@@ -327,7 +341,7 @@ defmodule ToxicParser.Grammar.Containers do
     open_meta = TokenAdapter.token_meta(open_tok)
 
     with {:ok, elements, newlines, close_meta, state, cursor, log} <-
-           parse_tuple_args(state, cursor, ctx, log) do
+           parse_tuple_args(state, cursor, ctx, log, open_meta) do
       meta = Meta.closing_meta(open_meta, close_meta, newlines)
 
       # 2-element tuples are represented as literal {a, b} and are encodable
@@ -348,7 +362,7 @@ defmodule ToxicParser.Grammar.Containers do
     end
   end
 
-  defp parse_tuple_args(state, cursor, _ctx, log) do
+  defp parse_tuple_args(state, cursor, _ctx, log, open_meta) do
     # Skip leading EOE and count newlines
     {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
@@ -389,6 +403,9 @@ defmodule ToxicParser.Grammar.Containers do
             end
           end
 
+        {:error, {:expected, :keyword, _details}, state, cursor, log} ->
+          {:error, handle_invalid_kw_tail_error(state, cursor), state, cursor, log}
+
         {:error, reason, state, cursor, log} ->
           {:error, reason, state, cursor, log}
       end
@@ -402,7 +419,7 @@ defmodule ToxicParser.Grammar.Containers do
       # {foo: :bar} is invalid - tuples cannot start with keyword data
       case tagged_items do
         [{:kw_data, _} | _] ->
-          {:error, :unexpected_keyword_list_in_tuple, state, cursor, log}
+          {:error, unexpected_keyword_list_error(:tuple, open_meta), state, cursor, log}
 
         _ ->
           case TokenAdapter.next(state, cursor) do
@@ -441,4 +458,60 @@ defmodule ToxicParser.Grammar.Containers do
         Enum.map(tagged_items, fn {:expr, expr} -> expr end)
     end
   end
+
+  defp unexpected_keyword_list_error(context, meta) do
+    location = Keyword.take(meta, [:line, :column])
+    start_token = if context == :bitstring, do: "'<<'", else: "'{'"
+
+    {location,
+     "unexpected keyword list inside #{context}. Did you mean to write a map (using %{...}) or a list (using [...]) instead? Syntax error after: ",
+     start_token}
+  end
+
+  defp handle_invalid_kw_tail_error(_state, cursor) do
+    case Cursor.peek(cursor) do
+      {:ok, {kind, meta, value}, _cursor} ->
+        location = meta_location(meta)
+
+        case kind do
+          :kw_identifier ->
+            {location,
+             "unexpected expression after keyword list. Keyword lists must always come last in lists and maps. Therefore, this is not allowed:\n\n" <>
+               "    [some: :value, :another]\n" <>
+               "    %{some: :value, another => value}\n\n" <>
+               "Instead, reorder it to be the last entry:\n\n" <>
+               "    [:another, some: :value]\n" <>
+               "    %{another => value, some: :value}\n\n" <>
+               "Syntax error after: ", "','"}
+
+          _ ->
+            token_display = token_display(kind, value)
+            {location, "syntax error before: ", token_display}
+        end
+
+      _ ->
+        {[], "syntax error before: ", ""}
+    end
+  end
+
+  defp handle_invalid_kw_tail_error_at(meta) do
+    location = Keyword.take(meta, [:line, :column])
+
+    {location,
+     "unexpected expression after keyword list. Keyword lists must always come last in lists and maps. Therefore, this is not allowed:\n\n" <>
+       "    [some: :value, :another]\n" <>
+       "    %{some: :value, another => value}\n\n" <>
+       "Instead, reorder it to be the last entry:\n\n" <>
+       "    [:another, some: :value]\n" <>
+       "    %{another => value, some: :value}\n\n" <>
+       "Syntax error after: ", "','"}
+  end
+
+  defp meta_location({{line, column}, _, _}), do: [line: line, column: column]
+  defp meta_location(_), do: []
+
+  defp token_display(:atom, value), do: inspect(value)
+  defp token_display(_kind, value) when is_atom(value), do: "'#{value}'"
+  defp token_display(_kind, value) when is_binary(value), do: "'#{value}'"
+  defp token_display(kind, _value), do: "'#{kind}'"
 end

@@ -87,6 +87,19 @@ defmodule ToxicParser.Grammar.Calls do
           kind == :op_identifier ->
             parse_op_identifier_call(tok, state, cursor, ctx, log)
 
+          # Identifier with space before paren is a strict error only when the parens
+          # contain multiple args or keyword args.
+          next_kind == :"(" and kind != :paren_identifier ->
+            case spaced_paren_needs_strict_error?(state, cursor) do
+              {true, meta} ->
+                {:error,
+                 NoParensErrors.error_no_parens_strict(Keyword.take(meta, [:line, :column])),
+                 state, cursor, log}
+
+              :ok ->
+                parse_no_parens_call(tok, state, cursor, ctx, log)
+            end
+
           # Binary operator or dot operator follows - let Pratt handle expression
           Pratt.bp(next_kind) != nil or next_kind in [:., :dot_call_op] ->
             {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
@@ -411,7 +424,12 @@ defmodule ToxicParser.Grammar.Calls do
                     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
                     arg_context = Context.no_parens_expr()
 
-                    case Pratt.parse_with_min_bp(state, cursor, arg_context, log, 0,
+                    case Pratt.parse_with_min_bp(
+                           state,
+                           cursor,
+                           arg_context,
+                           log,
+                           0,
                            ParseOpts.stop_at_assoc()
                          ) do
                       {:ok, arg, state, cursor, log} ->
@@ -597,7 +615,12 @@ defmodule ToxicParser.Grammar.Calls do
     # Use stop_at_assoc: true to prevent => from being consumed - it's only valid in maps
     # elixir_parser.yrl: call_args_no_parens_ambig -> no_parens_expr
     with {:ok, first_arg, state, cursor, log} <-
-           Pratt.parse_with_min_bp(state, cursor, Context.no_parens_expr(), log, 0,
+           Pratt.parse_with_min_bp(
+             state,
+             cursor,
+             Context.no_parens_expr(),
+             log,
+             0,
              ParseOpts.stop_at_assoc()
            ) do
       case Cursor.peek(cursor) do
@@ -639,6 +662,46 @@ defmodule ToxicParser.Grammar.Calls do
       meta = TokenAdapter.token_meta(callee_tok)
       ast = {callee, meta, args}
       DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
+    end
+  end
+
+  defp spaced_paren_needs_strict_error?(state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    {:ok, open_tok, checkpoint_state, cursor} = TokenAdapter.next(checkpoint_state, cursor)
+    open_meta = TokenAdapter.token_meta(open_tok)
+    {checkpoint_state, cursor, _newlines} = EOE.skip_count_newlines(checkpoint_state, cursor, 0)
+
+    result =
+      case Cursor.peek(cursor) do
+        {:ok, {:")", _meta, _value}, _cursor} ->
+          :ok
+
+        {:ok, _token, cursor} ->
+          case Expressions.expr(checkpoint_state, cursor, Context.matched_expr(), EventLog.new()) do
+            {:ok, _arg, checkpoint_state, cursor, _log} ->
+              {_checkpoint_state, cursor} = EOE.skip(checkpoint_state, cursor)
+
+              case Cursor.peek(cursor) do
+                {:ok, {:",", _meta, _value}, _cursor} ->
+                  {:strict_error, open_meta}
+
+                _ ->
+                  :ok
+              end
+
+            {:error, _reason, _checkpoint_state, _cursor, _log} ->
+              {:strict_error, open_meta}
+          end
+      end
+
+    case result do
+      :ok ->
+        {_state, _cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+        :ok
+
+      {:strict_error, meta} ->
+        {_state, _cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+        {true, meta}
     end
   end
 end

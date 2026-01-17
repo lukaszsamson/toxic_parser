@@ -212,6 +212,11 @@ defmodule ToxicParser do
       {:eof, _cursor} ->
         :ok
 
+      {:ok, {kind, _meta, _value}, _cursor}
+      when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
+        {:error, ToxicParser.Grammar.Keywords.invalid_kw_identifier_error(state, cursor, kind),
+         state}
+
       {:ok, token, _cursor} ->
         {:error, {:syntax_error_before, format_token(token)}, state}
 

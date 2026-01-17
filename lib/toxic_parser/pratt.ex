@@ -296,7 +296,7 @@ defmodule ToxicParser.Pratt do
 
       # kw_identifier at expression position is a syntax error
       :kw_identifier ->
-        {:error, syntax_error_before(TokenAdapter.token_meta(token), token_value), state, cursor,
+        {:error, Keywords.invalid_kw_identifier_error(state, cursor, token_kind), state, cursor,
          log}
 
       _ ->
@@ -1956,7 +1956,7 @@ defmodule ToxicParser.Pratt do
   # From elixir_parser.yrl: build_dot_alias(_Dot, Atom, Right) when is_atom(Atom) -> error_bad_atom(Right)
   defp build_dot_alias(left_expr, _rhs_alias, _rhs_meta, dot_meta)
        when is_atom(left_expr) do
-    {:error, {:atom_followed_by_alias, dot_meta}}
+    {:error, atom_followed_by_alias_error(dot_meta)}
   end
 
   # When left is some other expression, wrap both in __aliases__
@@ -2447,9 +2447,7 @@ defmodule ToxicParser.Pratt do
       encoder when is_function(encoder, 2) ->
         case encoder.(value, meta) do
           {:ok, encoded} -> encoded
-          # For error case, we just return the value unchanged
-          # The error should be handled by the caller in strict mode
-          {:error, _reason} -> value
+          {:error, reason} -> {:literal_encoder_error, reason, meta}
         end
     end
   end
@@ -2568,7 +2566,7 @@ defmodule ToxicParser.Pratt do
   defp syntax_error_before(meta, token_value) when is_atom(token_value) do
     line = Keyword.get(meta, :line, 1)
     column = Keyword.get(meta, :column, 1)
-    {[line: line, column: column], "syntax error before: ", to_string(token_value)}
+    {[line: line, column: column], "syntax error before: ", "'#{token_value}'"}
   end
 
   defp syntax_error_before(meta, token_value) when is_binary(token_value) do
@@ -2590,8 +2588,19 @@ defmodule ToxicParser.Pratt do
     column = Keyword.get(meta, :column, 1)
 
     {[line: line, column: column],
-     "the range step operator (//) must immediately follow the range definition operator (..), for example: 1..9//2. If you wanted to define a default argument, use (\\) instead. Syntax error before: ",
+     "the range step operator (//) must immediately follow the range definition operator (..), for example: 1..9//2. If you wanted to define a default argument, use (\\\\) instead. Syntax error before: ",
      "'//'"}
+  end
+
+  defp atom_followed_by_alias_error(dot_meta) do
+    location =
+      dot_meta
+      |> Keyword.take([:line, :column])
+      |> Keyword.update(:column, 1, &(&1 + 1))
+
+    {location,
+     "atom cannot be followed by an alias. If the '.' was meant to be part of the atom's name, the atom name must be quoted. Syntax error before: ",
+     "'.'"}
   end
 
   # Check if AST can receive a paren call in led()

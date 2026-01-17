@@ -484,11 +484,88 @@ defmodule ToxicParser.Grammar.Keywords do
       "Syntax error after: "
   end
 
+  def invalid_kw_identifier_error(_state, cursor, kind) do
+    {meta, value} =
+      case Cursor.peek(cursor) do
+        {:ok, {_, meta, value}, _cursor} -> {meta, value}
+        _ -> {[], ""}
+      end
+
+    token_display = format_kw_identifier_token(kind, value)
+    location = meta_location(meta)
+
+    case kind do
+      :kw_identifier ->
+        {location, invalid_kw_identifier_message(value), token_display}
+
+      :kw_identifier_safe ->
+        {location, "syntax error before: ", token_display}
+
+      :kw_identifier_unsafe ->
+        {location, "syntax error before: ", token_display}
+
+      _ ->
+        {location, "syntax error before: ", token_display}
+    end
+  end
+
+  defp invalid_kw_identifier_message(:do) do
+    {"unexpected keyword: ",
+     ". In case you wanted to write a \"do\" expression, you must either use do-blocks or separate the keyword argument with comma. For example, you should either write:\n\n" <>
+       "    if some_condition? do\n" <>
+       "      :this\n" <>
+       "    else\n" <>
+       "      :that\n" <>
+       "    end\n\n" <>
+       "or the equivalent construct:\n\n" <>
+       "    if(some_condition?, do: :this, else: :that)\n\n" <>
+       "where \"some_condition?\" is the first argument and the second argument is a keyword list.\n\n" <>
+       "You may see this error if you forget a trailing comma before the \"do\" in a \"do\" block"}
+  end
+
+  defp invalid_kw_identifier_message(_), do: "syntax error before: "
+
+  defp kw_tail_follow_up_error(meta) do
+    location = Keyword.take(meta, [:line, :column])
+
+    {location,
+     "unexpected expression after keyword list. Keyword lists must always come last in lists and maps. Therefore, this is not allowed:\n\n" <>
+       "    [some: :value, :another]\n" <>
+       "    %{some: :value, another => value}\n\n" <>
+       "Instead, reorder it to be the last entry:\n\n" <>
+       "    [:another, some: :value]\n" <>
+       "    %{another => value, some: :value}\n\n" <>
+       "Syntax error after: ", "','"}
+  end
+
+  defp meta_location({{line, column}, _, _}), do: [line: line, column: column]
+  defp meta_location(_), do: []
+
+  defp format_kw_identifier_token(:kw_identifier, value) when is_atom(value) or is_binary(value),
+    do: "#{value}:"
+
+  defp format_kw_identifier_token(:kw_identifier, value), do: "#{inspect(value)}:"
+
+  defp format_kw_identifier_token(:kw_identifier_safe, value)
+       when is_atom(value) or is_binary(value),
+       do: "#{value}:"
+
+  defp format_kw_identifier_token(:kw_identifier_safe, value), do: "#{inspect(value)}:"
+
+  defp format_kw_identifier_token(:kw_identifier_unsafe, value)
+       when is_atom(value) or is_binary(value),
+       do: "#{value}:"
+
+  defp format_kw_identifier_token(:kw_identifier_unsafe, value), do: "#{inspect(value)}:"
+  defp format_kw_identifier_token(_kind, value) when is_atom(value), do: "'#{value}'"
+  defp format_kw_identifier_token(_kind, value) when is_binary(value), do: "'#{value}'"
+  defp format_kw_identifier_token(_kind, value), do: inspect(value)
+
   defp parse_kw_list(acc, state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
     case parse_kw_pair(state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
       {:ok, pair, state, cursor, log} ->
         case Cursor.peek(cursor) do
-          {:ok, {:",", _meta, _value}, cursor} ->
+          {:ok, {:",", _meta, _value} = comma_tok, cursor} ->
             {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
             # Check for trailing comma - if next is a terminator, stop
             case Cursor.peek(cursor) do
@@ -496,17 +573,22 @@ defmodule ToxicParser.Grammar.Keywords do
               when kind in [:eol, :";", :")", :"]", :"}", :">>"] ->
                 {:ok, Enum.reverse([pair | acc]), state, cursor, log}
 
-              {:ok, _, cursor} ->
-                parse_kw_list(
-                  [pair | acc],
-                  state,
-                  cursor,
-                  ctx,
-                  log,
-                  min_bp,
-                  value_ctx,
-                  error_kind
-                )
+              {:ok, {_kind, _meta, _value} = next_tok, cursor} ->
+                if error_kind == :container and not starts_kw_or_quoted_key?(next_tok) do
+                  meta = TokenAdapter.token_meta(comma_tok)
+                  {:error, kw_tail_follow_up_error(meta), state, cursor, log}
+                else
+                  parse_kw_list(
+                    [pair | acc],
+                    state,
+                    cursor,
+                    ctx,
+                    log,
+                    min_bp,
+                    value_ctx,
+                    error_kind
+                  )
+                end
             end
 
           {:ok, _, cursor} ->
@@ -551,7 +633,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
           {:ok, _ast, state, cursor, _log} ->
             # It was a regular string, not a keyword key
-            {:error, {:expected, :keyword, got: kind}, state, cursor, log}
+            {:error, invalid_kw_identifier_error(state, cursor, kind), state, cursor, log}
 
           {:error, reason, state, cursor, log} ->
             {:error, reason, state, cursor, log}
@@ -559,7 +641,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
       {:ok, {kind, _meta, _value}, cursor} ->
         {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
-        {:error, {:expected, :keyword, got: kind}, state, cursor, log}
+        {:error, invalid_kw_identifier_error(state, cursor, kind), state, cursor, log}
 
       {:eof, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}

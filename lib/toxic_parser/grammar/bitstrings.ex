@@ -90,7 +90,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
       # <<foo: :bar>> is invalid - bitstrings cannot start with keyword data
       case tagged_items do
         [{:kw_data, _} | _] ->
-          {:error, :unexpected_keyword_list_in_binary, state, cursor, log}
+          {:error, unexpected_keyword_list_error(:bitstring, open_meta), state, cursor, log}
 
         _ ->
           case TokenAdapter.next(state, cursor) do
@@ -128,5 +128,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
       _ ->
         Enum.map(tagged_items, fn {:expr, expr} -> expr end)
     end
+  end
+
+  defp unexpected_keyword_list_error(context, meta) do
+    location = Keyword.take(meta, [:line, :column])
+    start_token = if context == :bitstring, do: "'<<'", else: "'{'"
+
+    {location,
+     "unexpected keyword list inside #{context}. Did you mean to write a map (using %{...}) or a list (using [...]) instead? Syntax error after: ",
+     start_token}
   end
 end
