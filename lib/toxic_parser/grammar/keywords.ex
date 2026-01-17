@@ -136,7 +136,10 @@ defmodule ToxicParser.Grammar.Keywords do
     # elixir_parser.yrl: kw_base -> kw_eol container_expr
     # For stab patterns, allow no_parens values (error_kind = nil skips validation)
     error_kind = if Keyword.get(opts, :allow_no_parens, false), do: nil, else: :many
-    parse_kw_list([], state, cursor, ctx, log, 0, Context.container_expr(), error_kind)
+
+    parse_kw_list([], state, cursor, ctx, log, 0, Context.container_expr(), error_kind,
+      warn_trailing_comma?: true
+    )
   end
 
   @doc "Parses a keyword list with a minimum binding power constraint."
@@ -159,7 +162,10 @@ defmodule ToxicParser.Grammar.Keywords do
       ) do
     # For stab patterns, allow no_parens values (error_kind = nil skips validation)
     error_kind = if Keyword.get(opts, :allow_no_parens, false), do: nil, else: :many
-    parse_kw_list([], state, cursor, ctx, log, min_bp, Context.container_expr(), error_kind)
+
+    parse_kw_list([], state, cursor, ctx, log, min_bp, Context.container_expr(), error_kind,
+      warn_trailing_comma?: true
+    )
   end
 
   @doc "Parses a keyword list usable in no-parens call argument position (call_args_no_parens_kw)."
@@ -193,7 +199,9 @@ defmodule ToxicParser.Grammar.Keywords do
           result()
   def parse_kw_data(%State{} = state, cursor, %Context{} = ctx, %EventLog{} = log) do
     # elixir_parser.yrl: kw_base -> kw_eol container_expr
-    parse_kw_list([], state, cursor, ctx, log, 0, Context.container_expr(), :container)
+    parse_kw_list([], state, cursor, ctx, log, 0, Context.container_expr(), :container,
+      warn_trailing_comma?: false
+    )
   end
 
   @doc """
@@ -562,7 +570,7 @@ defmodule ToxicParser.Grammar.Keywords do
   defp format_kw_identifier_token(_kind, value) when is_binary(value), do: "'#{value}'"
   defp format_kw_identifier_token(_kind, value), do: inspect(value)
 
-  defp parse_kw_list(acc, state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
+  defp parse_kw_list(acc, state, cursor, ctx, log, min_bp, value_ctx, error_kind, opts) do
     case parse_kw_pair(state, cursor, ctx, log, min_bp, value_ctx, error_kind) do
       {:ok, pair, state, cursor, log} ->
         case Cursor.peek(cursor) do
@@ -572,7 +580,33 @@ defmodule ToxicParser.Grammar.Keywords do
             case Cursor.peek(cursor) do
               {:ok, {kind, _meta, _value}, cursor}
               when kind in [:eol, :";", :")", :"]", :"}", :">>"] ->
-                {:ok, Enum.reverse([pair | acc]), state, cursor, log}
+                if Keyword.get(opts, :warn_trailing_comma?, false) and state.emit_warnings? do
+                  meta = TokenAdapter.token_meta(comma_tok)
+
+                  warning = %ToxicParser.Warning{
+                    code: :trailing_comma,
+                    message:
+                      "trailing commas are not allowed inside function/macro call arguments",
+                    range: %{
+                      start: %{
+                        line: Keyword.get(meta, :line, 1),
+                        column: Keyword.get(meta, :column, 1),
+                        offset: 0
+                      },
+                      end: %{
+                        line: Keyword.get(meta, :line, 1),
+                        column: Keyword.get(meta, :column, 1),
+                        offset: 0
+                      }
+                    },
+                    details: %{}
+                  }
+
+                  state = %{state | warnings: [warning | state.warnings]}
+                  {:ok, Enum.reverse([pair | acc]), state, cursor, log}
+                else
+                  {:ok, Enum.reverse([pair | acc]), state, cursor, log}
+                end
 
               {:ok, {_kind, _meta, _value} = next_tok, cursor} ->
                 if error_kind == :container and not starts_kw_or_quoted_key?(next_tok) do
@@ -587,7 +621,8 @@ defmodule ToxicParser.Grammar.Keywords do
                     log,
                     min_bp,
                     value_ctx,
-                    error_kind
+                    error_kind,
+                    opts
                   )
                 end
             end

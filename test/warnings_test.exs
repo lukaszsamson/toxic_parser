@@ -32,7 +32,6 @@ defmodule ToxicParser.WarningsTest do
     """)
   end
 
-  @tag :skip
   test "trailing comma in call" do
     assert_warning_conforms("Keyword.merge([], foo: 1,)")
   end
