@@ -122,6 +122,8 @@ details: %{
 - IDs are unique within a single parse result and reset between parses.
 - If the AST uses the recommended structured error payload, `payload.diag_id` MUST equal `details.id` for the corresponding diagnostic.
 
+**Structured payload default (V1):** the default error node payload SHOULD be the structured map described in 3.3. Opaque payloads are supported only for legacy compatibility.
+
 **Range rules (V1):**
 
 - Lexer diagnostics MUST use the lexer token’s `meta` range when available.
@@ -185,6 +187,8 @@ To satisfy “errors must be constrained to source regions and tree subnodes”,
   - `[:root, {:list, 1}]`
   - `[:root, {:map_kv, 0}, :key]`
 
+**Root anchoring (V1):** `anchor.kind == :root` is only for trivia-only errors or empty-statement separators (e.g., invalid comments when comments are not preserved, consecutive `;` after lexer recovery). All other errors must anchor to an error node or existing node metadata.
+
 V1 does not require a globally unique node id. The “path” is sufficient for IDE anchoring and can be built by a post-walk over the produced AST.
 
 **Clarification (V1):** `anchor.path` is produced by a **post-parse traversal** over the final AST (not during streaming parse). The parser core only needs to ensure an error is anchored to a subnode via either an error node insertion or node metadata.
@@ -196,13 +200,13 @@ When the parser must create placeholders to keep an AST shape usable, those node
 **V1 rule:** synthetic nodes:
 
 - MUST include standard `line:` / `column:` metadata as an anchor point for compatibility with AST tooling. These anchors are insertion points, not source spans.
-- MUST NOT claim real spans via metadata (do not add `:end_line` / `:end_column` or other range-like fields).
+- MUST NOT claim real spans via metadata (do not add `:end_line` / `:end_column` or other range-like fields, including `:closing`, `:end_of_expression`, or other derived range metadata).
 - MUST be explicitly marked as synthetic via `meta[:toxic] = %{synthetic?: true, anchor: %{line: L, column: C}}`.
 - MUST have a corresponding diagnostic with `details.synthetic? = true` and a **zero-length** diagnostic range (`start == end`).
 
 The lexer may also synthesize tokens (structural closers/openers). Those are **not parser-synthetic** and retain their lexer meta, but are marked “synthesized” by zero-length meta (`start == end`).
 
-**Synthesized token detection (V1):** lexer-synthesized tokens can be identified by zero-length token meta where `start == end` (or by derived metadata such as `TokenAdapter.full_metadata(...).synthesized?` when available).
+**Synthesized token detection (V1):** lexer-synthesized tokens are identified by zero-length token meta where `start == end`. Derived metadata such as `TokenAdapter.full_metadata(...).synthesized?` is optional and should be treated as additive when available.
 
 Consumer guidance (V1): tooling must use `meta[:toxic][:synthetic?]` (when present) to distinguish synthetic nodes; the presence of `line/column` alone is not meaningful.
 
@@ -256,7 +260,7 @@ Recovery MUST avoid consuming the container’s closing delimiter as “skipped 
 
 Implementation note: V1 requires recovery hooks in container/string/call parsing paths (e.g., delimited element loops), not only at the top-level `expr_list` boundary.
 
-Recovery operates “innermost first”: an error in a nested construct should be contained at the smallest recoverable scope, and the resulting error node becomes the surrounding element/argument. Multiple consecutive failing elements each get their own error node.
+Recovery operates “innermost first”: an error in a nested construct should be contained at the smallest recoverable scope, and the resulting error node becomes the surrounding element/argument. Multiple consecutive failing elements each get their own error node. Prefer the smallest enclosing construct’s sync set; only fall back to outer sync when the inner scope cannot advance.
 
 ### 4.4 String-scoped recovery (required)
 
@@ -264,7 +268,7 @@ String-like constructs (strings, charlists, heredocs, sigils, quoted atoms/ident
 
 V1 rules:
 
-1. If the lexer emits `:error_token` while parsing a string-like construct, the parser SHOULD prefer producing a **partial literal** with an embedded `ErrNode` when the lexer provides enough part tokens to continue.
+1. If the lexer emits `:error_token` while parsing a string-like construct, the parser SHOULD prefer producing a **partial literal** with an embedded `ErrNode` when the lexer provides enough fragment/segment tokens to continue.
 2. Otherwise, replace the entire literal with a single `ErrNode`.
 3. If the lexer synthesizes a terminator (`*_end`, `:end_interpolation`, `:sigil_end`), the parser MUST treat it as a valid closing token for the construct and then continue parsing following tokens normally.
 4. String-local errors MUST NOT also produce redundant parser-phase “unexpected EOF/missing terminator” diagnostics when the lexer already provided an equivalent lexer diagnostic.
@@ -275,7 +279,7 @@ V1 rules:
 {:<<>>, meta, ["prefix", {:__error__, err_meta, %{diag_id: 1, kind: :token, ...}}, "suffix"]}
 ```
 
-If the lexer cannot provide recoverable fragments, replace the whole literal with a single `{:__error__, ..., ...}`.
+For charlists/heredocs, embed the `ErrNode` using the literal’s existing part encoding (binary vs. charlist parts). If the lexer cannot provide recoverable fragments, replace the whole literal with a single `{:__error__, ..., ...}`.
 
 ### 4.5 Checkpoints and backtracking
 
@@ -337,8 +341,8 @@ Notation:
 
 4. **fn without -> clauses** (`"fn 1 end"`)
    - Diag anchored at `fn`.
-   - AST option A (preferred): build an `{:fn, ..., clauses}` node with one **synthetic** clause:
-     - `{:->, meta(toxic.synthetic), [[], [Keep(1)]]}`
+   - AST option A (preferred): build an `{:fn, ..., clauses}` node with one **synthetic** clause. Example:
+     - `{:->, [toxic: %{synthetic?: true, anchor: %{line: L, column: C}}], [[], [Keep(1)]]}`
      - attach diag to the `fn` node (node-meta anchor) or emit an `ErrNode` as the only clause body.
    - Sync: consume through matching `end` (using lexer-synthesized `end` if needed).
 
