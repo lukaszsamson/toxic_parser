@@ -36,7 +36,6 @@ defmodule ToxicParser.WarningsTest do
     assert_warning_conforms("Keyword.merge([], foo: 1,)")
   end
 
-  @tag :skip
   test "empty parentheses expression" do
     assert_warning_conforms("()")
   end

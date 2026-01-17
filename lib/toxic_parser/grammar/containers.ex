@@ -167,6 +167,7 @@ defmodule ToxicParser.Grammar.Containers do
         ]
 
         ast = {:__block__, parens_meta, []}
+        state = maybe_warn_empty_paren(state, open_meta)
         Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
 
       # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
@@ -324,6 +325,34 @@ defmodule ToxicParser.Grammar.Containers do
       # Continue with Pratt's led() to handle trailing operators like <-, =, etc.
       Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
     end
+  end
+
+  defp maybe_warn_empty_paren(%State{} = state, _open_meta) when state.emit_warnings? == false do
+    state
+  end
+
+  defp maybe_warn_empty_paren(state, open_meta) do
+    warning = %ToxicParser.Warning{
+      code: :empty_paren,
+      message:
+        "invalid expression (). If you want to invoke or define a function, make sure there are no spaces between the function name and its arguments. " <>
+          "If you wanted to pass an empty block or code, pass a value instead, such as a nil or an atom",
+      range: %{
+        start: %{
+          line: Keyword.get(open_meta, :line, 1),
+          column: Keyword.get(open_meta, :column, 1),
+          offset: 0
+        },
+        end: %{
+          line: Keyword.get(open_meta, :line, 1),
+          column: Keyword.get(open_meta, :column, 1),
+          offset: 0
+        }
+      },
+      details: %{}
+    }
+
+    %{state | warnings: [warning | state.warnings]}
   end
 
   # Parse tuple without calling Pratt.led - used when caller controls led binding
