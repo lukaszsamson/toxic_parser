@@ -678,6 +678,7 @@ defmodule ToxicParser.Grammar.Keywords do
         {:error, error, state, cursor, log}
       else
         key_ast = Builder.Helpers.literal(key, key_meta, state)
+        state = maybe_warn_nested_no_parens_keyword(state, key_ast, value_ast)
         {:ok, {key_ast, value_ast}, state, cursor, log}
       end
     end
@@ -720,8 +721,74 @@ defmodule ToxicParser.Grammar.Keywords do
       else
         # Build interpolated key AST
         key_ast = Expressions.build_interpolated_keyword_key(parts, kind, start_meta, delimiter)
+        state = maybe_warn_nested_no_parens_keyword(state, key_ast, value_ast)
         {:ok, {key_ast, value_ast}, state, cursor, log}
       end
     end
   end
+
+  defp maybe_warn_nested_no_parens_keyword(
+         %State{} = state,
+         _key_ast,
+         _value_ast
+       )
+       when state.emit_warnings? == false do
+    state
+  end
+
+  defp maybe_warn_nested_no_parens_keyword(state, key_ast, value_ast) do
+    if ExprClass.classify(value_ast) == :no_parens do
+      warning = %ToxicParser.Warning{
+        code: :missing_parens_in_keyword,
+        message: build_nested_no_parens_keyword_message(key_ast, value_ast),
+        range: warning_range_from_value(value_ast),
+        details: %{}
+      }
+
+      %{state | warnings: [warning | state.warnings]}
+    else
+      state
+    end
+  end
+
+  defp build_nested_no_parens_keyword_message(key_ast, _value_ast) do
+    key_text = key_to_string(key_ast)
+
+    "missing parentheses for expression following \"#{key_text}:\" keyword. " <>
+      "Parentheses are required to solve ambiguity inside keywords.\n\n" <>
+      "This error happens when you have function calls without parentheses inside keywords. " <>
+      "For example:\n\n" <>
+      "    function(arg, one: nested_call a, b, c)\n" <>
+      "    function(arg, one: if expr, do: :this, else: :that)\n\n" <>
+      "In the examples above, we don't know if the arguments \"b\" and \"c\" apply " <>
+      "to the function \"function\" or \"nested_call\". Or if the keywords \"do\" and " <>
+      "\"else\" apply to the function \"function\" or \"if\". You can solve this by " <>
+      "explicitly adding parentheses:\n\n" <>
+      "    function(arg, one: if(expr, do: :this, else: :that))\n" <>
+      "    function(arg, one: nested_call(a, b, c))\n\n" <>
+      "Ambiguity found at:"
+  end
+
+  defp key_to_string({atom, _meta, _}) when is_atom(atom), do: Atom.to_string(atom)
+  defp key_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)
+
+  defp key_to_string({{:., _meta, _}, _call_meta, _args} = ast),
+    do: Macro.to_string(ast)
+
+  defp key_to_string(other), do: Macro.to_string(other)
+
+  defp warning_range_from_value(value_ast) do
+    meta = extract_meta(value_ast)
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+
+    %{
+      start: %{line: line, column: column, offset: 0},
+      end: %{line: line, column: column, offset: 0}
+    }
+  end
+
+  defp extract_meta({_name, meta, _args}) when is_list(meta), do: meta
+  defp extract_meta({_name, meta}) when is_list(meta), do: meta
+  defp extract_meta(_), do: []
 end

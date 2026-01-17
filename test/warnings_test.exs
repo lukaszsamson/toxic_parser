@@ -24,7 +24,6 @@ defmodule ToxicParser.WarningsTest do
     """)
   end
 
-  @tag :skip
   test "missing parens inside keyword" do
     assert_warning_conforms("""
     quote do
