@@ -16,7 +16,7 @@ defmodule ToxicParser.Result do
           events: [EventLog.event()],
           env: term(),
           diagnostics: [Error.t()],
-          warnings: [Toxic.Warning.t()],
+          warnings: [ToxicParser.Warning.t() | Toxic.Warning.t()],
           metadata: map()
         }
 

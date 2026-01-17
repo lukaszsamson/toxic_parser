@@ -3,12 +3,10 @@ defmodule ToxicParser.WarningsTest do
 
   use ExUnit.Case, async: true
 
-  @tag :skip
   test "deprecated not expr1 in expr2" do
     assert_warning_conforms("not left in right")
   end
 
-  @tag :skip
   test "ambiguous pipe into call" do
     assert_warning_conforms("""
     [5, 6, 7, 3]

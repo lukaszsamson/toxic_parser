@@ -24,6 +24,7 @@ defmodule ToxicParser.State do
           warnings: [ToxicParser.Warning.t()],
           mode: mode(),
           emit_events?: boolean(),
+          emit_warnings?: boolean(),
           opts: keyword(),
           fuel: pos_integer() | :infinity,
           expression_context: expression_context(),
@@ -40,6 +41,7 @@ defmodule ToxicParser.State do
             warnings: [],
             mode: :strict,
             emit_events?: false,
+            emit_warnings?: false,
             opts: [],
             fuel: :infinity,
             expression_context: Context.expr(),
@@ -60,6 +62,7 @@ defmodule ToxicParser.State do
     source_bin = if is_binary(source), do: source, else: List.to_string(source)
     max_peek = Keyword.get(opts, :max_peek, 4)
     emit_events? = Keyword.get(opts, :emit_events, false)
+    emit_warnings? = Keyword.get(opts, :emit_warnings, false)
 
     cursor_opts = [
       mode: mode,
@@ -77,6 +80,7 @@ defmodule ToxicParser.State do
     {%__MODULE__{
        mode: mode,
        emit_events?: emit_events?,
+       emit_warnings?: emit_warnings?,
        opts: opts,
        fuel: Keyword.get(opts, :fuel_limit, :infinity),
        expression_context: ctx,

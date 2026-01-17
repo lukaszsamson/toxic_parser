@@ -14,7 +14,8 @@ defmodule ToxicParser.ParseOpts do
           allow_no_parens_extension?: boolean(),
           allows_bracket: boolean(),
           stop_at_assoc: boolean(),
-          stop_at_comma: boolean()
+          stop_at_comma: boolean(),
+          emit_warnings?: boolean()
         }
 
   defstruct min_bp: 0,
@@ -24,7 +25,8 @@ defmodule ToxicParser.ParseOpts do
             allow_no_parens_extension?: true,
             allows_bracket: true,
             stop_at_assoc: false,
-            stop_at_comma: false
+            stop_at_comma: false,
+            emit_warnings?: false
 
   @doc """
   Returns ParseOpts with stop_at_assoc: true.

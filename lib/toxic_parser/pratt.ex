@@ -133,7 +133,12 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse_base(State.t(), Cursor.t(), context(), EventLog.t()) :: result()
   def parse_base(%State{} = state, cursor, %Context{} = context, %EventLog{} = log) do
-    parse_opts = %ParseOpts{min_bp: 10000, allow_containers: false, string_min_bp: 10000}
+    parse_opts = %ParseOpts{
+      min_bp: 10000,
+      allow_containers: false,
+      string_min_bp: 10000,
+      emit_warnings?: state.emit_warnings?
+    }
 
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
          {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
@@ -155,7 +160,12 @@ defmodule ToxicParser.Pratt do
         %Context{} = context,
         %EventLog{} = log
       ) do
-    parse_opts = %ParseOpts{min_bp: 10000, allow_containers: false, string_min_bp: 10000}
+    parse_opts = %ParseOpts{
+      min_bp: 10000,
+      allow_containers: false,
+      string_min_bp: 10000,
+      emit_warnings?: state.emit_warnings?
+    }
 
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
          {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
@@ -189,7 +199,12 @@ defmodule ToxicParser.Pratt do
         %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
     # Update opts with min_bp for this parse level
-    parse_opts = %{opts | min_bp: min_bp, string_min_bp: min_bp}
+    parse_opts = %{
+      opts
+      | min_bp: min_bp,
+        string_min_bp: min_bp,
+        emit_warnings?: state.emit_warnings?
+    }
 
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
          {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
@@ -1189,6 +1204,7 @@ defmodule ToxicParser.Pratt do
         %Context{} = context,
         %ParseOpts{} = opts \\ %ParseOpts{}
       ) do
+    opts = %{opts | emit_warnings?: state.emit_warnings?}
     # Check if there's EOE followed by a continuation operator
     # Only skip EOE when it precedes an operator that can continue the expression
     # This preserves EOE as separators for expr_list (e.g., "1;2" should not skip the ";")
@@ -1688,12 +1704,21 @@ defmodule ToxicParser.Pratt do
     token_leading_newlines = TokenAdapter.newlines(op_token)
 
     # For pipe_op, prefer newlines before the operator (for map update syntax)
+    # For in_op, use newlines before the operator when there are no trailing newlines
     # For other operators, use newlines after the operator
     effective_newlines =
-      if op_kind == :pipe_op and newlines_before_op > 0 do
-        newlines_before_op
-      else
-        if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
+      cond do
+        op_kind == :pipe_op and newlines_before_op > 0 ->
+          newlines_before_op
+
+        op_kind == :in_op and newlines_after_op > 0 ->
+          newlines_after_op
+
+        op_kind == :in_op and newlines_before_op > 0 ->
+          newlines_before_op
+
+        true ->
+          if newlines_after_op > 0, do: newlines_after_op, else: token_leading_newlines
       end
 
     cond do
@@ -1719,7 +1744,8 @@ defmodule ToxicParser.Pratt do
               min_bp,
               effective_newlines,
               context,
-              log
+              log,
+              opts
             )
 
           {:error, reason, state, cursor, log} ->
@@ -1737,7 +1763,8 @@ defmodule ToxicParser.Pratt do
           min_bp,
           effective_newlines,
           context,
-          log
+          log,
+          opts
         )
 
       # Special case: assoc_op (=>) in map context needs to parse full expression as value
@@ -2146,7 +2173,8 @@ defmodule ToxicParser.Pratt do
          min_bp,
          newlines,
          context,
-         log
+         log,
+         opts
        ) do
     # Follow elixir_parser.yrl context-dependent RHS:
     # - matched_op_expr -> when_op_eol matched_expr
@@ -2178,15 +2206,15 @@ defmodule ToxicParser.Pratt do
 
           with {:ok, kw_list, state, cursor, log} <-
                  Keywords.parse_kw_no_parens_call(state, cursor, rhs_context, log) do
-            combined = build_binary_op(op_token, left, kw_list, newlines)
+            {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
             led(combined, state, cursor, log, min_bp, context)
           end
         else
           case parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp) do
             {:ok, right, state, cursor, log} ->
-              combined = build_binary_op(op_token, left, right, newlines)
+              {combined, state} = build_binary_op(op_token, left, right, newlines, state, opts)
               # Continuation uses original context
-              led(combined, state, cursor, log, min_bp, context)
+              led(combined, state, cursor, log, min_bp, context, opts)
 
             # String was a quoted keyword key - parse value and handle as keyword list RHS
             {:keyword_key, key_atom, key_meta, state, cursor, log} ->
@@ -2206,7 +2234,8 @@ defmodule ToxicParser.Pratt do
                   state,
                   cursor,
                   context,
-                  log
+                  log,
+                  opts
                 )
               end
 
@@ -2229,7 +2258,8 @@ defmodule ToxicParser.Pratt do
                   state,
                   cursor,
                   context,
-                  log
+                  log,
+                  opts
                 )
               end
 
@@ -2256,7 +2286,8 @@ defmodule ToxicParser.Pratt do
          state,
          cursor,
          context,
-         log
+         log,
+         opts
        ) do
     case Cursor.peek(cursor) do
       {:ok, {:",", _, _}, cursor} ->
@@ -2269,7 +2300,9 @@ defmodule ToxicParser.Pratt do
               Keywords.starts_kw?(tok) ->
                 with {:ok, more_kw, state, cursor, log} <-
                        Keywords.parse_kw_no_parens_call(state, cursor, context, log) do
-                  combined = build_binary_op(op_token, left, kw_list ++ more_kw, newlines)
+                  {combined, state} =
+                    build_binary_op(op_token, left, kw_list ++ more_kw, newlines, state, opts)
+
                   led(combined, state, cursor, log, min_bp, context)
                 end
 
@@ -2288,29 +2321,34 @@ defmodule ToxicParser.Pratt do
                       state,
                       cursor,
                       context,
-                      log
+                      log,
+                      opts
                     )
                   else
                     # Not a keyword - finalize current kw_list
-                    combined = build_binary_op(op_token, left, kw_list, newlines)
+                    {combined, state} =
+                      build_binary_op(op_token, left, kw_list, newlines, state, opts)
+
                     led(combined, state, cursor, log, min_bp, context)
                   end
                 end
 
               true ->
                 # Not a keyword - finalize
-                combined = build_binary_op(op_token, left, kw_list, newlines)
+                {combined, state} =
+                  build_binary_op(op_token, left, kw_list, newlines, state, opts)
+
                 led(combined, state, cursor, log, min_bp, context)
             end
 
           {:ok, _, cursor} ->
-            combined = build_binary_op(op_token, left, kw_list, newlines)
+            {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
             led(combined, state, cursor, log, min_bp, context)
         end
 
       {:ok, _, cursor} ->
-        combined = build_binary_op(op_token, left, kw_list, newlines)
-        led(combined, state, cursor, log, min_bp, context)
+        {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
+        led(combined, state, cursor, log, min_bp, context, opts)
     end
   end
 
@@ -2343,7 +2381,8 @@ defmodule ToxicParser.Pratt do
 
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
-          combined = build_binary_op(op_token, left, right, newlines)
+          state = maybe_warn_pipe(state, op_token, right, opts)
+          {combined, state} = build_binary_op(op_token, left, right, newlines, state, opts)
           # Continuation uses original context to allow further extension at outer level
           led(combined, state, cursor, log, min_bp, context, opts)
         end
@@ -2383,25 +2422,146 @@ defmodule ToxicParser.Pratt do
          {:in_op, _meta, {:"not in", in_location}} = op_token,
          left,
          right,
-         newlines
+         newlines,
+         %State{} = state,
+         %ParseOpts{} = _opts
+       ) do
+    not_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    in_meta = build_meta_from_location(in_location)
+    {{:not, not_meta, [{:in, in_meta, [left, right]}]}, state}
+  end
+
+  defp build_binary_op(
+         {:in_op, _meta, {:"not in", in_location}} = op_token,
+         left,
+         right,
+         newlines,
+         _state,
+         _opts
        ) do
     not_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     in_meta = build_meta_from_location(in_location)
     {:not, not_meta, [{:in, in_meta, [left, right]}]}
   end
 
-  # Deprecated "not expr1 in expr2" rewrite - when in_op follows {:not, _, [operand]} or {:!, _, [operand]}
-  # Rewrites to {:not, InMeta, [{:in, InMeta, [operand, right]}]} or {:!, InMeta, [{:in, InMeta, [operand, right]}]}
-  # Token format: {:in_op, meta, :in}
+  defp build_binary_op(
+         {:in_op, _meta, :in} = op_token,
+         {op, op_meta, [operand]},
+         right,
+         _newlines,
+         %State{} = state,
+         %ParseOpts{} = opts
+       )
+       when op in [:not, :!] do
+    state = maybe_warn_not_in_deprecated(state, op_token, {op, op_meta, [operand]}, right, opts)
+    in_meta = TokenAdapter.token_meta(op_token)
+    {{op, in_meta, [{:in, in_meta, [operand, right]}]}, state}
+  end
+
   defp build_binary_op(
          {:in_op, _meta, :in} = op_token,
          {op, _op_meta, [operand]},
          right,
-         _newlines
+         _newlines,
+         _state,
+         _opts
        )
        when op in [:not, :!] do
     in_meta = TokenAdapter.token_meta(op_token)
     {op, in_meta, [{:in, in_meta, [operand, right]}]}
+  end
+
+  defp maybe_warn_not_in_deprecated(
+         state,
+         _op_token,
+         _left,
+         _right,
+         %ParseOpts{emit_warnings?: false}
+       ) do
+    state
+  end
+
+  defp maybe_warn_not_in_deprecated(state, op_token, left, _right, %ParseOpts{}) do
+    emit_warning? = match?({:not, _, [_]}, left) or match?({:!, _, [_]}, left)
+
+    if emit_warning? do
+      meta = TokenAdapter.token_meta(op_token)
+
+      warning = %ToxicParser.Warning{
+        code: :deprecated_not_in,
+        message: "\"not expr1 in expr2\" is deprecated, use \"expr1 not in expr2\" instead",
+        range: %{
+          start: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          },
+          end: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          }
+        },
+        details: %{}
+      }
+
+      %{state | warnings: [warning | state.warnings]}
+    else
+      state
+    end
+  end
+
+  defp maybe_warn_pipe(
+         state,
+         _op_token,
+         _right,
+         %ParseOpts{emit_warnings?: false}
+       ) do
+    state
+  end
+
+  defp maybe_warn_pipe(state, {op_kind, _meta, op_value} = op_token, right, %ParseOpts{}) do
+    emit_warning? =
+      op_kind in [:pipe_op, :arrow_op] and ExprClass.classify(right) == :no_parens and
+        match?({_, [_ | _], [_ | _]}, right)
+
+    op_text =
+      case op_value do
+        value when is_atom(value) -> Atom.to_string(value)
+        value when is_binary(value) -> value
+        value -> to_string(value)
+      end
+
+    if emit_warning? do
+      meta = TokenAdapter.token_meta(op_token)
+
+      warning = %ToxicParser.Warning{
+        code: :ambiguous_pipe,
+        message:
+          "parentheses are required when piping into a function call. For example:\n\n" <>
+            "    foo 1 #{op_text} bar 2 #{op_text} baz 3\n\n" <>
+            "is ambiguous and should be written as\n\n" <>
+            "    foo(1) #{op_text} bar(2) #{op_text} baz(3)\n\n" <>
+            "Ambiguous pipe found at:",
+        range: %{
+          start: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          },
+          end: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          }
+        },
+        details: %{}
+      }
+
+      %{state | warnings: [warning | state.warnings]}
+    else
+      state
+    end
   end
 
   # Range ternary rewrite: a .. (b // c) -> a ..// b // c
@@ -2410,7 +2570,21 @@ defmodule ToxicParser.Pratt do
          {:range_op, _meta, _op} = op_token,
          left,
          {:"//", _meta2, [stop, step]},
-         newlines
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {{:..//, range_meta, [left, stop, step]}, state}
+  end
+
+  defp build_binary_op(
+         {:range_op, _meta, _op} = op_token,
+         left,
+         {:"//", _meta2, [stop, step]},
+         newlines,
+         _state,
+         _opts
        ) do
     range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     {:..//, range_meta, [left, stop, step]}
@@ -2419,12 +2593,50 @@ defmodule ToxicParser.Pratt do
   # Assoc operator (=>) - just build as normal binary op
   # Note: Elixir doesn't add any special metadata for => operator
   # Token format: {:assoc_op, meta, :"=>"}
-  defp build_binary_op({:assoc_op, _meta, _op} = op_token, left, right, newlines) do
+  defp build_binary_op(
+         {:assoc_op, _meta, _op} = op_token,
+         left,
+         right,
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {Builder.Helpers.binary(:"=>", left, right, op_meta), state}
+  end
+
+  defp build_binary_op(
+         {:assoc_op, _meta, _op} = op_token,
+         left,
+         right,
+         newlines,
+         _state,
+         _opts
+       ) do
     op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     Builder.Helpers.binary(:"=>", left, right, op_meta)
   end
 
-  defp build_binary_op({_kind, _meta, op} = op_token, left, right, newlines) do
+  defp build_binary_op(
+         {_kind, _meta, op} = op_token,
+         left,
+         right,
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {Builder.Helpers.binary(op, left, right, meta), state}
+  end
+
+  defp build_binary_op(
+         {_kind, _meta, op} = op_token,
+         left,
+         right,
+         newlines,
+         _state,
+         _opts
+       ) do
     meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
     Builder.Helpers.binary(op, left, right, meta)
   end

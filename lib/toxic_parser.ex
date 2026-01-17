@@ -30,6 +30,7 @@ defmodule ToxicParser do
           | {:preserve_comments, boolean()}
           | {:emit_events, boolean()}
           | {:emit_env, boolean()}
+          | {:emit_warnings, boolean()}
           | {:token_metadata, boolean()}
           | {:literal_encoder, (term(), Macro.metadata() -> term())}
           | {:existing_atoms_only, boolean()}
@@ -150,7 +151,7 @@ defmodule ToxicParser do
       ast: ast,
       comments: [],
       diagnostics: :lists.reverse(state.diagnostics, extra_diagnostics),
-      warnings: Enum.reverse(Cursor.warnings(cursor)),
+      warnings: Enum.reverse(state.warnings) ++ Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
       mode: mode,
@@ -178,7 +179,7 @@ defmodule ToxicParser do
       ast: ast,
       comments: [],
       diagnostics: Enum.reverse(state.diagnostics),
-      warnings: Enum.reverse(Cursor.warnings(cursor)),
+      warnings: Enum.reverse(state.warnings) ++ Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
       mode: mode,
