@@ -66,6 +66,7 @@ defmodule ToxicParser do
                 file: file,
                 source: source,
                 state: state,
+                cursor: cursor,
                 log: log,
                 emit_events?: emit_events?,
                 emit_env?: emit_env?
@@ -83,6 +84,7 @@ defmodule ToxicParser do
                 file: file,
                 source: source,
                 state: state,
+                cursor: cursor,
                 log: log,
                 emit_events?: emit_events?,
                 emit_env?: emit_env?,
@@ -92,7 +94,7 @@ defmodule ToxicParser do
             {:error, result}
         end
 
-      {:error, reason, state, _cursor, log} ->
+      {:error, reason, state, cursor, log} ->
         parser_diag = parser_error(reason, state)
 
         result =
@@ -102,6 +104,7 @@ defmodule ToxicParser do
             file: file,
             source: source,
             state: state,
+            cursor: cursor,
             log: log,
             emit_events?: emit_events?,
             emit_env?: emit_env?,
@@ -134,6 +137,7 @@ defmodule ToxicParser do
          file: file,
          source: source,
          state: state,
+         cursor: cursor,
          log: log,
          emit_events?: emit_events?,
          emit_env?: emit_env?,
@@ -146,6 +150,7 @@ defmodule ToxicParser do
       ast: ast,
       comments: [],
       diagnostics: :lists.reverse(state.diagnostics, extra_diagnostics),
+      warnings: Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
       mode: mode,
@@ -161,6 +166,7 @@ defmodule ToxicParser do
          file: file,
          source: source,
          state: state,
+         cursor: cursor,
          log: log,
          emit_events?: emit_events?,
          emit_env?: emit_env?
@@ -172,6 +178,7 @@ defmodule ToxicParser do
       ast: ast,
       comments: [],
       diagnostics: Enum.reverse(state.diagnostics),
+      warnings: Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
       mode: mode,

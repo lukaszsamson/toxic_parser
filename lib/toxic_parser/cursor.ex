@@ -20,8 +20,9 @@ defmodule ToxicParser.Cursor do
 
   # {rest, line, column, driver_hot, cfg, pending, last_token}
   # pending = merged lookahead + emitq for reduced tuple size
-  @opaque t :: {input(), pos_integer(), pos_integer(), driver_hot(), cfg(), list(token()),
-                last_token()}
+  @opaque t ::
+            {input(), pos_integer(), pos_integer(), driver_hot(), cfg(), list(token()),
+             last_token()}
 
   @spec new(binary() | charlist(), keyword()) :: t()
   def new(source, opts \\ []) when is_binary(source) or is_list(source) do
@@ -59,9 +60,8 @@ defmodule ToxicParser.Cursor do
   end
 
   def next(
-        {rest, line, column,
-         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [],
-         last_token}
+        {rest, line, column, {scope, contexts, deferrals, output, _recent_token} = driver_hot,
+         cfg, [], last_token}
       ) do
     if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
          cfg.error_mode == :strict do
@@ -91,9 +91,8 @@ defmodule ToxicParser.Cursor do
   end
 
   def peek(
-        {rest, line, column,
-         {scope, contexts, deferrals, output, _recent_token} = driver_hot, cfg, [],
-         last_token}
+        {rest, line, column, {scope, contexts, deferrals, output, _recent_token} = driver_hot,
+         cfg, [], last_token}
       ) do
     if empty_input?(rest, cfg.lexer_backend) and deferrals == [] and output == [] and
          cfg.error_mode == :strict do
@@ -166,6 +165,16 @@ defmodule ToxicParser.Cursor do
   @spec position(t()) :: {pos_integer(), pos_integer()}
   def position({_rest, line, column, _driver_hot, _cfg, _pending, _last_token}) do
     {line, column}
+  end
+
+  @doc "Get current lexer warnings from the cursor scope."
+  @spec warnings(t()) :: [Toxic.Warning.t()]
+  def warnings(
+        {_rest, _line, _column, {scope, _contexts, _deferrals, _output, _recent_token}, _cfg,
+         _pending, _last_token}
+      ) do
+    require Toxic.Scope
+    Toxic.Scope.scope(scope, :warnings)
   end
 
   @doc "Check if cursor is at EOF (no more tokens in pending buffer or source)."
