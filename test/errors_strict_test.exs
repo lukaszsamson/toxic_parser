@@ -73,9 +73,8 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("if true else: 1")
     end
 
-    @tag :skip
     test "unicode conversion error in list string" do
-      assert true
+      assert_error_conforms("'\\xFF'")
     end
   end
 

@@ -24,7 +24,14 @@ defmodule ToxicParser.Grammar.Strings do
           | {:keyword_key_interpolated, list(), atom(), keyword(), String.t(), State.t(),
              Cursor.t(), EventLog.t()}
 
-  @spec parse(State.t(), Cursor.t(), Pratt.context(), EventLog.t(), non_neg_integer(), ParseOpts.t()) :: result()
+  @spec parse(
+          State.t(),
+          Cursor.t(),
+          Pratt.context(),
+          EventLog.t(),
+          non_neg_integer(),
+          ParseOpts.t()
+        ) :: result()
   def parse(
         %State{} = state,
         cursor,
@@ -495,16 +502,22 @@ defmodule ToxicParser.Grammar.Strings do
     else
       content = merge_fragments(parts)
 
-      value =
+      value_result =
         case kind do
-          :binary -> content
-          :charlist -> String.to_charlist(content)
+          :binary -> {:ok, content}
+          :charlist -> safe_to_charlist(content)
         end
 
-      # Include delimiter in metadata for literal_encoder (token_metadata compatibility)
-      meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
-      ast = Builder.Helpers.literal(value, meta_with_delimiter, state)
-      Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
+      case value_result do
+        {:ok, value} ->
+          # Include delimiter in metadata for literal_encoder (token_metadata compatibility)
+          meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
+          ast = Builder.Helpers.literal(value, meta_with_delimiter, state)
+          Pratt.led(ast, state, cursor, log, min_bp, ctx, opts)
+
+        {:error, reason} ->
+          {:error, reason, state, cursor, log}
+      end
     end
   end
 
@@ -805,6 +818,13 @@ defmodule ToxicParser.Grammar.Strings do
   rescue
     e in ArgumentError ->
       {:error, Exception.message(e)}
+  end
+
+  defp safe_to_charlist(string) do
+    {:ok, String.to_charlist(string)}
+  rescue
+    e in UnicodeConversionError ->
+      {:error, {[line: 1, column: 1], Exception.message(e), "'"}}
   end
 
   defp string_kind(:bin_string_start), do: :binary
