@@ -65,6 +65,15 @@ Parser requirement: tolerant mode MUST be able to **consume and interpret** thes
 
 In particular: if a synthesized closer is needed to finish a construct that did start correctly (e.g., missing `)`/`]`/`end`), the parser MUST use it to close the AST node; the missing-terminator diagnostic is sufficient.
 
+**Example (conceptual):** input `"("` (missing closer at EOF) may produce:
+
+1. `{:"(", meta_real, nil}`
+2. `{:error_token, meta_realish, %Toxic.Error{code: :terminator_missing_closer, ...}}`
+3. `{:")", meta_zero_length, nil}` (synthesized closer)
+4. `:eof`
+
+The parser should emit a parenthesized AST node closed by the synthesized `")"` token (no extra parser repair), plus an error node/diagnostic anchored to the `:error_token`.
+
 ### Parser obligations
 
 - Treat `:error_token` as **opaque**: do not reinterpret, re-escape, or “improve” it.
@@ -107,11 +116,23 @@ details: %{
 }
 ```
 
+**Diagnostic ID rules (V1):**
+
+- `details.id` is allocated by parser state, starting at `1` and incrementing per diagnostic.
+- IDs are unique within a single parse result and reset between parses.
+- If the AST uses the recommended structured error payload, `payload.diag_id` MUST equal `details.id` for the corresponding diagnostic.
+
 **Range rules (V1):**
 
 - Lexer diagnostics MUST use the lexer token’s `meta` range when available.
-- Parser diagnostics MUST use the triggering token’s range when available (or nearest lookahead), and MUST NOT fall back to “line-only” ranges when token metadata exists.
+- Parser diagnostics MUST use the triggering token’s range when available, and MUST NOT fall back to “line-only” ranges when token metadata exists.
 - If a range cannot be derived (e.g., metadata disabled), use a zero-length range at a cursor anchor and set `details.synthetic? = true`.
+
+**Operational definition (V1):** the “triggering token” for a parser diagnostic is:
+
+- the token that the parser just consumed and found invalid for the current production, else
+- the current lookahead token (`peek`) at the point the error is reported, else
+- a zero-length cursor anchor (synthetic).
 
 ### 3.3 Error nodes in the AST
 
@@ -133,10 +154,10 @@ Tolerant AST uses explicit error nodes so every error can be localized to a tree
   diag_id: pos_integer(),
   phase: :lexer | :parser,
   kind: :token | :missing | :unexpected | :invalid | :ambiguous | :internal,
-  original: term(),          # raw token/value/reason; opaque to consumers
-  original_text: String.t() | nil,  # best-effort textual form if available (optional)
-  children: [Macro.t()],     # optional: partial AST that was successfully parsed
-  synthetic?: boolean()      # true iff this node was synthesized by the parser
+  original: term(),                  # required, but may be nil if truly unavailable
+  original_text: String.t() | nil,   # optional best-effort textual form
+  children: [Macro.t()],             # optional (default: [])
+  synthetic?: boolean()              # required
 }
 ```
 
@@ -174,11 +195,16 @@ When the parser must create placeholders to keep an AST shape usable, those node
 
 **V1 rule:** synthetic nodes:
 
-- MUST include standard `line:` / `column:` metadata as an anchor point for compatibility with AST tooling.
+- MUST include standard `line:` / `column:` metadata as an anchor point for compatibility with AST tooling. These anchors are insertion points, not source spans.
+- MUST NOT claim real spans via metadata (do not add `:end_line` / `:end_column` or other range-like fields).
 - MUST be explicitly marked as synthetic via `meta[:toxic] = %{synthetic?: true, anchor: %{line: L, column: C}}`.
 - MUST have a corresponding diagnostic with `details.synthetic? = true` and a **zero-length** diagnostic range (`start == end`).
 
 The lexer may also synthesize tokens (structural closers/openers). Those are **not parser-synthetic** and retain their lexer meta, but are marked “synthesized” by zero-length meta (`start == end`).
+
+**Synthesized token detection (V1):** lexer-synthesized tokens can be identified by zero-length token meta where `start == end` (or by derived metadata such as `TokenAdapter.full_metadata(...).synthesized?` when available).
+
+Consumer guidance (V1): tooling must use `meta[:toxic][:synthetic?]` (when present) to distinguish synthetic nodes; the presence of `line/column` alone is not meaningful.
 
 ### 3.6 Event log integration (optional, V1-compatible)
 
@@ -212,6 +238,11 @@ These sync sets should be kept compatible with the lexer’s tolerant recovery d
 
 **Forward progress rule:** after any error, consume at least one token (or rely on the lexer’s recovery which already advanced the cursor) before attempting to parse again.
 
+**Synthesized closer metadata (V1):** when a construct is closed by a lexer-synthesized closer, the parser should not “shrink” or otherwise distort the metadata of the surrounding valid node. Prefer:
+
+- retaining the opener-derived node metadata as-is, and
+- optionally annotating `meta[:toxic][:synthetic_closer?] = true` if downstream tooling needs to know a closer was synthesized.
+
 ### 4.3 Container-scoped recovery (required for practical tolerant parsing)
 
 When an error occurs while parsing an element inside a container (list/tuple/map/bitstring/call args):
@@ -225,14 +256,35 @@ Recovery MUST avoid consuming the container’s closing delimiter as “skipped 
 
 Implementation note: V1 requires recovery hooks in container/string/call parsing paths (e.g., delimited element loops), not only at the top-level `expr_list` boundary.
 
-### 4.4 Checkpoints and backtracking
+Recovery operates “innermost first”: an error in a nested construct should be contained at the smallest recoverable scope, and the resulting error node becomes the surrounding element/argument. Multiple consecutive failing elements each get their own error node.
+
+### 4.4 String-scoped recovery (required)
+
+String-like constructs (strings, charlists, heredocs, sigils, quoted atoms/identifiers) need dedicated tolerant rules because errors can occur mid-literal.
+
+V1 rules:
+
+1. If the lexer emits `:error_token` while parsing a string-like construct, the parser SHOULD prefer producing a **partial literal** with an embedded `ErrNode` when the lexer provides enough part tokens to continue.
+2. Otherwise, replace the entire literal with a single `ErrNode`.
+3. If the lexer synthesizes a terminator (`*_end`, `:end_interpolation`, `:sigil_end`), the parser MUST treat it as a valid closing token for the construct and then continue parsing following tokens normally.
+4. String-local errors MUST NOT also produce redundant parser-phase “unexpected EOF/missing terminator” diagnostics when the lexer already provided an equivalent lexer diagnostic.
+
+**Example (conceptual):** if the lexer emits `:bin_string` fragments around an `:error_token`, the parser may build:
+
+```elixir
+{:<<>>, meta, ["prefix", {:__error__, err_meta, %{diag_id: 1, kind: :token, ...}}, "suffix"]}
+```
+
+If the lexer cannot provide recoverable fragments, replace the whole literal with a single `{:__error__, ..., ...}`.
+
+### 4.5 Checkpoints and backtracking
 
 ToxicParser uses checkpoint/rewind for speculative parses. Tolerant mode must preserve these invariants:
 
 - Diagnostics collected during a speculative branch MUST be discarded if that branch is abandoned via rewind.
 - Rewinding MUST restore `state.diagnostics` and any diagnostic ids/allocators to the checkpoint state.
 
-### 4.5 Don’t “double-fix”
+### 4.6 Don’t “double-fix”
 
 If the lexer already recovered:
 
@@ -241,6 +293,12 @@ If the lexer already recovered:
 - Do not re-tokenize the source region.
 - Do not emit a second parser-phase diagnostic for a lexer-originated error unless the parser is now blocked at a new, distinct construct boundary.
 - If the lexer sanitized an identifier (tolerant sanitization), accept the sanitized token and reuse the lexer diagnostic rather than re-validating and re-diagnosing.
+
+Concrete “no duplicates” cases (V1):
+
+- A `:error_token` in expression position becomes an `ErrNode`; it must not also trigger a generic “syntax error before …” parser diagnostic for the same token.
+- A lexer “missing terminator” diagnostic paired with synthesized closers must not also produce a parser `:unexpected_eof` diagnostic for the same construct.
+- A lexer unescape/bidi/error inside a string-like construct must not also produce an additional parser diagnostic that merely restates the lexer error.
 
 The parser’s role is to:
 
@@ -255,6 +313,8 @@ Notation:
 
 - **Diag**: a `%ToxicParser.Error{}` appended to `result.diagnostics`.
 - **ErrNode**: `{:__error__, ..., payload}` (recommended payload includes `diag_id`)
+- `ErrNode(...)` in this document is shorthand for an AST node `{:__error__, meta, payload_map}` anchored at an appropriate token/cursor location.
+- Error nodes have the same tuple shape whether they appear as top-level expressions or as container elements/arguments.
 - **Keep** means keep already-parsed valid children unchanged.
 - **Sync** indicates the intended sync boundary (expression or container level).
 
