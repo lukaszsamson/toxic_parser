@@ -541,8 +541,9 @@ defmodule ToxicParser.Grammar.Keywords do
   defp meta_location({{line, column}, _, _}), do: [line: line, column: column]
   defp meta_location(_), do: []
 
-  defp format_kw_identifier_token(:kw_identifier, value) when is_atom(value) or is_binary(value),
-    do: "#{value}:"
+  defp format_kw_identifier_token(:kw_identifier, value) when value == :do, do: "do:"
+  defp format_kw_identifier_token(:kw_identifier, value) when is_atom(value), do: "'#{value}:'"
+  defp format_kw_identifier_token(:kw_identifier, value) when is_binary(value), do: "'#{value}:'"
 
   defp format_kw_identifier_token(:kw_identifier, value), do: "#{inspect(value)}:"
 

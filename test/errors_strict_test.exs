@@ -45,6 +45,10 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("[foo: 1, :bar]")
     end
 
+    test "expression after keyword list in map" do
+      assert_error_conforms("%{foo: 1, :bar => :bar}")
+    end
+
     test "unexpected parentheses due to space" do
       assert_error_conforms("foo (hello, world)")
     end
@@ -65,7 +69,6 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("if true do:\n")
     end
 
-    @tag :skip
     test "invalid keyword identifier" do
       assert_error_conforms("if true else: 1")
     end
