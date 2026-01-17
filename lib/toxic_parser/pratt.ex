@@ -1783,7 +1783,8 @@ defmodule ToxicParser.Pratt do
           effective_newlines,
           context,
           log,
-          opts
+          opts,
+          ExprClass.classify(left)
         )
 
       true ->
@@ -1797,7 +1798,8 @@ defmodule ToxicParser.Pratt do
           effective_newlines,
           context,
           log,
-          opts
+          opts,
+          ExprClass.classify(left)
         )
     end
   end
@@ -2363,7 +2365,8 @@ defmodule ToxicParser.Pratt do
          newlines,
          context,
          log,
-         opts
+         opts,
+         lhs_class
        ) do
     # Follow elixir_parser.yrl: RHS can be a no_parens_expr depending on the operator class.
     # In Pratt, that means we must preserve allow_no_parens_expr on RHS when the surrounding
@@ -2382,6 +2385,7 @@ defmodule ToxicParser.Pratt do
         with {:ok, right, state, cursor, log} <-
                parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp, rhs_opts) do
           state = maybe_warn_pipe(state, op_token, right, opts)
+          state = maybe_warn_no_parens_after_do_op(state, op_token, rhs_context, lhs_class, opts)
           {combined, state} = build_binary_op(op_token, left, right, newlines, state, opts)
           # Continuation uses original context to allow further extension at outer level
           led(combined, state, cursor, log, min_bp, context, opts)
@@ -2543,6 +2547,57 @@ defmodule ToxicParser.Pratt do
             "is ambiguous and should be written as\n\n" <>
             "    foo(1) #{op_text} bar(2) #{op_text} baz(3)\n\n" <>
             "Ambiguous pipe found at:",
+        range: %{
+          start: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          },
+          end: %{
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            offset: 0
+          }
+        },
+        details: %{}
+      }
+
+      %{state | warnings: [warning | state.warnings]}
+    else
+      state
+    end
+  end
+
+  defp maybe_warn_no_parens_after_do_op(
+         state,
+         _op_token,
+         _rhs_context,
+         _lhs_class,
+         %ParseOpts{emit_warnings?: false}
+       ) do
+    state
+  end
+
+  defp maybe_warn_no_parens_after_do_op(
+         state,
+         {op_kind, _meta, op_value} = op_token,
+         rhs_context,
+         lhs_class,
+         %ParseOpts{}
+       ) do
+    emit_warning? =
+      lhs_class == :unmatched and Context.allow_no_parens_expr?(rhs_context) and
+        op_kind in @no_parens_op_expr_operators
+
+    if emit_warning? do
+      meta = TokenAdapter.token_meta(op_token)
+      op_text = Atom.to_string(op_value)
+
+      warning = %ToxicParser.Warning{
+        code: :missing_parens_after_operator,
+        message:
+          "missing parentheses on expression following operator \"#{op_text}\", " <>
+            "you must add parentheses to avoid ambiguities",
         range: %{
           start: %{
             line: Keyword.get(meta, :line, 1),

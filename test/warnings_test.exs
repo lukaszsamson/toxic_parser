@@ -15,7 +15,6 @@ defmodule ToxicParser.WarningsTest do
     """)
   end
 
-  @tag :skip
   test "missing parens after operator" do
     assert_warning_conforms("""
     quote do
