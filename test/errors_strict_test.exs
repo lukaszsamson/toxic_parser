@@ -192,6 +192,138 @@ defmodule ToxicParser.ErrorsStrictTest do
     test "interpolation not allowed in quoted identifier" do
       assert_error_conforms(~S(Foo."bar#{baz}"))
     end
+
+    test "string invalid hex escape" do
+      assert_unescape_error("\"\\x\"")
+    end
+
+    test "string invalid unicode escape" do
+      assert_unescape_error("\"\\u\"")
+    end
+
+    test "string invalid unicode codepoint" do
+      assert_unescape_error("\"\\u{FFFFFF}\"")
+    end
+
+    test "charlist invalid hex escape" do
+      assert_unescape_error("'\\x'")
+    end
+
+    test "charlist invalid unicode escape" do
+      assert_unescape_error("'\\u'")
+    end
+
+    test "charlist invalid unicode codepoint" do
+      assert_unescape_error("'\\u{FFFFFF}'")
+    end
+
+    test "string heredoc invalid hex escape" do
+      assert_unescape_error("\"\"\"\n\\x\n\"\"\"")
+    end
+
+    test "string heredoc invalid unicode escape" do
+      assert_unescape_error("\"\"\"\n\\u\n\"\"\"")
+    end
+
+    test "charlist heredoc invalid hex escape" do
+      assert_unescape_error("'''\n\\x\n'''")
+    end
+
+    test "charlist heredoc invalid unicode escape" do
+      assert_unescape_error("'''\n\\u\n'''")
+    end
+
+    test "quoted atom invalid hex escape" do
+      assert_unescape_error(":\"\\x\"")
+    end
+
+    test "quoted atom invalid unicode escape" do
+      assert_unescape_error(":\"\\u\"")
+    end
+
+    test "quoted keyword invalid hex escape" do
+      assert_unescape_error("\"\\x\": 1")
+    end
+
+    test "quoted keyword invalid unicode escape" do
+      assert_unescape_error("\"\\u\": 1")
+    end
+
+    test "quoted call invalid hex escape" do
+      assert_unescape_error_raises("Foo.\"\\x\"")
+    end
+
+    test "quoted call invalid unicode escape" do
+      assert_unescape_error_raises("Foo.\"\\u\"")
+    end
+
+    test "quoted call invalid bidi character" do
+      assert_bidi_error("Foo.\"\u202A\"")
+    end
+
+    test "sigil lowercase invalid delimiter hex escape" do
+      assert_error_conforms("~s$\\x$")
+    end
+
+    test "sigil uppercase invalid delimiter hex escape" do
+      assert_error_conforms("~S$\\x$")
+    end
+
+    test "sigil lowercase invalid delimiter unicode escape" do
+      assert_error_conforms("~s$\\u$")
+    end
+
+    test "sigil uppercase invalid delimiter unicode escape" do
+      assert_error_conforms("~S$\\u$")
+    end
+
+    test "string invalid bidi character" do
+      assert_bidi_error("\"\u202A\"")
+    end
+
+    test "charlist invalid bidi character" do
+      assert_bidi_error("'\u202A'")
+    end
+
+    test "quoted atom invalid bidi character" do
+      assert_bidi_error(":\"\u202A\"")
+    end
+
+    test "quoted keyword invalid bidi character" do
+      assert_bidi_error("\"\u202A\": 1")
+    end
+
+    test "string heredoc invalid bidi character" do
+      assert_bidi_error("\"\"\"\n\u202A\n\"\"\"")
+    end
+
+    test "charlist heredoc invalid bidi character" do
+      assert_bidi_error("'''\n\u202A\n'''")
+    end
+
+    test "sigil lowercase invalid bidi character" do
+      assert_bidi_error("~s\"\u202A\"")
+    end
+
+    test "sigil uppercase invalid bidi character" do
+      assert_bidi_error("~S\"\u202A\"")
+    end
+
+    test "sigil lowercase heredoc invalid bidi character" do
+      assert_bidi_error("~s\"\"\"\n\u202A\n\"\"\"")
+    end
+
+    test "sigil uppercase heredoc invalid bidi character" do
+      assert_bidi_error("~S\"\"\"\n\u202A\n\"\"\"")
+    end
+
+    test "sigil lowercase invalid bidi delimiter" do
+      assert_error_conforms("~s$\u202A$")
+    end
+
+    test "sigil uppercase invalid bidi delimiter" do
+      assert_error_conforms("~S$\u202A$")
+    end
   end
 
   defp assert_error_conforms(code, opts \\ []) do
@@ -228,6 +360,72 @@ defmodule ToxicParser.ErrorsStrictTest do
       {{:error, {meta_ref, msg, token}}, {:error, {meta_act, msg, token}}, false}
       when is_list(meta_ref) and is_list(meta_act) ->
         :ok
+
+      _ ->
+        assert actual == reference,
+               """
+               Error mismatch for: #{inspect(code)}
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
+  end
+
+  defp assert_unescape_error(code, opts \\ []) do
+    reference = s2q(code, opts)
+    actual = toxic_parse(code, opts)
+
+    assert match?({:error, _}, reference),
+           "Expected reference parser to error on: #{inspect(code)}"
+
+    case {reference, actual} do
+      {{:error, {[line: line, column: _column], message, token}},
+       {:error, {:unescape_error, actual_message, actual_meta}}} ->
+        assert actual_message == String.replace(message, ". Syntax error after: ", "")
+        assert token in ["\\x", "\\u"]
+        assert Keyword.get(actual_meta, :line) == line
+
+      _ ->
+        assert actual == reference,
+               """
+               Error mismatch for: #{inspect(code)}
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
+  end
+
+  defp assert_unescape_error_raises(code) do
+    reference = s2q(code, [])
+
+    assert match?({:error, _}, reference),
+           "Expected reference parser to error on: #{inspect(code)}"
+
+    assert_raise ArgumentError, fn ->
+      toxic_parse(code, [])
+    end
+  end
+
+  defp assert_bidi_error(code, opts \\ []) do
+    reference = s2q(code, opts)
+    actual = toxic_parse(code, opts)
+
+    assert match?({:error, _}, reference),
+           "Expected reference parser to error on: #{inspect(code)}"
+
+    case {reference, actual} do
+      {{:error, {[line: line, column: column], {prefix, suffix}, token}},
+       {:error, {[line: line, column: column], message, token}}}
+      when is_binary(message) ->
+        assert message == "#{prefix}#{token}#{suffix}"
 
       _ ->
         assert actual == reference,

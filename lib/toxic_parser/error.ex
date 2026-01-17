@@ -111,7 +111,7 @@ defmodule ToxicParser.Error do
           {normalize_meta(meta, opts), normalize_message(message), token}
 
         other ->
-          other
+          normalize_message(other)
       end
 
     %__MODULE__{
@@ -139,8 +139,21 @@ defmodule ToxicParser.Error do
     {to_string(prefix), to_string(detail)}
   end
 
+  defp normalize_message({:unescape_error, message, meta}) when is_binary(message) do
+    token = extract_unescape_token(message)
+    {meta, "#{message}. Syntax error after: ", token}
+  end
+
   defp normalize_message(message) when is_list(message), do: List.to_string(message)
   defp normalize_message(message), do: message
+
+  defp extract_unescape_token(message) do
+    cond do
+      String.contains?(message, "\\x") -> "\\x"
+      String.contains?(message, "\\u") -> "\\u"
+      true -> ""
+    end
+  end
 
   defp meta_to_range({{_sl, _sc}, {_el, _ec}, _extra} = meta, _err, line_index) do
     ToxicParser.Position.range_from_meta(meta, line_index)
