@@ -43,7 +43,7 @@ defmodule ToxicParser.Error do
   end
 
   defp normalize_token(atom) when is_atom(atom), do: atom
-  defp normalize_token(_), do: nil
+  defp normalize_token(other), do: other
 
   @doc """
   Builds a lexer-phase diagnostic from a Toxic error.
@@ -55,9 +55,20 @@ defmodule ToxicParser.Error do
     line_index = Keyword.get(opts, :line_index, [])
     range = meta_to_range(meta, err, line_index)
 
+    reason = Toxic.Error.to_reason_tuple(err)
+
+    reason =
+      case reason do
+        {meta_kv, message, token} ->
+          {normalize_meta(meta_kv, opts), normalize_message(message), token}
+
+        other ->
+          other
+      end
+
     %__MODULE__{
       phase: :lexer,
-      reason: {err.code, err.details},
+      reason: reason,
       token: normalize_token(err.token_display),
       severity: err.severity,
       expected: Keyword.get(opts, :expected),
@@ -75,6 +86,30 @@ defmodule ToxicParser.Error do
         {loc, msg, token} when is_list(msg) and is_list(token) ->
           {loc, List.to_string(msg), List.to_string(token)}
 
+        {loc, {prefix, detail}, token} when is_list(prefix) ->
+          {loc, {List.to_string(prefix), List.to_string(detail)}, token}
+
+        {loc, msg, token} when is_list(msg) ->
+          {loc, List.to_string(msg), token}
+
+        {loc, msg, token} when is_list(token) and is_list(msg) ->
+          {loc, List.to_string(msg), List.to_string(token)}
+
+        {loc, msg, token} when is_list(token) and is_binary(msg) ->
+          {loc, msg, List.to_string(token)}
+
+        {loc, msg, token} when is_list(token) ->
+          {loc, msg, IO.iodata_to_binary(token)}
+
+        other ->
+          other
+      end
+
+    reason =
+      case reason do
+        {meta, message, token} ->
+          {normalize_meta(meta, opts), normalize_message(message), token}
+
         other ->
           other
       end
@@ -89,6 +124,23 @@ defmodule ToxicParser.Error do
       details: %{domain: :general, terminators: Keyword.get(opts, :terminators)}
     }
   end
+
+  defp normalize_meta(meta, opts) when is_list(meta) do
+    if Keyword.get(opts, :source) == nil do
+      meta
+    else
+      Keyword.drop(meta, [:end_line, :end_column])
+    end
+  end
+
+  defp normalize_meta(meta, _opts), do: meta
+
+  defp normalize_message({prefix, detail}) when is_list(prefix) or is_binary(prefix) do
+    {to_string(prefix), to_string(detail)}
+  end
+
+  defp normalize_message(message) when is_list(message), do: List.to_string(message)
+  defp normalize_message(message), do: message
 
   defp meta_to_range({{_sl, _sc}, {_el, _ec}, _extra} = meta, _err, line_index) do
     ToxicParser.Position.range_from_meta(meta, line_index)

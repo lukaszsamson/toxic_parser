@@ -74,7 +74,92 @@ defmodule ToxicParser.ErrorsStrictTest do
     end
 
     test "unicode conversion error in list string" do
-      assert_error_conforms("'\\xFF'")
+      assert_error_conforms("'\\xFF'", [], false)
+    end
+
+    test "unexpected closer" do
+      assert_error_conforms(")")
+    end
+
+    test "mismatched closer" do
+      assert_error_conforms("([)")
+    end
+
+    test "missing closer at eof" do
+      assert_error_conforms("(", [], false)
+    end
+
+    test "unexpected end keyword" do
+      assert_error_conforms("end", [], false)
+    end
+
+    test "unexpected end in expression" do
+      assert_error_conforms("1 end")
+    end
+
+    test "map invalid open delimiter" do
+      assert_error_conforms("%( )")
+    end
+
+    test "map unexpected space after percent" do
+      assert_error_conforms("% {}", [], false)
+    end
+
+    test "keyword missing space after colon" do
+      assert_error_conforms("[foo:bar]")
+    end
+
+    test "string missing terminator" do
+      assert_error_conforms(~S("unclosed), [], false)
+    end
+
+    test "interpolation missing terminator" do
+      assert_error_conforms(~S("foo #{bar), [], false)
+    end
+
+    test "interpolation missing terminator without metadata" do
+      assert_error_conforms(~S("foo #{bar), [token_metadata: false], false)
+    end
+
+    test "number trailing garbage" do
+      assert_error_conforms("0x")
+    end
+
+    test "invalid float number" do
+      assert_error_conforms("1.0e309")
+    end
+
+    test "consecutive semicolons" do
+      assert_error_conforms(";;")
+    end
+
+    test "alias unexpected paren" do
+      assert_error_conforms("Foo()")
+    end
+
+    test "heredoc missing terminator" do
+      assert_error_conforms(~S("""
+    unclosed heredoc))
+    end
+
+    test "heredoc invalid header" do
+      assert_error_conforms(~S("""invalid))
+    end
+
+    test "identifier mixed script" do
+      assert_error_conforms("fooАbar", [], false)
+    end
+
+    test "comment invalid bidi" do
+      assert_error_conforms("# comment with bidi \u202E")
+    end
+
+    test "comment invalid linebreak" do
+      assert_error_conforms("# comment with line\u2028break")
+    end
+
+    test "version control merge conflict marker" do
+      assert_error_conforms("<<<<<<< HEAD")
     end
   end
 
@@ -95,6 +180,36 @@ defmodule ToxicParser.ErrorsStrictTest do
            Actual:
            #{inspect(actual, pretty: true)}
            """
+  end
+
+  defp assert_error_conforms(code, opts, validate_token_meta?) do
+    reference = s2q(code, opts)
+    actual = toxic_parse(code, opts)
+
+    assert match?({:error, _}, reference),
+           "Expected reference parser to error on: #{inspect(code)}"
+
+    case {reference, actual, validate_token_meta?} do
+      {{:error, {[line: line, column: column], msg, token}},
+       {:error, {[line: line, column: column], msg, token}}, false} ->
+        :ok
+
+      {{:error, {meta_ref, msg, token}}, {:error, {meta_act, msg, token}}, false}
+      when is_list(meta_ref) and is_list(meta_act) ->
+        :ok
+
+      _ ->
+        assert actual == reference,
+               """
+               Error mismatch for: #{inspect(code)}
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
   end
 
   defp s2q(code, opts) do

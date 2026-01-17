@@ -182,11 +182,19 @@ defmodule ToxicParser do
   end
 
   defp parser_error(reason, state) do
-    # Convert charlist error tuples from lexer to strings (like Error.from_toxic does)
     normalized_reason =
       case reason do
-        {loc, msg, token} when is_list(msg) and is_list(token) ->
-          {loc, List.to_string(msg), List.to_string(token)}
+        {loc, {prefix, detail}, token} when is_list(prefix) or is_binary(prefix) ->
+          {loc, {to_string(prefix), to_string(detail)}, normalize_token_string(token)}
+
+        {loc, msg, token} when is_list(msg) ->
+          normalize_reserved_word({loc, List.to_string(msg), normalize_token_string(token)})
+
+        {loc, msg, token} when is_list(token) ->
+          normalize_reserved_word({loc, msg, normalize_token_string(token)})
+
+        {loc, msg, token} ->
+          normalize_reserved_word({loc, msg, normalize_token_string(token)})
 
         other ->
           other
@@ -205,6 +213,30 @@ defmodule ToxicParser do
       details: %{source: :grammar}
     }
   end
+
+  defp normalize_token_string(token) when is_list(token) do
+    if Enum.all?(token, &is_integer/1) do
+      List.to_string(token)
+    else
+      try do
+        IO.iodata_to_binary(token)
+      rescue
+        ArgumentError -> token
+      end
+    end
+  end
+
+  defp normalize_token_string(token), do: token
+
+  defp normalize_reserved_word({loc, "unexpected reserved word: end", token}) do
+    {loc, {"unexpected reserved word: ", ""}, token}
+  end
+
+  defp normalize_reserved_word({loc, "unexpected reserved word: end" <> suffix, token}) do
+    {loc, {"unexpected reserved word: ", suffix}, token}
+  end
+
+  defp normalize_reserved_word(other), do: other
 
   # Check for remaining tokens after parsing in strict mode
   defp check_remaining_tokens(state, cursor, :strict) do

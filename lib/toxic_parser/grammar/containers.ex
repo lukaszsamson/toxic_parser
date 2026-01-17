@@ -146,19 +146,10 @@ defmodule ToxicParser.Grammar.Containers do
         end
 
       {:eof, cursor} ->
-        # Skip any remaining EOE tokens and count newlines
-        {state, cursor, more_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+        {:error, :unexpected_eof, state, cursor, log}
 
-        parse_paren_content(
-          open_meta,
-          newlines + more_newlines,
-          state,
-          cursor,
-          ctx,
-          log,
-          min_bp,
-          opts
-        )
+      {:error, diag, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 

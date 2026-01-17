@@ -505,7 +505,7 @@ defmodule ToxicParser.Grammar.Strings do
       value_result =
         case kind do
           :binary -> {:ok, content}
-          :charlist -> safe_to_charlist(content)
+          :charlist -> safe_to_charlist(content, start_meta)
         end
 
       case value_result do
@@ -820,11 +820,13 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, Exception.message(e)}
   end
 
-  defp safe_to_charlist(string) do
+  defp safe_to_charlist(string, meta) do
     {:ok, String.to_charlist(string)}
   rescue
     e in UnicodeConversionError ->
-      {:error, {[line: 1, column: 1], Exception.message(e), "'"}}
+      message = Exception.message(e)
+      message = if is_list(message), do: List.to_string(message), else: message
+      {:error, {meta, message, "'"}}
   end
 
   defp string_kind(:bin_string_start), do: :binary

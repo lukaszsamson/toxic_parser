@@ -403,7 +403,8 @@ defmodule ToxicParser.TokenAdapter do
       nil,
       reason,
       line_index: state.line_index,
-      terminators: state.terminators
+      terminators: state.terminators,
+      source: state.source
     )
   end
 
