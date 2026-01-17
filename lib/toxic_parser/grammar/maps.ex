@@ -975,11 +975,9 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       {:keyword_key, _, _, state, cursor, _} ->
-        raise "dead code"
         {:not_update, state, cursor}
 
       {:keyword_key_interpolated, _, _, _, _, state, cursor, _} ->
-        raise "dead code"
         {:not_update, state, cursor}
 
       {:error, diag, state, cursor, log} ->
@@ -1077,7 +1075,6 @@ defmodule ToxicParser.Grammar.Maps do
                 {:ok, update_ast, close_meta, state, cursor, log}
 
               _ ->
-                raise "dead code"
                 {:not_update, state, cursor}
             end
 

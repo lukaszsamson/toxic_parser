@@ -68,6 +68,7 @@ defmodule ToxicParser.State do
       mode: mode,
       preserve_comments: Keyword.get(opts, :preserve_comments, false),
       existing_atoms_only: Keyword.get(opts, :existing_atoms_only, false),
+      elixir_compatibility: Keyword.get(opts, :elixir_compatibility, true),
       max_peek: max_peek,
       lexer_backend: Keyword.get(opts, :lexer_backend, :charlist)
     ]

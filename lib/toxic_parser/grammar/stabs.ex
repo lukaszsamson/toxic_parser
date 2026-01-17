@@ -984,41 +984,42 @@ defmodule ToxicParser.Grammar.Stabs do
 
     case Cursor.peek(cursor) do
       {:ok, {^terminator, _meta, _value}, cursor} ->
-        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor), cursor, log}
+        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor, :terminator), cursor, log}
 
       {:ok, {:block_identifier, _, _}, cursor} when terminator == :end ->
-        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor), cursor, log}
+        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor, :block_identifier), cursor, log}
 
       {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
         # `-> ;` / `-> \n` (newlines are normally already skipped by stab_op_eol)
-        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor), cursor, log}
+        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor, :eol), cursor, log}
 
       {:ok, _, cursor} ->
         Expressions.expr(state, cursor, body_ctx, log)
 
       {:eof, cursor} ->
-        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor), cursor, log}
+        {:ok, nil, maybe_warn_empty_stab_clause(state, cursor, :eof), cursor, log}
 
       {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
     end
   end
 
-  defp maybe_warn_empty_stab_clause(%State{} = state, _cursor)
+  defp maybe_warn_empty_stab_clause(%State{} = state, _cursor, _kind)
        when state.emit_warnings? == false do
     state
   end
 
-  defp maybe_warn_empty_stab_clause(state, cursor) do
+  defp maybe_warn_empty_stab_clause(state, cursor, kind) do
     {line, column} = Cursor.position(cursor)
+    adjusted_column = if kind == :block_identifier and column > 1, do: column - 1, else: column
 
     warning = %ToxicParser.Warning{
       code: :empty_stab_clause,
       message:
         "an expression is always required on the right side of ->. Please provide a value after ->",
       range: %{
-        start: %{line: line, column: column, offset: 0},
-        end: %{line: line, column: column, offset: 0}
+        start: %{line: line, column: adjusted_column, offset: 0},
+        end: %{line: line, column: adjusted_column, offset: 0}
       },
       details: %{}
     }

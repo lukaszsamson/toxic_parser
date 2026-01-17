@@ -15,7 +15,8 @@ defmodule ToxicParser.ParseOpts do
           allows_bracket: boolean(),
           stop_at_assoc: boolean(),
           stop_at_comma: boolean(),
-          emit_warnings?: boolean()
+          emit_warnings?: boolean(),
+          lexer_warn_after_parse?: boolean()
         }
 
   defstruct min_bp: 0,
@@ -26,7 +27,8 @@ defmodule ToxicParser.ParseOpts do
             allows_bracket: true,
             stop_at_assoc: false,
             stop_at_comma: false,
-            emit_warnings?: false
+            emit_warnings?: false,
+            lexer_warn_after_parse?: false
 
   @doc """
   Returns ParseOpts with stop_at_assoc: true.
