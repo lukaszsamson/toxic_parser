@@ -137,6 +137,10 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("Foo()")
     end
 
+    test "alias invalid character" do
+      assert_error_conforms("Foöbar")
+    end
+
     test "heredoc missing terminator" do
       assert_error_conforms(~S("""
     unclosed heredoc))
@@ -146,8 +150,31 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms(~S("""invalid))
     end
 
+    test "sigil invalid lowercase name" do
+      assert_error_conforms("~ab()")
+    end
+
+    test "sigil invalid mixed case name" do
+      assert_error_conforms("~Ab()")
+    end
+
+    test "sigil invalid delimiter" do
+      assert_error_conforms("~s$foo$")
+    end
+
     test "identifier mixed script" do
       assert_error_conforms("fooАbar", [], false)
+    end
+
+    test "identifier invalid char" do
+      assert_error_conforms("foo@bar")
+    end
+
+    test "nonexistent atom with existing_atoms_only" do
+      assert_error_conforms(
+        ":this_atom_definitely_does_not_exist_xyz123",
+        existing_atoms_only: true
+      )
     end
 
     test "comment invalid bidi" do
@@ -160,6 +187,10 @@ defmodule ToxicParser.ErrorsStrictTest do
 
     test "version control merge conflict marker" do
       assert_error_conforms("<<<<<<< HEAD")
+    end
+
+    test "interpolation not allowed in quoted identifier" do
+      assert_error_conforms(~S(Foo."bar#{baz}"))
     end
   end
 
