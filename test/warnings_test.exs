@@ -40,7 +40,6 @@ defmodule ToxicParser.WarningsTest do
     assert_warning_conforms("()")
   end
 
-  @tag :skip
   test "empty stab clause" do
     assert_warning_conforms("fn x -> end")
   end
