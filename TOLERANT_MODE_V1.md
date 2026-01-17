@@ -48,10 +48,27 @@ Tolerant mode assumes `Toxic.Driver` runs with `error_mode: :tolerant`. The toke
    - e.g. inserted openers/closers, `:end_interpolation`, etc.
    - Synthesized tokens use **zero-length meta** (`start == end`) to avoid position drift.
 
+### 2.1 Multi-token error sequences (important)
+
+When the lexer encounters an error in tolerant mode, it may emit **multiple tokens** for a single recovery episode (per `Toxic.Driver.Recovery` ordering rules), e.g.:
+
+1. (sometimes) pre-inserted recovery tokens
+2. the `:error_token` itself (with a real span)
+3. post-inserted recovery tokens (e.g., sanitized identifier variants)
+4. synthesized structural tokens (openers/closers, `:end_interpolation`) with **zero-length meta**
+5. (sometimes) the “actual closer” token, also with **zero-length meta**
+
+Parser requirement: tolerant mode MUST be able to **consume and interpret** these sequences without:
+
+- creating duplicate repairs (no “double-fix”), and
+- generating additional error nodes solely because a closer/opener was synthesized.
+
+In particular: if a synthesized closer is needed to finish a construct that did start correctly (e.g., missing `)`/`]`/`end`), the parser MUST use it to close the AST node; the missing-terminator diagnostic is sufficient.
+
 ### Parser obligations
 
 - Treat `:error_token` as **opaque**: do not reinterpret, re-escape, or “improve” it.
-- Treat synthesized structural tokens as **real tokens in the stream** (i.e., the parser must not crash when they appear), but the parser may choose to **omit them from the AST** if they are pure recovery artifacts and do not correspond to a meaningful source construct.
+- Treat synthesized structural tokens as **real tokens in the stream** (i.e., the parser must not crash when they appear). The parser may omit pure artifacts from the AST, but MUST still accept them for balancing/termination when required by the surrounding construct.
 
 ## 3. Output Data Model (Result, Diagnostics, Error Nodes)
 
@@ -80,14 +97,21 @@ details: %{
   id: pos_integer(),                 # stable within this parse result
   anchor: %{                         # ties diagnostic to a subnode
     kind: :error_node | :node_meta | :root,
-    path: list(),                    # AST path (see 3.4)
+    path: list(),                    # AST path (see 3.4; filled by post-pass)
     note: String.t() | nil
   },
   synthetic?: boolean(),             # true if diagnostic refers to synthetic-only construct
   lexer_error_code: atom() | nil,    # if payload originated from %Toxic.Error{code: ...}
+  related: [%{range: EventLog.range(), note: String.t()}] | nil,
   recovery: %{strategy: atom(), synced_to: atom() | :eof} | nil
 }
 ```
+
+**Range rules (V1):**
+
+- Lexer diagnostics MUST use the lexer token’s `meta` range when available.
+- Parser diagnostics MUST use the triggering token’s range when available (or nearest lookahead), and MUST NOT fall back to “line-only” ranges when token metadata exists.
+- If a range cannot be derived (e.g., metadata disabled), use a zero-length range at a cursor anchor and set `details.synthetic? = true`.
 
 ### 3.3 Error nodes in the AST
 
@@ -96,11 +120,13 @@ Tolerant AST uses explicit error nodes so every error can be localized to a tree
 **Canonical error node shape (V1):**
 
 ```elixir
-{:__error__, meta, [payload]}
+{:__error__, meta, payload}
 ```
 
 - `meta` is standard AST metadata; it may include `line/column` as an **anchor point**.
-- `payload` is:
+- `payload` is either an opaque term (compatibility) or a structured map (recommended).
+
+**Recommended structured payload (V1):**
 
 ```elixir
 %{
@@ -108,6 +134,7 @@ Tolerant AST uses explicit error nodes so every error can be localized to a tree
   phase: :lexer | :parser,
   kind: :token | :missing | :unexpected | :invalid | :ambiguous | :internal,
   original: term(),          # raw token/value/reason; opaque to consumers
+  original_text: String.t() | nil,  # best-effort textual form if available (optional)
   children: [Macro.t()],     # optional: partial AST that was successfully parsed
   synthetic?: boolean()      # true iff this node was synthesized by the parser
 }
@@ -139,17 +166,28 @@ To satisfy “errors must be constrained to source regions and tree subnodes”,
 
 V1 does not require a globally unique node id. The “path” is sufficient for IDE anchoring and can be built by a post-walk over the produced AST.
 
+**Clarification (V1):** `anchor.path` is produced by a **post-parse traversal** over the final AST (not during streaming parse). The parser core only needs to ensure an error is anchored to a subnode via either an error node insertion or node metadata.
+
 ### 3.5 Synthetic elements (parser-created)
 
 When the parser must create placeholders to keep an AST shape usable, those nodes are **synthetic** and must not claim real source ranges.
 
 **V1 rule:** synthetic nodes:
 
-- Must not include `:line`/`:column` in their metadata **unless** they are purely an anchor point.
-- Must include `meta[:toxic] = %{synthetic?: true, anchor: %{line, column}}` if an anchor is needed.
-- Must set the corresponding diagnostic `details.synthetic? = true` and should use a **zero-length** range at the anchor location if a range is required by tooling.
+- MUST include standard `line:` / `column:` metadata as an anchor point for compatibility with AST tooling.
+- MUST be explicitly marked as synthetic via `meta[:toxic] = %{synthetic?: true, anchor: %{line: L, column: C}}`.
+- MUST have a corresponding diagnostic with `details.synthetic? = true` and a **zero-length** diagnostic range (`start == end`).
 
 The lexer may also synthesize tokens (structural closers/openers). Those are **not parser-synthetic** and retain their lexer meta, but are marked “synthesized” by zero-length meta (`start == end`).
+
+### 3.6 Event log integration (optional, V1-compatible)
+
+If `emit_events` is enabled, tolerant mode SHOULD emit enough information for tooling to correlate:
+
+- the diagnostic (`details.id`) and
+- the AST error node payload (`payload.diag_id` when structured)
+
+Minimum recommendation: for every inserted error node, emit an `:error` event with the same `id`, plus `range` and `synthetic?` flags. This is deliberately additive and does not change the AST contract.
 
 ## 4. Tolerant Parsing Strategy
 
@@ -166,19 +204,43 @@ Tolerant parsing uses synchronization points to resume parsing after emitting an
 
 **V1 sync sets (conceptual):**
 
-- `expr_sync`: `[:eol, :";", :"}", :"]", :")", :end, :eof]`
-- `container_sync`: `[:,", :"]", :"}", :")", :">>", :end, :eof]` (include comma)
-- `call_args_sync`: `[:,", :")", :"]", :"}", :end, :eof]`
+- `expr_sync`: `[:eol, :";", :",", :"}", :"]", :")", :end, :eof]` (note `:","` token kind for comma)
+- `container_sync`: `[ :",", :"]", :"}", :")", :">>", :end, :eof]`
+- `call_args_sync`: `[ :",", :")", :"]", :"}", :end, :eof]`
+ 
+These sync sets should be kept compatible with the lexer’s tolerant recovery defaults (notably `:comma`), so the parser doesn’t “lag behind” lexer recovery decisions.
 
 **Forward progress rule:** after any error, consume at least one token (or rely on the lexer’s recovery which already advanced the cursor) before attempting to parse again.
 
-### 4.3 Don’t “double-fix”
+### 4.3 Container-scoped recovery (required for practical tolerant parsing)
+
+When an error occurs while parsing an element inside a container (list/tuple/map/bitstring/call args):
+
+1. Emit an error node for **only the failing element** (not the whole container).
+2. Synchronize to the nearest container boundary: `:",", closer, :eof`.
+3. If a comma is found, continue parsing subsequent elements.
+4. If a closer is found, finish the container with the elements accumulated so far.
+
+Recovery MUST avoid consuming the container’s closing delimiter as “skipped junk” (except when the lexer already advanced to/through it as part of recovery).
+
+Implementation note: V1 requires recovery hooks in container/string/call parsing paths (e.g., delimited element loops), not only at the top-level `expr_list` boundary.
+
+### 4.4 Checkpoints and backtracking
+
+ToxicParser uses checkpoint/rewind for speculative parses. Tolerant mode must preserve these invariants:
+
+- Diagnostics collected during a speculative branch MUST be discarded if that branch is abandoned via rewind.
+- Rewinding MUST restore `state.diagnostics` and any diagnostic ids/allocators to the checkpoint state.
+
+### 4.5 Don’t “double-fix”
 
 If the lexer already recovered:
 
 - Do not try to re-synthesize terminators.
 - Do not attempt to interpret the error payload and “correct” it.
 - Do not re-tokenize the source region.
+- Do not emit a second parser-phase diagnostic for a lexer-originated error unless the parser is now blocked at a new, distinct construct boundary.
+- If the lexer sanitized an identifier (tolerant sanitization), accept the sanitized token and reuse the lexer diagnostic rather than re-validating and re-diagnosing.
 
 The parser’s role is to:
 
@@ -192,7 +254,7 @@ This section enumerates every case in `test/errors_strict_test.exs` and specifie
 Notation:
 
 - **Diag**: a `%ToxicParser.Error{}` appended to `result.diagnostics`.
-- **ErrNode**: `{:__error__, ..., [%{diag_id: ...}]}`
+- **ErrNode**: `{:__error__, ..., payload}` (recommended payload includes `diag_id`)
 - **Keep** means keep already-parsed valid children unchanged.
 - **Sync** indicates the intended sync boundary (expression or container level).
 
@@ -334,7 +396,7 @@ For all items below, the lexer emits `:error_token` with a precise meta span and
    - AST: `ErrNode` in place of number literal.
 
 31. **consecutive semicolons** (`";;"`)
-   - AST: `__block__` containing a single `ErrNode` (or omit entirely and anchor diag at root) depending on whether an expression is expected at that location.
+   - AST: prefer `{:__block__, [], []}` (no expression-level error node), with a lexer diagnostic anchored at `:root`. This avoids inventing an expression where none exists.
 
 32. **alias unexpected paren** (`"Foo()"`)
    - AST: `ErrNode` representing the invalid call; keep `Foo` alias as child if lexer still emits it.
@@ -421,7 +483,7 @@ For all items below, the lexer emits `:error_token` with a precise meta span and
    - AST: same as 58.
 
 60. **quoted call invalid hex escape** (`"Foo.\"\\x\""`) (currently a crash in strict mode)
-   - AST (tolerant): must not crash; emit `ErrNode` for the quoted member and keep parsing the surrounding dot structure as `ErrNode(children: [Keep(Foo)])`.
+   - AST (tolerant): must not crash; keep `Foo` as a valid left operand and represent the member as `ErrNode` inside the dot/call structure (so tooling can still “see” `Foo`).
 
 61. **quoted call invalid unicode escape** (`"Foo.\"\\u\""`)
    - AST: same as 60.
@@ -486,4 +548,6 @@ Tolerant mode V1 is considered correct if:
 - Every diagnostic has a bounded range (or is explicitly marked synthetic) and is anchored to a specific AST subnode (error node, node meta, or root).
 - Lexer error tokens are treated as authoritative and are not “re-fixed” by parser logic.
 - Any parser-synthesized placeholder nodes are clearly marked synthetic and do not claim real source ranges.
-
+- `details.id` values are unique within a single parse result, and can be used to correlate diagnostics with error nodes/events.
+- Recovery inside containers preserves valid sibling elements and does not shift their metadata.
+- Checkpoint/rewind does not leak diagnostics from abandoned branches.
