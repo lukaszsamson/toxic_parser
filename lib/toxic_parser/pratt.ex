@@ -114,30 +114,9 @@ defmodule ToxicParser.Pratt do
   """
   @spec parse(State.t(), Cursor.t(), context(), EventLog.t()) :: result()
   def parse(%State{} = state, cursor, %Context{} = context, %EventLog{} = log) do
-    parse_opts = %ParseOpts{emit_warnings?: state.emit_warnings?}
-
     with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
-         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
-      led(left, state, cursor, log, 0, context, parse_opts)
-    else
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
-      # Handle keyword_key from Strings.parse - bubble up to caller
-      {:keyword_key, _, _, _, _, _} = keyword_key -> keyword_key
-      {:keyword_key_interpolated, _, _, _, _, _, _, _} = keyword_key -> keyword_key
-      other -> Result.normalize_error(other, cursor, log)
-    end
-  end
-
-  defp parse(
-         %State{} = state,
-         cursor,
-         %Context{} = context,
-         %EventLog{} = log,
-         %ParseOpts{} = opts
-       ) do
-    with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
-         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, opts) do
-      led(left, state, cursor, log, 0, context, opts)
+         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log) do
+      led(left, state, cursor, log, 0, context)
     else
       {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
       # Handle keyword_key from Strings.parse - bubble up to caller
@@ -218,10 +197,25 @@ defmodule ToxicParser.Pratt do
         %EventLog{} = log,
         min_bp,
         %ParseOpts{} = opts \\ %ParseOpts{}
-      )
-      when is_integer(min_bp) and min_bp >= 0 do
-    opts = %{opts | min_bp: min_bp, emit_warnings?: state.emit_warnings?}
-    parse(state, cursor, context, log, opts)
+      ) do
+    # Update opts with min_bp for this parse level
+    parse_opts = %{
+      opts
+      | min_bp: min_bp,
+        string_min_bp: min_bp,
+        emit_warnings?: state.emit_warnings?
+    }
+
+    with {:ok, token, state, cursor} <- TokenAdapter.next(state, cursor),
+         {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
+      led(left, state, cursor, log, min_bp, context, parse_opts)
+    else
+      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
+      # Handle keyword_key from Strings.parse - bubble up to caller
+      {:keyword_key, _, _, _, _, _} = keyword_key -> keyword_key
+      {:keyword_key_interpolated, _, _, _, _, _, _, _} = keyword_key -> keyword_key
+      other -> Result.normalize_error(other, cursor, log)
+    end
   end
 
   @doc "Exposes binary binding power."
@@ -244,7 +238,7 @@ defmodule ToxicParser.Pratt do
 
   # Handle unary operators in nud (null denotation)
   defp nud(token, state, cursor, context, log) do
-    nud(token, state, cursor, context, log, %ParseOpts{emit_warnings?: state.emit_warnings?})
+    nud(token, state, cursor, context, log, %ParseOpts{})
   end
 
   defp nud(
@@ -2215,7 +2209,7 @@ defmodule ToxicParser.Pratt do
           with {:ok, kw_list, state, cursor, log} <-
                  Keywords.parse_kw_no_parens_call(state, cursor, rhs_context, log) do
             {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
-            led(combined, state, cursor, log, min_bp, context, opts)
+            led(combined, state, cursor, log, min_bp, context)
           end
         else
           case parse_rhs(rhs_token, state, cursor, rhs_context, log, rhs_min_bp) do
@@ -2232,14 +2226,21 @@ defmodule ToxicParser.Pratt do
                      parse_with_min_bp(state, cursor, rhs_context, log, rhs_min_bp) do
                 key_ast = Builder.Helpers.literal(key_atom, key_meta, state)
                 kw_list = [{key_ast, value_ast}]
-
-                {combined, state} =
-                  build_binary_op(op_token, left, kw_list, newlines, state, opts)
-
-                led(combined, state, cursor, log, min_bp, context, opts)
+                # Check for more keywords after comma
+                handle_when_keyword_continuation(
+                  kw_list,
+                  left,
+                  op_token,
+                  min_bp,
+                  newlines,
+                  state,
+                  cursor,
+                  context,
+                  log,
+                  opts
+                )
               end
 
-            # String was a quoted interpolated keyword key
             {:keyword_key_interpolated, parts, kind, start_meta, delimiter, state, cursor, log} ->
               {state, cursor} = EOE.skip(state, cursor)
 
@@ -2250,25 +2251,106 @@ defmodule ToxicParser.Pratt do
 
                 kw_list = [{key_ast, value_ast}]
 
-                {combined, state} =
-                  build_binary_op(op_token, left, kw_list, newlines, state, opts)
-
-                led(combined, state, cursor, log, min_bp, context, opts)
+                handle_when_keyword_continuation(
+                  kw_list,
+                  left,
+                  op_token,
+                  min_bp,
+                  newlines,
+                  state,
+                  cursor,
+                  context,
+                  log,
+                  opts
+                )
               end
 
-            other ->
-              Result.normalize_error(other, cursor, log)
+            {:error, reason, state, cursor, log} ->
+              {:error, reason, state, cursor, log}
           end
         end
 
-      {:ok, _, cursor} ->
-        {:ok, left, state, cursor, log}
-
-      {:eof, _state, cursor} ->
+      {:eof, state, cursor} ->
         {:error, :unexpected_eof, state, cursor, log}
 
-      {:error, diag, _state, cursor} ->
+      {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
+    end
+  end
+
+  # Handle keyword continuation for `when` RHS - check for more keywords after comma
+  defp handle_when_keyword_continuation(
+         kw_list,
+         left,
+         op_token,
+         min_bp,
+         newlines,
+         state,
+         cursor,
+         context,
+         log,
+         opts
+       ) do
+    case Cursor.peek(cursor) do
+      {:ok, {:",", _, _}, cursor} ->
+        {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+        {state, cursor} = EOE.skip(state, cursor)
+
+        case Cursor.peek(cursor) do
+          {:ok, {kind, _meta, _value} = tok, cursor} ->
+            cond do
+              Keywords.starts_kw?(tok) ->
+                with {:ok, more_kw, state, cursor, log} <-
+                       Keywords.parse_kw_no_parens_call(state, cursor, context, log) do
+                  {combined, state} =
+                    build_binary_op(op_token, left, kw_list ++ more_kw, newlines, state, opts)
+
+                  led(combined, state, cursor, log, min_bp, context)
+                end
+
+              kind in [:list_string_start, :bin_string_start] ->
+                # Potentially another quoted keyword - parse via expression
+                with {:ok, expr, state, cursor, log} <-
+                       Expressions.expr(state, cursor, context, log) do
+                  if is_keyword_list_result(expr) do
+                    # It was a keyword list - merge and continue
+                    handle_when_keyword_continuation(
+                      kw_list ++ expr,
+                      left,
+                      op_token,
+                      min_bp,
+                      newlines,
+                      state,
+                      cursor,
+                      context,
+                      log,
+                      opts
+                    )
+                  else
+                    # Not a keyword - finalize current kw_list
+                    {combined, state} =
+                      build_binary_op(op_token, left, kw_list, newlines, state, opts)
+
+                    led(combined, state, cursor, log, min_bp, context)
+                  end
+                end
+
+              true ->
+                # Not a keyword - finalize
+                {combined, state} =
+                  build_binary_op(op_token, left, kw_list, newlines, state, opts)
+
+                led(combined, state, cursor, log, min_bp, context)
+            end
+
+          {:ok, _, cursor} ->
+            {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
+            led(combined, state, cursor, log, min_bp, context)
+        end
+
+      {:ok, _, cursor} ->
+        {combined, state} = build_binary_op(op_token, left, kw_list, newlines, state, opts)
+        led(combined, state, cursor, log, min_bp, context, opts)
     end
   end
 
