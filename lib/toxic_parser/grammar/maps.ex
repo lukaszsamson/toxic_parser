@@ -5,7 +5,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, ExprClass, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.{Helpers, Meta}
-  alias ToxicParser.Grammar.{Brackets, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Brackets, Delimited, EOE, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -1299,7 +1299,7 @@ defmodule ToxicParser.Grammar.Maps do
           {:ok, {:",", comma_meta, _value}, cursor} when state.mode == :tolerant ->
             {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
 
-            case parse_assoc_list([], state, cursor, ctx, log) do
+            case parse_assoc_list(state, cursor, ctx, log) do
               {:ok, entries, close_meta, state, cursor, log} ->
                 {error_node, state} =
                   build_kw_tail_error_node(
@@ -1328,7 +1328,7 @@ defmodule ToxicParser.Grammar.Maps do
 
       {:no_kw, state, cursor, log} ->
         # Try assoc entries
-        parse_assoc_list([], state, cursor, ctx, log)
+        parse_assoc_list(state, cursor, ctx, log)
 
       {:error, reason, state, cursor, log} ->
         {:error, reason, state, cursor, log}
@@ -1358,59 +1358,20 @@ defmodule ToxicParser.Grammar.Maps do
 
   # Parse assoc list (assoc_base): one or more assoc_expr separated by commas
   # assoc_base -> assoc_expr | assoc_expr ',' assoc_base
-  defp parse_assoc_list(acc, state, cursor, ctx, log) do
-    with {:ok, entry, state, cursor, log} <-
-           parse_assoc_expr(state, cursor, Context.container_expr(), log) do
-      {state, cursor} = EOE.skip(state, cursor)
+  defp parse_assoc_list(state, cursor, ctx, log) do
+    container_ctx = Context.container_expr()
 
-      case Cursor.peek(cursor) do
-        {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-          # End of assoc list
-          {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-          close_meta = Helpers.token_meta(close_tok)
-          {:ok, Enum.reverse([entry | acc]), close_meta, state, cursor, log}
-
-        {:ok, {:",", _meta, _value}, cursor} ->
-          {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+    item_fun = fn state, cursor, _ctx, log ->
+      case Keywords.try_parse_kw_data(state, cursor, container_ctx, log) do
+        {:ok, kw_list, state, cursor, log} ->
           {state, cursor} = EOE.skip(state, cursor)
 
           case Cursor.peek(cursor) do
-            {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-              # Trailing comma
-              {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-              close_meta = Helpers.token_meta(close_tok)
-              {:ok, Enum.reverse([entry | acc]), close_meta, state, cursor, log}
+            {:ok, {:"}", _meta, _value}, cursor} ->
+              {:ok, {:kw_data, kw_list}, state, cursor, log}
 
-            {:ok, _, cursor} ->
-              # Check if next is kw_data (assoc_base ',' kw_data)
-              case Keywords.try_parse_kw_data(state, cursor, Context.container_expr(), log) do
-                {:ok, kw_list, state, cursor, log} ->
-                  {state, cursor} = EOE.skip(state, cursor)
-
-                  case TokenAdapter.next(state, cursor) do
-                    {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
-                      close_meta = Helpers.token_meta(close_tok)
-                      # kw_list is already a list of keyword tuples, don't wrap in another list
-                      entries = :lists.reverse([entry | acc], kw_list)
-                      {:ok, entries, close_meta, state, cursor, log}
-
-                    {:ok, {got_kind, _meta, _value}, state, cursor} ->
-                      {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
-
-                    {:eof, state, cursor} ->
-                      {:error, :unexpected_eof, state, cursor, log}
-
-                    {:error, diag, state, cursor} ->
-                      {:error, diag, state, cursor, log}
-                  end
-
-                {:no_kw, state, cursor, log} ->
-                  # Continue with more assoc entries
-                  parse_assoc_list([entry | acc], state, cursor, ctx, log)
-
-                {:error, reason, state, cursor, log} ->
-                  {:error, reason, state, cursor, log}
-              end
+            {:ok, {kind, _meta, _value}, cursor} ->
+              {:error, {:expected, :"}", got: kind}, state, cursor, log}
 
             {:eof, cursor} ->
               {:error, :unexpected_eof, state, cursor, log}
@@ -1419,15 +1380,75 @@ defmodule ToxicParser.Grammar.Maps do
               {:error, diag, state, cursor, log}
           end
 
-        {:eof, cursor} ->
-          {:error, :unexpected_eof, state, cursor, log}
+        {:no_kw, state, cursor, log} ->
+          {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-        {:error, diag, cursor} ->
-          {:error, diag, state, cursor, log}
+          case parse_assoc_expr(checkpoint_state, cursor, container_ctx, log) do
+            {:ok, entry, state, cursor, log} ->
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              {:ok, {:entry, entry}, state, cursor, log}
 
-        {:ok, _tok, cursor} ->
-          {:error, :expected_closing_brace, state, cursor, log}
+            {:error, reason, state, cursor, log} ->
+              if state.mode == :tolerant do
+                {state, cursor} = TokenAdapter.rewind(state, ref)
+                {:error, reason, state, cursor, log}
+              else
+                state = TokenAdapter.drop_checkpoint(state, ref)
+                {:error, reason, state, cursor, log}
+              end
+          end
+
+        {:error, reason, state, cursor, log} ->
+          {:error, reason, state, cursor, log}
       end
+    end
+
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = error_meta_from_reason(reason, cursor)
+      {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+      {:ok, {:entry, error_node}, state, cursor, log}
+    end
+
+    case Delimited.parse_comma_separated(state, cursor, ctx, log, :"}", item_fun,
+           allow_empty?: false,
+           on_error: on_error
+         ) do
+      {:ok, tagged_items, state, cursor, log} ->
+        case TokenAdapter.next(state, cursor) do
+          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+            close_meta = Helpers.token_meta(close_tok)
+            entries = finalize_assoc_items(tagged_items)
+            {:ok, entries, close_meta, state, cursor, log}
+
+          {:ok, {got_kind, _meta, _value}, state, cursor} ->
+            {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
+
+          {:eof, state, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
+
+          {:error, diag, state, cursor} ->
+            {:error, diag, state, cursor, log}
+        end
+
+      {:error, reason, state, cursor, log} ->
+        {:error, reason, state, cursor, log}
+    end
+  end
+
+  defp finalize_assoc_items([]), do: []
+
+  defp finalize_assoc_items(tagged_items) do
+    case List.last(tagged_items) do
+      {:kw_data, kw_list} ->
+        entries =
+          tagged_items
+          |> Enum.drop(-1)
+          |> Enum.map(fn {:entry, entry} -> entry end)
+
+        entries ++ kw_list
+
+      _ ->
+        Enum.map(tagged_items, fn {:entry, entry} -> entry end)
     end
   end
 
@@ -1499,11 +1520,35 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp kw_tail_error_at(_), do: {[], "syntax error before: ", ""}
 
+  defp error_meta_from_reason(reason, cursor) do
+    case reason do
+      {meta, _msg, _token} when is_list(meta) ->
+        meta
+
+      {meta, _msg} when is_list(meta) ->
+        meta
+
+      {{line, column}, _, _} when is_integer(line) and is_integer(column) ->
+        [line: line, column: column]
+
+      _ ->
+        {line, column} = Cursor.position(cursor)
+        [line: line || 1, column: column || 1]
+    end
+  end
+
   defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
     {line, column} =
       case meta do
         {{line, column}, _, _} -> {line, column}
-        _ -> Cursor.position(cursor)
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
       end
 
     {id, state} = State.next_diagnostic_id(state)

@@ -61,6 +61,10 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("[foo 1, 2]")
     end
 
+    test "unexpected comma inside tuple" do
+      assert_error_conforms("{foo 1, 2}")
+    end
+
     test "too many arguments in access syntax" do
       assert_error_conforms("foo[1, 2]")
     end

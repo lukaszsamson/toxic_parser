@@ -280,36 +280,33 @@ defmodule ToxicParser.Grammar.Containers do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <-
-                 Expressions.expr(state, cursor, container_ctx, log) do
-            # Validate no_parens expressions are not allowed in containers
-            case ExprClass.classify(expr) do
-              :no_parens ->
-                if state.mode == :tolerant do
-                  meta =
-                    case expr do
-                      {_, meta, _} -> meta
-                      _ -> []
-                    end
+          {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-                  {error_node, state} =
-                    build_kw_tail_error_node(
-                      NoParensErrors.error_no_parens_container_strict(expr),
-                      meta,
-                      state,
-                      cursor,
-                      []
-                    )
+          case Expressions.expr(checkpoint_state, cursor, container_ctx, log) do
+            {:ok, expr, state, cursor, log} ->
+              # Validate no_parens expressions are not allowed in containers
+              case ExprClass.classify(expr) do
+                :no_parens ->
+                  if state.mode == :tolerant do
+                    {state, cursor} = TokenAdapter.rewind(state, ref)
 
-                  {:ok, {:expr, error_node}, state, cursor, log}
-                else
-                  {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
-                   log}
-                end
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state,
+                     cursor, log}
+                  else
+                    state = TokenAdapter.drop_checkpoint(state, ref)
 
-              _ ->
-                {:ok, {:expr, expr}, state, cursor, log}
-            end
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                     log}
+                  end
+
+                _ ->
+                  state = TokenAdapter.drop_checkpoint(state, ref)
+                  {:ok, {:expr, expr}, state, cursor, log}
+              end
+
+            {:error, reason, state, cursor, log} ->
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              {:error, reason, state, cursor, log}
           end
 
         {:error, {:expected, :keyword, _details}, state, cursor, log} ->
@@ -320,10 +317,17 @@ defmodule ToxicParser.Grammar.Containers do
       end
     end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = error_meta_from_reason(reason, cursor)
+      {error_node, state} = build_container_error_node(reason, meta, state, cursor)
+      {:ok, {:expr, error_node}, state, cursor, log}
+    end
+
     with {:ok, tagged_items, state, cursor, log} <-
            Delimited.parse_comma_separated(state, cursor, container_ctx, log, :"]", item_fun,
              allow_empty?: true,
-             skip_eoe_initial?: false
+             skip_eoe_initial?: false,
+             on_error: on_error
            ) do
       case TokenAdapter.next(state, cursor) do
         {:ok, {:"]", _meta, _value} = close_tok, state, cursor} ->
@@ -455,17 +459,33 @@ defmodule ToxicParser.Grammar.Containers do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <-
-                 Expressions.expr(state, cursor, container_ctx, log) do
-            # Validate no_parens expressions are not allowed in containers
-            case ExprClass.classify(expr) do
-              :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
-                 log}
+          {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-              _ ->
-                {:ok, {:expr, expr}, state, cursor, log}
-            end
+          case Expressions.expr(checkpoint_state, cursor, container_ctx, log) do
+            {:ok, expr, state, cursor, log} ->
+              # Validate no_parens expressions are not allowed in containers
+              case ExprClass.classify(expr) do
+                :no_parens ->
+                  if state.mode == :tolerant do
+                    {state, cursor} = TokenAdapter.rewind(state, ref)
+
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state,
+                     cursor, log}
+                  else
+                    state = TokenAdapter.drop_checkpoint(state, ref)
+
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                     log}
+                  end
+
+                _ ->
+                  state = TokenAdapter.drop_checkpoint(state, ref)
+                  {:ok, {:expr, expr}, state, cursor, log}
+              end
+
+            {:error, reason, state, cursor, log} ->
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              {:error, reason, state, cursor, log}
           end
 
         {:error, {:expected, :keyword, _details}, state, cursor, log} ->
@@ -476,9 +496,16 @@ defmodule ToxicParser.Grammar.Containers do
       end
     end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = error_meta_from_reason(reason, cursor)
+      {error_node, state} = build_container_error_node(reason, meta, state, cursor)
+      {:ok, {:expr, error_node}, state, cursor, log}
+    end
+
     with {:ok, tagged_items, state, cursor, log} <-
            Delimited.parse_comma_separated(state, cursor, container_ctx, log, :"}", item_fun,
-             allow_empty?: true
+             allow_empty?: true,
+             on_error: on_error
            ) do
       # Check for invalid keyword list at start of tuple
       # {foo: :bar} is invalid - tuples cannot start with keyword data
@@ -596,6 +623,23 @@ defmodule ToxicParser.Grammar.Containers do
 
     error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_meta_from_reason(reason, cursor) do
+    case reason do
+      {meta, _msg, _token} when is_list(meta) ->
+        meta
+
+      {meta, _msg} when is_list(meta) ->
+        meta
+
+      {{line, column}, _, _} when is_integer(line) and is_integer(column) ->
+        [line: line, column: column]
+
+      _ ->
+        {line, column} = Cursor.position(cursor)
+        [line: line || 1, column: column || 1]
+    end
   end
 
   defp handle_invalid_kw_tail_error(_state, cursor) do

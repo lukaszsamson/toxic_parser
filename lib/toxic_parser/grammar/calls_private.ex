@@ -145,35 +145,31 @@ defmodule ToxicParser.Grammar.CallsPrivate do
           end
 
         {:no_kw, state, cursor, log} ->
-          with {:ok, expr, state, cursor, log} <-
-                 Expressions.expr(state, cursor, container_ctx, log) do
-            # Validate no_parens expressions are not allowed inside paren calls
-            case ExprClass.classify(expr) do
-              :no_parens ->
-                if state.mode == :tolerant do
-                  meta =
-                    case expr do
-                      {_, meta, _} -> meta
-                      _ -> []
-                    end
+          {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-                  {error_node, state} =
-                    build_kw_tail_error_node(
-                      NoParensErrors.error_no_parens_many_strict(expr),
-                      meta,
-                      state,
-                      cursor,
-                      []
-                    )
+          case Expressions.expr(checkpoint_state, cursor, container_ctx, log) do
+            {:ok, expr, state, cursor, log} ->
+              # Validate no_parens expressions are not allowed inside paren calls
+              case ExprClass.classify(expr) do
+                :no_parens ->
+                  if state.mode == :tolerant do
+                    {state, cursor} = TokenAdapter.rewind(state, ref)
 
-                  {:ok, {:expr, error_node}, state, cursor, log}
-                else
-                  {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
-                end
+                    {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor,
+                     log}
+                  else
+                    state = TokenAdapter.drop_checkpoint(state, ref)
+                    {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
+                  end
 
-              _ ->
-                {:ok, {:expr, expr}, state, cursor, log}
-            end
+                _ ->
+                  state = TokenAdapter.drop_checkpoint(state, ref)
+                  {:ok, {:expr, expr}, state, cursor, log}
+              end
+
+            {:error, reason, state, cursor, log} ->
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              {:error, reason, state, cursor, log}
           end
 
         {:error, reason, state, cursor, log} ->
@@ -181,10 +177,17 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       end
     end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = error_meta_from_reason(reason, cursor)
+      {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+      {:ok, {:expr, error_node}, state, cursor, log}
+    end
+
     with {:ok, tagged_items, state, cursor, log} <-
            Delimited.parse_comma_separated(state, cursor, container_ctx, log, :")", item_fun,
              allow_empty?: false,
-             allow_trailing_comma?: false
+             allow_trailing_comma?: false,
+             on_error: on_error
            ) do
       {:ok, finalize_call_args_parens_items(tagged_items), state, cursor, log}
     end
@@ -261,5 +264,22 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
     error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_meta_from_reason(reason, cursor) do
+    case reason do
+      {meta, _msg, _token} when is_list(meta) ->
+        meta
+
+      {meta, _msg} when is_list(meta) ->
+        meta
+
+      {{line, column}, _, _} when is_integer(line) and is_integer(column) ->
+        [line: line, column: column]
+
+      _ ->
+        {line, column} = Cursor.position(cursor)
+        [line: line || 1, column: column || 1]
+    end
   end
 end

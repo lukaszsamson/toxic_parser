@@ -19,6 +19,9 @@ defmodule ToxicParser.TolerantModeTest do
     "expression after keyword list in call",
     "expression after keyword list in map",
     "unexpected comma inside containers",
+    "unexpected comma inside tuple",
+    "unexpected comma inside map",
+    "invalid expression inside paren call",
     "too many arguments in access syntax",
     "string missing terminator",
     "interpolation missing terminator",
@@ -107,6 +110,9 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "unexpected parentheses due to space", code: "foo (hello, world)"},
     %{name: "unexpected comma in nested calls", code: "foo 1, foo 2, 3"},
     %{name: "unexpected comma inside containers", code: "[foo 1, 2]"},
+    %{name: "unexpected comma inside tuple", code: "{foo 1, 2}"},
+    %{name: "unexpected comma inside map", code: "%{foo 1, bar: 2}"},
+    %{name: "invalid expression inside paren call", code: "call(1 + *, 2)"},
     %{name: "too many arguments in access syntax", code: "foo[1, 2]"},
     %{name: "invalid keyword identifier with do", code: "if true do:\n"},
     %{name: "invalid keyword identifier", code: "if true else: 1"},
@@ -261,9 +267,21 @@ defmodule ToxicParser.TolerantModeTest do
 
   defp assert_recovered_expression(ast, error_meta, name) do
     exprs = expr_list(ast)
+    container_names = [
+      "unexpected comma inside containers",
+      "unexpected comma inside tuple",
+      "unexpected comma inside map",
+      "invalid expression inside paren call"
+    ]
 
     cond do
       name in ["literal encoder error"] ->
+        assert error_meta != []
+
+      name in container_names ->
+        [container_ast | _] = exprs
+        assert_container_error_and_two(container_ast)
+        assert Enum.any?(exprs, &(&1 == 2))
         assert error_meta != []
 
       name in ["quoted call missing terminator"] ->
@@ -336,6 +354,29 @@ defmodule ToxicParser.TolerantModeTest do
   end
 
   defp has_foo_keyword?(_other, found), do: found
+
+  defp assert_container_error_and_two(ast) do
+    case container_elements(ast) do
+      elements when is_list(elements) ->
+        assert Enum.any?(elements, &match?({:__error__, _meta, _payload}, &1))
+        assert has_literal_two?(elements)
+
+      _ ->
+        flunk("expected container AST with elements, got: #{inspect(ast)}")
+    end
+  end
+
+  defp container_elements(list) when is_list(list), do: list
+  defp container_elements({:{}, _meta, elements}) when is_list(elements), do: elements
+  defp container_elements({:%{}, _meta, elements}) when is_list(elements), do: elements
+
+  defp container_elements(tuple) when is_tuple(tuple) and tuple_size(tuple) == 2,
+    do: Tuple.to_list(tuple)
+
+  defp container_elements({name, _meta, args}) when is_atom(name) and is_list(args),
+    do: args
+
+  defp container_elements(_), do: nil
 
   defp has_literal_two?(ast), do: has_literal_two?(ast, false)
 
