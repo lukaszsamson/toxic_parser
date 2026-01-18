@@ -886,7 +886,9 @@ defmodule ToxicParser.Pratt do
           ast = {op_value, TokenAdapter.token_meta(op_token), []}
           {:ok, ast, state, cursor, log}
         else
-          {:error, :unexpected_eof, state, cursor, log}
+          meta = TokenAdapter.token_meta(op_token)
+          range_meta = TokenAdapter.meta(op_token)
+          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
         end
 
       {:error, diag, state, cursor} ->
@@ -923,7 +925,9 @@ defmodule ToxicParser.Pratt do
         end
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        meta = TokenAdapter.token_meta(op_token)
+        range_meta = TokenAdapter.meta(op_token)
+        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
@@ -1023,7 +1027,9 @@ defmodule ToxicParser.Pratt do
 
       {:eof, checkpoint_state, cursor_after_next} ->
         state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
-        {:error, :unexpected_eof, state, cursor_after_next, log}
+        meta = TokenAdapter.token_meta(op_token)
+        range_meta = TokenAdapter.meta(op_token)
+        maybe_recover_error(:unexpected_eof, state, cursor_after_next, log, meta, range_meta)
 
       {:error, diag, checkpoint_state, cursor_after_next} ->
         state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
@@ -1454,6 +1460,9 @@ defmodule ToxicParser.Pratt do
             {{:., dot_meta, [left, :{}]}, Meta.closing_meta(dot_meta, close_meta, newlines), args}
 
           led(combined, state, cursor, log, min_bp, context, opts)
+        else
+          {:error, reason, state, cursor, log} ->
+            maybe_recover_error(reason, state, cursor, log, dot_meta, nil)
         end
 
       other ->
@@ -1591,7 +1600,7 @@ defmodule ToxicParser.Pratt do
                         {:error, {:expected, :")", got: got_kind}, state, cursor, log}
 
                       {:eof, state, cursor} ->
-                        {:error, :unexpected_eof, state, cursor, log}
+                        maybe_recover_error(:unexpected_eof, state, cursor, log, dot_meta, nil)
 
                       {:error, diag, state, cursor} ->
                         {:error, diag, state, cursor, log}
@@ -1654,7 +1663,8 @@ defmodule ToxicParser.Pratt do
           end
         else
           {:error, :unexpected_eof, state, cursor, log} ->
-            {:error, syntax_error_before(dot_meta), state, cursor, log}
+            reason = syntax_error_before(dot_meta)
+            maybe_recover_error(reason, state, cursor, log, dot_meta, nil)
 
           {:error, reason, state, cursor, log} ->
             {:error, reason, state, cursor, log}
@@ -1696,7 +1706,9 @@ defmodule ToxicParser.Pratt do
             {:error, {:expected, :"]", got: got_kind}, state, cursor, log}
 
           {:eof, state, cursor} ->
-            {:error, :unexpected_eof, state, cursor, log}
+            meta = TokenAdapter.token_meta(open_tok)
+            range_meta = TokenAdapter.meta(open_tok)
+            maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
 
           {:error, diag, state, cursor} ->
             {:error, diag, state, cursor, log}
@@ -2302,7 +2314,9 @@ defmodule ToxicParser.Pratt do
         end
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        meta = TokenAdapter.token_meta(op_token)
+        range_meta = TokenAdapter.meta(op_token)
+        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
@@ -2423,7 +2437,9 @@ defmodule ToxicParser.Pratt do
         end
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        meta = TokenAdapter.token_meta(op_token)
+        range_meta = TokenAdapter.meta(op_token)
+        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
@@ -2964,14 +2980,18 @@ defmodule ToxicParser.Pratt do
               combined = {callee, call_meta, Enum.reverse(args)}
               led_dots_and_calls(combined, state, cursor, log, context)
             else
-              other -> Result.normalize_error(other, cursor, log)
+              {:error, reason, state, cursor, log} ->
+                maybe_recover_error(reason, state, cursor, log, dot_meta, nil)
+
+              other ->
+                Result.normalize_error(other, cursor, log)
             end
 
           {:ok, {got_kind, _meta, _value}, state, cursor} ->
             {:error, {:expected, :"(", got: got_kind}, state, cursor, log}
 
           {:eof, state, cursor} ->
-            {:error, :unexpected_eof, state, cursor, log}
+            maybe_recover_error(:unexpected_eof, state, cursor, log, dot_meta, nil)
 
           {:error, diag, state, cursor} ->
             {:error, diag, state, cursor, log}
@@ -3035,13 +3055,13 @@ defmodule ToxicParser.Pratt do
 
         # Skip leading EOE and count newlines
         {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+        callee_meta = extract_meta(left)
 
         with {:ok, args, state, cursor, log} <-
                ToxicParser.Grammar.CallsPrivate.parse_paren_args([], state, cursor, context, log) do
           with {:ok, close_meta, trailing_newlines, state, cursor} <-
                  Meta.consume_closing(state, cursor, :")") do
             total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, args == [])
-            callee_meta = extract_meta(left)
             call_meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
 
             combined =
@@ -3056,7 +3076,11 @@ defmodule ToxicParser.Pratt do
             # Continue to handle more dots and calls
             led_dots_and_calls(combined, state, cursor, log, context)
           else
-            other -> Result.normalize_error(other, cursor, log)
+            {:error, reason, state, cursor, log} ->
+              maybe_recover_error(reason, state, cursor, log, callee_meta, nil)
+
+            other ->
+              Result.normalize_error(other, cursor, log)
           end
         end
 
@@ -3092,7 +3116,9 @@ defmodule ToxicParser.Pratt do
               {:error, {:expected, :"]", got: got_kind}, state, cursor, log}
 
             {:eof, state, cursor} ->
-              {:error, :unexpected_eof, state, cursor, log}
+              open_meta = TokenAdapter.token_meta(open_tok)
+              range_meta = TokenAdapter.meta(open_tok)
+              maybe_recover_error(:unexpected_eof, state, cursor, log, open_meta, range_meta)
 
             {:error, diag, state, cursor} ->
               {:error, diag, state, cursor, log}

@@ -94,16 +94,21 @@ defmodule ToxicParser.TolerantModeTest do
     "kw identifier at expression position",
     "binary operator at expression start",
     "dot missing member",
+    "dot container missing closer",
+    "bracket access missing closer",
     "capture missing int",
     "fn missing end",
     "do block missing end",
+    "case block missing end",
     "stab invalid placement",
     "list missing closer",
     "tuple missing closer",
     "paren call missing closer",
     "map missing closer",
     "bitstring missing closer",
-    "paren expression missing closer"
+    "paren expression missing closer",
+    "binary op missing rhs eof",
+    "fn paren patterns missing closer"
   ]
 
   @error_cases [
@@ -189,9 +194,12 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "kw identifier at expression position", code: "foo:", no_following: true},
     %{name: "binary operator at expression start", code: "* 1"},
     %{name: "dot missing member", code: "Foo."},
+    %{name: "dot container missing closer", code: "Foo.{1", no_following: true},
+    %{name: "bracket access missing closer", code: "foo[1", no_following: true},
     %{name: "capture missing int", code: "&", no_following: true},
     %{name: "fn missing end", code: "fn -> 1", no_following: true},
     %{name: "do block missing end", code: "if true do 1", no_following: true},
+    %{name: "case block missing end", code: "case x do 1 -> 2", no_following: true},
     %{name: "stab invalid placement", code: "fn 1; 2 -> 3 end"},
     %{name: "list missing closer", code: "[1, 2", no_following: true},
     %{name: "tuple missing closer", code: "{1, 2", no_following: true},
@@ -199,6 +207,8 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "map missing closer", code: "%{a: 1", no_following: true},
     %{name: "bitstring missing closer", code: "<<1, 2", no_following: true},
     %{name: "paren expression missing closer", code: "(1 + 2", no_following: true},
+    %{name: "binary op missing rhs eof", code: "1 +", no_following: true},
+    %{name: "fn paren patterns missing closer", code: "fn (a, b", no_following: true},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -310,12 +320,17 @@ defmodule ToxicParser.TolerantModeTest do
       "capture missing int",
       "fn missing end",
       "do block missing end",
+      "case block missing end",
       "list missing closer",
       "tuple missing closer",
       "paren call missing closer",
       "map missing closer",
       "bitstring missing closer",
-      "paren expression missing closer"
+      "paren expression missing closer",
+      "binary op missing rhs eof",
+      "fn paren patterns missing closer",
+      "dot container missing closer",
+      "bracket access missing closer"
     ]
 
     cond do
