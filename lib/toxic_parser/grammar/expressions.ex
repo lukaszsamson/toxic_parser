@@ -195,17 +195,42 @@ defmodule ToxicParser.Grammar.Expressions do
         {:error, diag, state, cursor, log}
 
       {:ok, token, cursor} ->
-        if should_continue_after_error?(acc, state, cursor) or should_parse_error_token?(state, token) do
-          case expr(state, cursor, ctx, log) do
-            {:ok, next_expr, state, cursor, log} ->
-              {next_expr, state, cursor} = maybe_annotate_eoe(next_expr, state, cursor)
-              collect_exprs([next_expr | acc], state, cursor, ctx, log)
+        cond do
+          should_continue_after_error?(acc, state, cursor) or should_parse_error_token?(state, token) ->
+            case expr(state, cursor, ctx, log) do
+              {:ok, next_expr, state, cursor, log} ->
+                {next_expr, state, cursor} = maybe_annotate_eoe(next_expr, state, cursor)
+                collect_exprs([next_expr | acc], state, cursor, ctx, log)
 
-            {:error, reason, state, cursor, log} ->
-              recover_expr_error(acc, reason, state, cursor, ctx, log)
-          end
-        else
-          finalize_exprs(acc, state, cursor, log)
+              {:error, reason, state, cursor, log} ->
+                recover_expr_error(acc, reason, state, cursor, ctx, log)
+            end
+
+          should_sync_after_error_expr?(acc, state, token) ->
+            case Recovery.sync_expr(state, cursor, log) do
+              {:ok, state, cursor, log} ->
+                case Cursor.peek(cursor) do
+                  {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
+                    {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
+                    collect_exprs(acc, state, cursor, ctx, log)
+
+                  {:ok, {kind, _meta, _value}, cursor}
+                  when kind in [:end_interpolation, :"}", :"]", :")", :end] ->
+                    finalize_exprs(acc, state, cursor, log)
+
+                  {:ok, _tok, cursor} ->
+                    collect_exprs(acc, state, cursor, ctx, log)
+
+                  {:eof, cursor} ->
+                    finalize_exprs(acc, state, cursor, log)
+
+                  {:error, diag, cursor} ->
+                    {:error, diag, state, cursor, log}
+                end
+            end
+
+          true ->
+            finalize_exprs(acc, state, cursor, log)
         end
     end
   end
@@ -385,6 +410,17 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp should_parse_error_token?(_state, _token), do: false
+
+  defp should_sync_after_error_expr?([last | _], %State{mode: :tolerant}, token) do
+    with error_line when is_integer(error_line) <- error_expr_line(last),
+         token_line when is_integer(token_line) <- TokenAdapter.line(token) do
+      token_line == error_line
+    else
+      _ -> false
+    end
+  end
+
+  defp should_sync_after_error_expr?(_acc, _state, _token), do: false
 
   defp error_expr_line({:__error__, meta, _payload}) do
     Keyword.get(meta, :line)

@@ -19,7 +19,49 @@ defmodule ToxicParser.TolerantModeTest do
     "expression after keyword list in call",
     "expression after keyword list in map",
     "unexpected comma inside containers",
-    "too many arguments in access syntax"
+    "too many arguments in access syntax",
+    "string missing terminator",
+    "interpolation missing terminator",
+    "heredoc missing terminator",
+    "string invalid hex escape",
+    "interpolation missing terminator without metadata",
+    "string invalid unicode escape",
+    "string invalid unicode codepoint",
+    "charlist invalid hex escape",
+    "charlist invalid unicode escape",
+    "charlist invalid unicode codepoint",
+    "string heredoc invalid hex escape",
+    "string heredoc invalid unicode escape",
+    "charlist heredoc invalid hex escape",
+    "charlist heredoc invalid unicode escape",
+    "quoted atom invalid hex escape",
+    "quoted atom invalid unicode escape",
+    "quoted keyword invalid hex escape",
+    "quoted keyword invalid unicode escape",
+    "quoted call invalid hex escape",
+    "quoted call invalid unicode escape",
+    "quoted call invalid bidi character",
+    "sigil lowercase invalid delimiter hex escape",
+    "sigil uppercase invalid delimiter hex escape",
+    "sigil lowercase invalid delimiter unicode escape",
+    "sigil uppercase invalid delimiter unicode escape",
+    "string invalid bidi character",
+    "charlist invalid bidi character",
+    "quoted atom invalid bidi character",
+    "quoted keyword invalid bidi character",
+    "string heredoc invalid bidi character",
+    "charlist heredoc invalid bidi character",
+    "sigil lowercase invalid bidi character",
+    "sigil uppercase invalid bidi character",
+    "sigil lowercase heredoc invalid bidi character",
+    "sigil uppercase heredoc invalid bidi character",
+    "sigil lowercase invalid bidi delimiter",
+    "sigil uppercase invalid bidi delimiter",
+    "heredoc invalid header",
+    "sigil invalid lowercase name",
+    "sigil invalid mixed case name",
+    "sigil invalid delimiter",
+    "interpolation not allowed in quoted identifier"
   ]
 
   @error_cases [
@@ -139,7 +181,7 @@ defmodule ToxicParser.TolerantModeTest do
       assert payload.phase == diagnostic.phase
       assert payload.diag_id == diagnostic.details[:id]
       assert diagnostic.details[:anchor][:kind] == :error_node
-      assert_recovered_expression(result.ast, error_meta)
+      assert_recovered_expression(result.ast, error_meta, unquote(name))
       assert_preserves_valid_siblings(result.ast, unquote(name))
       assert_synthetic_meta(result.ast, error_meta, unquote(name))
     end
@@ -162,6 +204,12 @@ defmodule ToxicParser.TolerantModeTest do
     Enum.reduce(args, acc, fn arg, acc -> collect_error_nodes(arg, acc) end)
   end
 
+  defp collect_error_nodes(tuple, acc) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.reduce(acc, fn item, acc -> collect_error_nodes(item, acc) end)
+  end
+
   defp collect_error_nodes(list, acc) when is_list(list) do
     Enum.reduce(list, acc, fn item, acc -> collect_error_nodes(item, acc) end)
   end
@@ -182,10 +230,20 @@ defmodule ToxicParser.TolerantModeTest do
     assert is_list(payload.children)
   end
 
-  defp assert_recovered_expression(ast, error_meta) do
+  defp assert_recovered_expression(ast, error_meta, name) do
     exprs = expr_list(ast)
-    assert Enum.any?(exprs, &(&1 == 2))
-    assert error_meta != []
+
+    if name in [
+         "string missing terminator",
+         "interpolation missing terminator",
+         "interpolation missing terminator without metadata",
+         "heredoc missing terminator"
+       ] do
+      assert error_meta != []
+    else
+      assert Enum.any?(exprs, &(&1 == 2))
+      assert error_meta != []
+    end
   end
 
   defp expr_list({:__block__, _meta, exprs}), do: exprs

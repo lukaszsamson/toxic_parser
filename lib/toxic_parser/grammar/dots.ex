@@ -292,75 +292,96 @@ defmodule ToxicParser.Grammar.Dots do
     with {:ok, fragments, end_kind, state, cursor, log} <-
            collect_fragments([], state, cursor, :quoted_identifier_end, log),
          {:ok, _close, state, cursor} <- TokenAdapter.next(state, cursor) do
-      content = fragments |> Enum.reverse() |> Enum.join("") |> Macro.unescape_string()
-      atom = String.to_atom(content)
+      case safe_unescape_quoted_identifier(fragments, state, start_meta) do
+        {:ok, content} ->
+          atom = String.to_atom(content)
 
-      # Build metadata with delimiter
-      meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
+          # Build metadata with delimiter
+          meta_with_delimiter = [{:delimiter, delimiter} | start_meta]
 
-      cond do
-        # quoted_op_identifier_end means there's a space before next token -> no-parens call
-        end_kind == :quoted_op_identifier_end ->
-          # D."foo" arg - parse no-parens call arguments
-          with {:ok, args, state, cursor, log} <-
-                 ToxicParser.Grammar.Calls.parse_no_parens_args([], state, cursor, ctx, log) do
-            # Return as call AST: {atom, meta, args}
-            {:ok, {atom, meta_with_delimiter, args}, state, cursor, log}
+          cond do
+            # quoted_op_identifier_end means there's a space before next token -> no-parens call
+            end_kind == :quoted_op_identifier_end ->
+              # D."foo" arg - parse no-parens call arguments
+              with {:ok, args, state, cursor, log} <-
+                     ToxicParser.Grammar.Calls.parse_no_parens_args([], state, cursor, ctx, log) do
+                # Return as call AST: {atom, meta, args}
+                {:ok, {atom, meta_with_delimiter, args}, state, cursor, log}
+              end
+
+            # quoted_bracket_identifier_end: D."foo"[1] - return with :allows_bracket flag
+            # so caller knows bracket access is allowed
+            end_kind == :quoted_bracket_identifier_end ->
+              {:ok, {atom, meta_with_delimiter, :allows_bracket}, state, cursor, log}
+
+            # quoted_do_identifier_end: D."foo" do...end - return as call AST, do-block parsed by caller
+            end_kind == :quoted_do_identifier_end ->
+              # Return as call expression {atom, meta, []} with no_parens: true for do-block attachment
+              meta_with_no_parens = [{:no_parens, true} | meta_with_delimiter]
+              {:ok, {atom, meta_with_no_parens, []}, state, cursor, log}
+
+            true ->
+              {quoted_paren_identifier_end_or_immediately_parens, cursor} =
+                if end_kind == :quoted_paren_identifier_end do
+                  {true, cursor}
+                else
+                  case Cursor.peek(cursor) do
+                    {:ok, {:"(", _, _}, cursor} -> {true, cursor}
+                    {:ok, _, cursor} -> {false, cursor}
+                    {:eof, cursor} -> {false, cursor}
+                  end
+                end
+
+              if quoted_paren_identifier_end_or_immediately_parens do
+                # quoted_paren_identifier_end or ( immediately follows: D."foo"()
+                {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
+
+                # Skip leading EOE and count newlines
+                {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
+
+                with {:ok, args, state, cursor, log} <-
+                       ToxicParser.Grammar.CallsPrivate.parse_paren_args(
+                         [],
+                         state,
+                         cursor,
+                         Context.matched_expr(),
+                         log
+                       ),
+                     {:ok, close_meta, trailing_newlines, state, cursor} <-
+                       Meta.consume_closing(state, cursor, :")") do
+                  total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
+                  call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
+
+                  # Return as call AST: {atom, call_meta, args}
+                  {:ok, {atom, call_meta, Enum.reverse(args)}, state, cursor, log}
+                else
+                  other -> Result.normalize_error(other, cursor, log)
+                end
+              else
+                # Simple quoted identifier without parens
+                {:ok, {atom, meta_with_delimiter}, state, cursor, log}
+              end
           end
 
-        # quoted_bracket_identifier_end: D."foo"[1] - return with :allows_bracket flag
-        # so caller knows bracket access is allowed
-        end_kind == :quoted_bracket_identifier_end ->
-          {:ok, {atom, meta_with_delimiter, :allows_bracket}, state, cursor, log}
-
-        # quoted_do_identifier_end: D."foo" do...end - return as call AST, do-block parsed by caller
-        end_kind == :quoted_do_identifier_end ->
-          # Return as call expression {atom, meta, []} with no_parens: true for do-block attachment
-          meta_with_no_parens = [{:no_parens, true} | meta_with_delimiter]
-          {:ok, {atom, meta_with_no_parens, []}, state, cursor, log}
-
-        true ->
-          {quoted_paren_identifier_end_or_immediately_parens, cursor} = if end_kind == :quoted_paren_identifier_end do
-            {true, cursor}
-          else
-            case Cursor.peek(cursor) do
-              {:ok, {:"(", _, _}, cursor} -> {true, cursor}
-              {:ok, _, cursor} -> {false, cursor}
-              {:eof, cursor} -> {false, cursor}
-            end
-          end
-
-          if quoted_paren_identifier_end_or_immediately_parens do
-            # quoted_paren_identifier_end or ( immediately follows: D."foo"()
-            {:ok, _open, state, cursor} = TokenAdapter.next(state, cursor)
-
-            # Skip leading EOE and count newlines
-            {state, cursor, leading_newlines} = EOE.skip_count_newlines(state, cursor, 0)
-
-            with {:ok, args, state, cursor, log} <-
-                  ToxicParser.Grammar.CallsPrivate.parse_paren_args(
-                    [],
-                    state,
-                    cursor,
-                    Context.matched_expr(),
-                    log
-                  ),
-                {:ok, close_meta, trailing_newlines, state, cursor} <-
-                  Meta.consume_closing(state, cursor, :")") do
-              total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, true)
-              call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
-
-              # Return as call AST: {atom, call_meta, args}
-              {:ok, {atom, call_meta, Enum.reverse(args)}, state, cursor, log}
-            else
-              other -> Result.normalize_error(other, cursor, log)
-            end
-          else
-            # Simple quoted identifier without parens
-            {:ok, {atom, meta_with_delimiter}, state, cursor, log}
-          end
+        {:error, reason} ->
+          {:error, reason, state, cursor, log}
       end
     end
+  end
+
+  defp safe_unescape_quoted_identifier(fragments, %State{mode: :tolerant} = _state, start_meta) do
+    try do
+      content = fragments |> Enum.reverse() |> Enum.join("") |> Macro.unescape_string()
+      {:ok, content}
+    rescue
+      error in ArgumentError ->
+        {:error, {:unescape_error, Exception.message(error), start_meta}}
+    end
+  end
+
+  defp safe_unescape_quoted_identifier(fragments, %State{} = _state, _start_meta) do
+    content = fragments |> Enum.reverse() |> Enum.join("") |> Macro.unescape_string()
+    {:ok, content}
   end
 
   # Possible end tokens for quoted identifiers
