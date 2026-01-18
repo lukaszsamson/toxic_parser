@@ -150,7 +150,26 @@ defmodule ToxicParser.Grammar.CallsPrivate do
             # Validate no_parens expressions are not allowed inside paren calls
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
+                if state.mode == :tolerant do
+                  meta =
+                    case expr do
+                      {_, meta, _} -> meta
+                      _ -> []
+                    end
+
+                  {error_node, state} =
+                    build_kw_tail_error_node(
+                      NoParensErrors.error_no_parens_many_strict(expr),
+                      meta,
+                      state,
+                      cursor,
+                      []
+                    )
+
+                  {:ok, {:expr, error_node}, state, cursor, log}
+                else
+                  {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
+                end
 
               _ ->
                 {:ok, {:expr, expr}, state, cursor, log}
