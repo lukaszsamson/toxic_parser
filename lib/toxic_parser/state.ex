@@ -16,7 +16,9 @@ defmodule ToxicParser.State do
           cursor: Cursor.t(),
           diagnostics: [Error.t()],
           terminators: [term()],
-          event_log: EventLog.t()
+          event_log: EventLog.t(),
+          next_diagnostic_id: pos_integer(),
+          error_token_diagnostics: %{term() => Error.t()}
         }
 
   @type t :: %__MODULE__{

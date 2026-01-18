@@ -349,7 +349,9 @@ defmodule ToxicParser.TokenAdapter do
       cursor: cursor,
       diagnostics: state.diagnostics,
       terminators: state.terminators,
-      event_log: state.event_log
+      event_log: state.event_log,
+      next_diagnostic_id: state.next_diagnostic_id,
+      error_token_diagnostics: state.error_token_diagnostics
     }
 
     {ref, %{state | checkpoints: Map.put(state.checkpoints, ref, saved)}}
@@ -367,6 +369,8 @@ defmodule ToxicParser.TokenAdapter do
        | diagnostics: checkpoint.diagnostics,
          terminators: checkpoint.terminators,
          event_log: checkpoint.event_log,
+         next_diagnostic_id: checkpoint.next_diagnostic_id,
+         error_token_diagnostics: checkpoint.error_token_diagnostics,
          checkpoints: checkpoints
      }, checkpoint.cursor}
   end

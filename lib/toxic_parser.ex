@@ -12,6 +12,7 @@ defmodule ToxicParser do
   """
 
   alias ToxicParser.{
+    Builder,
     Context,
     Cursor,
     Env,
@@ -20,6 +21,7 @@ defmodule ToxicParser do
     Grammar,
     Position,
     Result,
+    State,
     TokenAdapter
   }
 
@@ -76,11 +78,11 @@ defmodule ToxicParser do
             {:ok, result}
 
           {:error, reason, state} ->
-            parser_diag = parser_error(reason, state)
+            {parser_diag, state} = parser_error(reason, state, cursor)
 
             result =
               build_result(%{
-                ast: nil,
+                ast: maybe_tolerant_error_ast(mode, parser_diag, cursor),
                 mode: mode,
                 file: file,
                 source: source,
@@ -96,11 +98,11 @@ defmodule ToxicParser do
         end
 
       {:error, reason, state, cursor, log} ->
-        parser_diag = parser_error(reason, state)
+        {parser_diag, state} = parser_error(reason, state, cursor)
 
         result =
           build_result(%{
-            ast: nil,
+            ast: maybe_tolerant_error_ast(mode, parser_diag, cursor),
             mode: mode,
             file: file,
             source: source,
@@ -189,7 +191,7 @@ defmodule ToxicParser do
     }
   end
 
-  defp parser_error(reason, state) do
+  defp parser_error(reason, %State{} = state, cursor) do
     normalized_reason =
       case reason do
         {loc, {prefix, detail}, token} when is_list(prefix) or is_binary(prefix) ->
@@ -208,19 +210,51 @@ defmodule ToxicParser do
           other
       end
 
-    %Error{
+    {line, column} = Cursor.position(cursor)
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic = %Error{
       phase: :parser,
       reason: normalized_reason,
       token: nil,
       expected: nil,
       severity: :error,
       range: %{
-        start: Position.to_location(1, 1, state.line_index),
-        end: Position.to_location(1, 1, state.line_index)
+        start: Position.to_location(line, column, state.line_index),
+        end: Position.to_location(line, column, state.line_index)
       },
-      details: %{source: :grammar}
+      details: %{
+        source: :grammar,
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: true,
+        lexer_error_code: nil
+      }
     }
+
+    {diagnostic, state}
   end
+
+  defp maybe_tolerant_error_ast(:tolerant, %Error{} = diagnostic, cursor) do
+    {line, column} = Cursor.position(cursor)
+
+    meta = [
+      line: line,
+      column: column,
+      toxic: %{synthetic?: true, anchor: %{line: line, column: column}}
+    ]
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: diagnostic.reason,
+        synthetic?: true
+      )
+
+    {:__block__, [], [Builder.Helpers.error(payload, meta)]}
+  end
+
+  defp maybe_tolerant_error_ast(_mode, _diagnostic, _cursor), do: nil
 
   defp normalize_token_string(token) when is_list(token) do
     if Enum.all?(token, &is_integer/1) do

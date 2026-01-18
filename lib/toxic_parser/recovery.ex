@@ -5,7 +5,7 @@ defmodule ToxicParser.Recovery do
 
   alias ToxicParser.{Cursor, EventLog, State, TokenAdapter}
 
-  @expr_sync [:eol, :";", :"}", :"]", :")", :end]
+  @expr_sync [:eol, :";", :",", :"}", :"]", :")", :end]
 
   @spec sync_expr(State.t(), Cursor.t(), EventLog.t()) ::
           {:ok, State.t(), Cursor.t(), EventLog.t()}

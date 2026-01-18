@@ -284,7 +284,7 @@ defmodule ToxicParser.Grammar.Expressions do
         _ -> {[], nil}
       end
 
-    {diagnostic, state} = parser_diagnostic(reason, range_meta, state)
+    {diagnostic, state} = parser_diagnostic(reason, range_meta, state, cursor)
 
     payload =
       Error.error_node_payload(diagnostic,
@@ -297,11 +297,25 @@ defmodule ToxicParser.Grammar.Expressions do
     {Builder.Helpers.error(payload, meta), state}
   end
 
-  defp parser_diagnostic(reason, range_meta, %State{} = state) do
+  defp parser_diagnostic(reason, range_meta, %State{} = state, cursor) do
     {id, state} = State.next_diagnostic_id(state)
 
+    position =
+      case range_meta do
+        nil ->
+          {line, column} = Cursor.position(cursor)
+          {{line, column}, {line, column}}
+
+        _ ->
+          nil
+      end
+
     diagnostic =
-      Error.from_parser(range_meta, reason, line_index: state.line_index, source: state.source)
+      Error.from_parser(range_meta, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: position
+      )
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
