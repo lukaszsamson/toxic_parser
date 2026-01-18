@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Context, Cursor, EventLog, ExprClass, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, ExprClass, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.{Helpers, Meta}
   alias ToxicParser.Grammar.{Brackets, EOE, Expressions, Keywords}
 
@@ -1282,18 +1282,39 @@ defmodule ToxicParser.Grammar.Maps do
         # map_close -> kw_data close_curly
         {state, cursor} = EOE.skip(state, cursor)
 
-        case TokenAdapter.next(state, cursor) do
-          {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+        case Cursor.peek(cursor) do
+          {:ok, {:"}", _meta, _value}, cursor} ->
+            {:ok, close_tok, state, cursor} = TokenAdapter.next(state, cursor)
             close_meta = Helpers.token_meta(close_tok)
             {:ok, kw_list, close_meta, state, cursor, log}
 
-          {:ok, {got_kind, _meta, _value}, state, cursor} ->
+          {:ok, {:",", comma_meta, _value}, cursor} when state.mode == :tolerant ->
+            {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+
+            case parse_assoc_list([], state, cursor, ctx, log) do
+              {:ok, entries, close_meta, state, cursor, log} ->
+                {error_node, state} =
+                  build_kw_tail_error_node(
+                    kw_tail_error_at(comma_meta),
+                    comma_meta,
+                    state,
+                    cursor,
+                    entries
+                  )
+
+                {:ok, [kw_list, error_node], close_meta, state, cursor, log}
+
+              {:error, reason, state, cursor, log} ->
+                {:error, reason, state, cursor, log}
+            end
+
+          {:ok, {got_kind, _meta, _value}, cursor} ->
             {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
 
-          {:eof, state, cursor} ->
+          {:eof, cursor} ->
             {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, state, cursor} ->
+          {:error, diag, cursor} ->
             {:error, diag, state, cursor, log}
         end
 
@@ -1432,5 +1453,57 @@ defmodule ToxicParser.Grammar.Maps do
     # For other expressions (literals, etc.), return as-is
     # The Elixir parser doesn't annotate these
     key
+  end
+
+  defp kw_tail_error_at({{line, column}, _, _}) do
+    location = [line: line, column: column]
+
+    {location,
+     "unexpected expression after keyword list. Keyword lists must always come last in lists and maps. Therefore, this is not allowed:\n\n" <>
+       "    [some: :value, :another]\n" <>
+       "    %{some: :value, another => value}\n\n" <>
+       "Instead, reorder it to be the last entry:\n\n" <>
+       "    [:another, some: :value]\n" <>
+       "    %{another => value, some: :value}\n\n" <>
+       "Syntax error after: ", "','"}
+  end
+
+  defp kw_tail_error_at(_), do: {[], "syntax error before: ", ""}
+
+  defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        _ -> Cursor.position(cursor)
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 end

@@ -14,7 +14,10 @@ defmodule ToxicParser.TolerantModeTest do
     "invalid float number",
     "consecutive semicolons",
     "keyword list inside tuple",
-    "keyword list inside bitstring"
+    "keyword list inside bitstring",
+    "expression after keyword list in list",
+    "expression after keyword list in call",
+    "expression after keyword list in map"
   ]
 
   @error_cases [
@@ -210,30 +213,39 @@ defmodule ToxicParser.TolerantModeTest do
   defp assert_synthetic_meta(_ast, _error_meta, _name), do: :ok
 
   defp has_foo_keyword?(ast) do
-    {_ast, found?} =
-      Macro.prewalk(ast, false, fn
-        list, found when is_list(list) ->
-          found =
-            found or
-              (Keyword.keyword?(list) and Keyword.get(list, :foo) == 1)
-
-          {list, found}
-
-        {:%{}, _meta, kvs} = node, found ->
-          found =
-            found or
-              Enum.any?(kvs, fn entry ->
-                match?({:foo, 1}, entry) or match?({:foo, 1, _}, entry)
-              end)
-
-          {node, found}
-
-        other, found ->
-          {other, found}
-      end)
-
-    found?
+    has_foo_keyword?(ast, false)
   end
+
+  defp has_foo_keyword?({:__error__, _meta, _payload}, found), do: found
+
+  defp has_foo_keyword?({:%{}, _meta, kvs}, found) when is_list(kvs) do
+    found =
+      found or
+        Enum.any?(kvs, fn entry ->
+          match?({:foo, 1}, entry) or match?({:foo, 1, _}, entry)
+        end)
+
+    has_foo_keyword?(kvs, found)
+  end
+
+  defp has_foo_keyword?({_, _meta, args}, found) when is_list(args) do
+    has_foo_keyword?(args, found)
+  end
+
+  defp has_foo_keyword?(list, found) when is_list(list) do
+    cond do
+      found ->
+        true
+
+      Keyword.keyword?(list) ->
+        Keyword.get(list, :foo) == 1
+
+      true ->
+        Enum.any?(list, fn entry -> has_foo_keyword?(entry, false) end)
+    end
+  end
+
+  defp has_foo_keyword?(_other, found), do: found
 
   defp opts_for("literal encoder error", base_opts) do
     Keyword.put(base_opts, :literal_encoder, &literal_encoder_fail/2)

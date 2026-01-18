@@ -3,8 +3,10 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
   alias ToxicParser.{
+    Builder,
     Context,
     Cursor,
+    Error,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -100,13 +102,37 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
           case Cursor.peek(cursor) do
             {:ok, {:")", _meta, _value}, cursor} ->
-              {:ok, {:kw_call, kw_list}, state, cursor, log}
+            {:ok, {:kw_call, kw_list}, state, cursor, log}
 
             {:ok, {:",", _meta, _value} = comma_tok, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
 
-              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state,
-               cursor, log}
+              if state.mode == :tolerant do
+                {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor} = EOE.skip(state, cursor)
+
+                case Expressions.expr(state, cursor, container_ctx, log) do
+                  {:ok, expr, state, cursor, log} ->
+                    {error_node, state} =
+                      build_kw_tail_error_node(
+                        {meta, unexpected_expression_after_kw_call_message(), "','"},
+                        meta,
+                        state,
+                        cursor,
+                        [expr]
+                      )
+
+                    {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
+
+                  {:error, reason, state, cursor, log} ->
+                    {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+
+                    {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
+                end
+              else
+                {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state,
+                 cursor, log}
+              end
 
             {:ok, {kind, _meta, _value}, cursor} ->
               {:error, {:expected, :")", got: kind}, state, cursor, log}
@@ -167,5 +193,54 @@ defmodule ToxicParser.Grammar.CallsPrivate do
       "Instead, wrap the keyword in brackets:\n\n" <>
       "    function_call(1, [some: :option], 2)\n\n" <>
       "Syntax error after: "
+  end
+
+  defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
+    {line, column} =
+      case meta do
+        meta when is_list(meta) ->
+          {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+
+        {line, column} when is_integer(line) ->
+          {line, column}
+
+        _ ->
+          Cursor.position(cursor)
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 end

@@ -13,6 +13,7 @@ defmodule ToxicParser.Grammar.Calls do
     Builder,
     Context,
     Cursor,
+    Error,
     EventLog,
     ExprClass,
     Identifiers,
@@ -410,11 +411,15 @@ defmodule ToxicParser.Grammar.Calls do
                 {:ok, Enum.reverse(acc), state, cursor, log}
 
               _ ->
-                case Keywords.try_parse_call_args_no_parens_kw(state, cursor, ctx, log) do
+                {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+
+                case Keywords.try_parse_call_args_no_parens_kw(checkpoint_state, cursor, ctx, log) do
                   {:ok, kw_list, state, cursor, log} ->
-                    {:ok, Enum.reverse([kw_list | acc]), state, cursor, log}
+                    state = TokenAdapter.drop_checkpoint(state, ref)
+                    handle_no_parens_kw_list(kw_list, acc, state, cursor, ctx, log, min_bp, opts)
 
                   {:no_kw, state, cursor, log} ->
+                    state = TokenAdapter.drop_checkpoint(state, ref)
                     # Parse args in no_parens_expr context:
                     # - allow_do_block: false - do-blocks belong to outer call, not arguments
                     # - allow_no_parens_expr: true - allows operators like `when` to extend inside args
@@ -440,7 +445,34 @@ defmodule ToxicParser.Grammar.Calls do
                     end
 
                   {:error, reason, state, cursor, log} ->
-                    {:error, reason, state, cursor, log}
+                    if state.mode == :tolerant do
+                      {state, cursor} = TokenAdapter.rewind(state, ref)
+
+                      case Keywords.try_parse_call_args_no_parens_kw_expr(
+                             state,
+                             cursor,
+                             ctx,
+                             log,
+                             min_bp: min_bp
+                           ) do
+                        {:ok, pair, state, cursor, log} ->
+                          handle_no_parens_kw_list(
+                            [pair],
+                            acc,
+                            state,
+                            cursor,
+                            ctx,
+                            log,
+                            min_bp,
+                            opts
+                          )
+
+                        _ ->
+                          {:error, reason, state, cursor, log}
+                      end
+                    else
+                      {:error, reason, state, cursor, log}
+                    end
                 end
             end
         end
@@ -504,6 +536,98 @@ defmodule ToxicParser.Grammar.Calls do
           {:ok, Enum.reverse([arg | acc]), state, cursor, log}
       end
     end
+  end
+
+  defp handle_no_parens_kw_list(kw_list, acc, state, cursor, ctx, log, min_bp, opts) do
+    if state.mode == :tolerant do
+      case Cursor.peek(cursor) do
+        {:ok, {:",", _meta, _value} = comma_tok, cursor} ->
+          {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+          {state, cursor} = EOE.skip(state, cursor)
+
+          arg_context = Context.no_parens_expr()
+
+          case Pratt.parse_with_min_bp(
+                 state,
+                 cursor,
+                 arg_context,
+                 log,
+                 0,
+                 ParseOpts.stop_at_assoc()
+               ) do
+            {:ok, arg, state, cursor, log} ->
+              meta = TokenAdapter.token_meta(comma_tok)
+              reason = {meta, unexpected_expression_after_kw_call_message(), "','"}
+
+              {error_node, state} =
+                build_kw_tail_error_node(reason, meta, state, cursor, [arg])
+
+              parse_no_parens_args(
+                [error_node, kw_list | acc],
+                state,
+                cursor,
+                ctx,
+                log,
+                min_bp,
+                opts
+              )
+
+            {:error, reason, state, cursor, log} ->
+              {:error, reason, state, cursor, log}
+          end
+
+        _ ->
+          {:ok, Enum.reverse([kw_list | acc]), state, cursor, log}
+      end
+    else
+      {:ok, Enum.reverse([kw_list | acc]), state, cursor, log}
+    end
+  end
+
+  defp unexpected_expression_after_kw_call_message do
+    "unexpected expression after keyword list. Keyword lists must always come as the last argument. " <>
+      "Therefore, this is not allowed:\n\n" <>
+      "    function_call(1, some: :option, 2)\n\n" <>
+      "Instead, wrap the keyword in brackets:\n\n" <>
+      "    function_call(1, [some: :option], 2)\n\n" <>
+      "Syntax error after: "
+  end
+
+  defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 
   @doc """

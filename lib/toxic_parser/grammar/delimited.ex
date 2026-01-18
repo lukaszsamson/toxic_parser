@@ -137,6 +137,14 @@ defmodule ToxicParser.Grammar.Delimited do
 
     case item_fun.(state, cursor, ctx, log) do
       {:ok, item, state, cursor, log} ->
+        items =
+          case item do
+            {:many, many} when is_list(many) and many != [] -> many
+            other -> [other]
+          end
+
+        acc_rev = Enum.reverse(items) ++ acc_rev
+
         {state, cursor} = maybe_skip_eoe(state, cursor, opts, :after_item)
 
         separator = opts[:separator]
@@ -152,13 +160,13 @@ defmodule ToxicParser.Grammar.Delimited do
                   {:ok, {kind, _meta, _value}, cursor} ->
                     if kind in close_kinds do
                       if opts[:allow_trailing_comma?] do
-                        {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
+                        {:ok, Enum.reverse(acc_rev), state, cursor, log}
                       else
                         {:error, {:trailing_comma, sep_tok}, state, cursor, log}
                       end
                     else
                       parse_items_rev(
-                        [item | acc_rev],
+                        acc_rev,
                         state,
                         cursor,
                         ctx,
@@ -178,11 +186,11 @@ defmodule ToxicParser.Grammar.Delimited do
                 end
 
               kind in close_kinds ->
-                {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
+                {:ok, Enum.reverse(acc_rev), state, cursor, log}
 
               true ->
                 if opts[:stop_on_unexpected?] do
-                  {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
+                  {:ok, Enum.reverse(acc_rev), state, cursor, log}
                 else
                   expected =
                     case close_kinds do
@@ -195,11 +203,11 @@ defmodule ToxicParser.Grammar.Delimited do
             end
 
           {:eof, cursor} ->
-            if eof_is_close? do
-              {:ok, Enum.reverse([item | acc_rev]), state, cursor, log}
-            else
-              {:error, :unexpected_eof, state, cursor, log}
-            end
+        if eof_is_close? do
+          {:ok, Enum.reverse(acc_rev), state, cursor, log}
+        else
+          {:error, :unexpected_eof, state, cursor, log}
+        end
 
           {:error, diag, cursor} ->
             {:error, diag, state, cursor, log}

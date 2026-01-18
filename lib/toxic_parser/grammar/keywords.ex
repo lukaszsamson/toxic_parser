@@ -609,9 +609,30 @@ defmodule ToxicParser.Grammar.Keywords do
                 end
 
               {:ok, {_kind, _meta, _value} = next_tok, cursor} ->
-                if error_kind == :container and not starts_kw_or_quoted_key?(next_tok) do
+                if not starts_kw_or_quoted_key?(next_tok) and error_kind in [:container, :many] do
                   meta = TokenAdapter.token_meta(comma_tok)
-                  {:error, kw_tail_follow_up_error(meta), state, cursor, log}
+
+                  case {state.mode, error_kind} do
+                    {:tolerant, _} ->
+                      {state, cursor} = TokenAdapter.pushback(state, cursor, comma_tok)
+                      {:ok, Enum.reverse([pair | acc]), state, cursor, log}
+
+                    {_mode, :container} ->
+                      {:error, kw_tail_follow_up_error(meta), state, cursor, log}
+
+                    _ ->
+                      parse_kw_list(
+                        [pair | acc],
+                        state,
+                        cursor,
+                        ctx,
+                        log,
+                        min_bp,
+                        value_ctx,
+                        error_kind,
+                        opts
+                      )
+                  end
                 else
                   parse_kw_list(
                     [pair | acc],

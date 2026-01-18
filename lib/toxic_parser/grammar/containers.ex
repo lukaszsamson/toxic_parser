@@ -238,8 +238,33 @@ defmodule ToxicParser.Grammar.Containers do
 
           case Cursor.peek(cursor) do
             {:ok, {:",", comma_meta, _value}, cursor} ->
-              {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
-              {:error, handle_invalid_kw_tail_error_at(comma_meta), state, cursor, log}
+              if state.mode == :tolerant do
+                {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor, _} = EOE.skip_count_newlines(state, cursor, 0)
+
+                case Expressions.expr(state, cursor, container_ctx, log) do
+                  {:ok, expr, state, cursor, log} ->
+                    {error_node, state} =
+                      build_kw_tail_error_node(
+                        handle_invalid_kw_tail_error_at(comma_meta),
+                        comma_meta,
+                        state,
+                        cursor,
+                        [expr]
+                      )
+
+                    {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
+
+                  {:error, reason, state, cursor, log} ->
+                    {error_node, state} =
+                      build_kw_tail_error_node(reason, comma_meta, state, cursor, [])
+
+                    {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
+                end
+              else
+                {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                {:error, handle_invalid_kw_tail_error_at(comma_meta), state, cursor, log}
+              end
 
             {:ok, {:"]", _meta, _value}, cursor} ->
               {:ok, {:kw_data, kw_list}, state, cursor, log}
@@ -581,7 +606,12 @@ defmodule ToxicParser.Grammar.Containers do
   end
 
   defp handle_invalid_kw_tail_error_at(meta) do
-    location = Keyword.take(meta, [:line, :column])
+    location =
+      case meta do
+        {{line, column}, _, _} -> [line: line, column: column]
+        meta when is_list(meta) -> Keyword.take(meta, [:line, :column])
+        _ -> []
+      end
 
     {location,
      "unexpected expression after keyword list. Keyword lists must always come last in lists and maps. Therefore, this is not allowed:\n\n" <>
@@ -591,6 +621,43 @@ defmodule ToxicParser.Grammar.Containers do
        "    [:another, some: :value]\n" <>
        "    %{another => value, some: :value}\n\n" <>
        "Syntax error after: ", "','"}
+  end
+
+  defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        _ -> Cursor.position(cursor)
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 
   defp meta_location({{line, column}, _, _}), do: [line: line, column: column]
