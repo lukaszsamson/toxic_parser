@@ -99,7 +99,11 @@ defmodule ToxicParser.TolerantModeTest do
     "do block missing end",
     "stab invalid placement",
     "list missing closer",
-    "tuple missing closer"
+    "tuple missing closer",
+    "paren call missing closer",
+    "map missing closer",
+    "bitstring missing closer",
+    "paren expression missing closer"
   ]
 
   @error_cases [
@@ -191,6 +195,10 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "stab invalid placement", code: "fn 1; 2 -> 3 end"},
     %{name: "list missing closer", code: "[1, 2", no_following: true},
     %{name: "tuple missing closer", code: "{1, 2", no_following: true},
+    %{name: "paren call missing closer", code: "call(1, 2", no_following: true},
+    %{name: "map missing closer", code: "%{a: 1", no_following: true},
+    %{name: "bitstring missing closer", code: "<<1, 2", no_following: true},
+    %{name: "paren expression missing closer", code: "(1 + 2", no_following: true},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -303,7 +311,11 @@ defmodule ToxicParser.TolerantModeTest do
       "fn missing end",
       "do block missing end",
       "list missing closer",
-      "tuple missing closer"
+      "tuple missing closer",
+      "paren call missing closer",
+      "map missing closer",
+      "bitstring missing closer",
+      "paren expression missing closer"
     ]
 
     cond do

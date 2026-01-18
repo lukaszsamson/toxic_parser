@@ -295,7 +295,12 @@ defmodule ToxicParser.Grammar.Calls do
       # Check for nested call: foo()() - another paren call on the result
       maybe_nested_call(ast, state, cursor, ctx, log)
     else
-      other -> Result.normalize_error(other, cursor, log)
+      {:error, reason, state, cursor, log} ->
+        callee_meta = TokenAdapter.token_meta(callee_tok)
+        maybe_recover_paren_call_error(reason, callee_meta, state, cursor, log)
+
+      other ->
+        Result.normalize_error(other, cursor, log)
     end
   end
 
@@ -339,7 +344,12 @@ defmodule ToxicParser.Grammar.Calls do
       # Recurse for chained calls like foo()()()
       maybe_nested_call(ast, state, cursor, ctx, log)
     else
-      other -> Result.normalize_error(other, cursor, log)
+      {:error, reason, state, cursor, log} ->
+        callee_meta = extract_meta(callee_ast)
+        maybe_recover_paren_call_error(reason, callee_meta, state, cursor, log)
+
+      other ->
+        Result.normalize_error(other, cursor, log)
     end
   end
 
@@ -623,6 +633,50 @@ defmodule ToxicParser.Grammar.Calls do
         kind: :unexpected,
         original: reason,
         children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp maybe_recover_paren_call_error(reason, meta, %State{mode: :tolerant} = state, cursor, log) do
+    {error_node, state} = build_call_error_node(reason, meta, state, cursor)
+    {:ok, error_node, state, cursor, log}
+  end
+
+  defp maybe_recover_paren_call_error(reason, _meta, state, cursor, log),
+    do: {:error, reason, state, cursor, log}
+
+  defp build_call_error_node(reason, meta, %State{} = state, cursor) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
         synthetic?: false
       )
 

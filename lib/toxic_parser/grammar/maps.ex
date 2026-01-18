@@ -514,7 +514,8 @@ defmodule ToxicParser.Grammar.Maps do
          ctx,
          log
        ) do
-    case Cursor.peek(cursor) do
+    result =
+      case Cursor.peek(cursor) do
       # Empty map: map_args -> open_curly '}'
       {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
         {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
@@ -548,6 +549,19 @@ defmodule ToxicParser.Grammar.Maps do
 
       {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
+      end
+
+    case result do
+      {:error, reason, state, cursor, log} ->
+        if state.mode == :tolerant do
+          {error_ast, state} = build_map_error_node(reason, brace_meta, state, cursor)
+          {:ok, error_ast, state, cursor, log}
+        else
+          {:error, reason, state, cursor, log}
+        end
+
+      other ->
+        other
     end
   end
 
@@ -1574,6 +1588,49 @@ defmodule ToxicParser.Grammar.Maps do
         kind: :unexpected,
         original: reason,
         children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp build_map_error_node(reason, meta, %State{} = state, cursor) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
         synthetic?: false
       )
 

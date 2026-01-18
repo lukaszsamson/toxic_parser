@@ -147,10 +147,20 @@ defmodule ToxicParser.Grammar.Containers do
         end
 
       {:eof, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        if state.mode == :tolerant do
+          {error_ast, state} = build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+          {:ok, error_ast, state, cursor, log}
+        else
+          {:error, :unexpected_eof, state, cursor, log}
+        end
 
       {:error, diag, cursor} ->
-        {:error, diag, state, cursor, log}
+        if state.mode == :tolerant do
+          {error_ast, state} = build_container_error_node(diag, open_meta, state, cursor)
+          {:ok, error_ast, state, cursor, log}
+        else
+          {:error, diag, state, cursor, log}
+        end
     end
   end
 
@@ -173,13 +183,34 @@ defmodule ToxicParser.Grammar.Containers do
 
       # Always parse as stab_eoe (YRL-aligned); paren stab builder decides block vs stab.
       {:ok, _, cursor} ->
-        Stabs.parse_paren_stab(open_meta, newlines, state, cursor, ctx, log, min_bp)
+        case Stabs.parse_paren_stab(open_meta, newlines, state, cursor, ctx, log, min_bp) do
+          {:ok, ast, state, cursor, log} ->
+            {:ok, ast, state, cursor, log}
+
+          {:error, reason, state, cursor, log} ->
+            if state.mode == :tolerant do
+              {error_ast, state} = build_container_error_node(reason, open_meta, state, cursor)
+              {:ok, error_ast, state, cursor, log}
+            else
+              {:error, reason, state, cursor, log}
+            end
+        end
 
       {:eof, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        if state.mode == :tolerant do
+          {error_ast, state} = build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+          {:ok, error_ast, state, cursor, log}
+        else
+          {:error, :unexpected_eof, state, cursor, log}
+        end
 
       {:error, diag, cursor} ->
-        {:error, diag, state, cursor, log}
+        if state.mode == :tolerant do
+          {error_ast, state} = build_container_error_node(diag, open_meta, state, cursor)
+          {:ok, error_ast, state, cursor, log}
+        else
+          {:error, diag, state, cursor, log}
+        end
     end
   end
 

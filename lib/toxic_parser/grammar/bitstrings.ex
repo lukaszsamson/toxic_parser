@@ -133,14 +133,34 @@ defmodule ToxicParser.Grammar.Bitstrings do
                 ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
                 {:ok, ast, state, cursor, log}
 
-              {:ok, {kind, _meta, _value}, state, cursor} ->
-                {:error, {:expected, :">>", got: kind}, state, cursor, log}
+              {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+                if state.mode == :tolerant do
+                  {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+                  {error_ast, state} =
+                    build_container_error_node({:expected, :">>", got: kind}, open_meta, state, cursor)
+
+                  {:ok, error_ast, state, cursor, log}
+                else
+                  {:error, {:expected, :">>", got: kind}, state, cursor, log}
+                end
 
               {:eof, state, cursor} ->
-                {:error, :unexpected_eof, state, cursor, log}
+                if state.mode == :tolerant do
+                  {error_ast, state} =
+                    build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+
+                  {:ok, error_ast, state, cursor, log}
+                else
+                  {:error, :unexpected_eof, state, cursor, log}
+                end
 
               {:error, diag, state, cursor} ->
-                {:error, diag, state, cursor, log}
+                if state.mode == :tolerant do
+                  {error_ast, state} = build_container_error_node(diag, open_meta, state, cursor)
+                  {:ok, error_ast, state, cursor, log}
+                else
+                  {:error, diag, state, cursor, log}
+                end
             end
           else
             {:error, unexpected_keyword_list_error(:bitstring, open_meta), state, cursor, log}
@@ -154,14 +174,34 @@ defmodule ToxicParser.Grammar.Bitstrings do
               ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
               {:ok, ast, state, cursor, log}
 
-            {:ok, {kind, _meta, _value}, state, cursor} ->
-              {:error, {:expected, :">>", got: kind}, state, cursor, log}
+            {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+              if state.mode == :tolerant do
+                {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+                {error_ast, state} =
+                  build_container_error_node({:expected, :">>", got: kind}, open_meta, state, cursor)
+
+                {:ok, error_ast, state, cursor, log}
+              else
+                {:error, {:expected, :">>", got: kind}, state, cursor, log}
+              end
 
             {:eof, state, cursor} ->
-              {:error, :unexpected_eof, state, cursor, log}
+              if state.mode == :tolerant do
+                {error_ast, state} =
+                  build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+
+                {:ok, error_ast, state, cursor, log}
+              else
+                {:error, :unexpected_eof, state, cursor, log}
+              end
 
             {:error, diag, state, cursor} ->
-              {:error, diag, state, cursor, log}
+              if state.mode == :tolerant do
+                {error_ast, state} = build_container_error_node(diag, open_meta, state, cursor)
+                {:ok, error_ast, state, cursor, log}
+              else
+                {:error, diag, state, cursor, log}
+              end
           end
       end
     end
