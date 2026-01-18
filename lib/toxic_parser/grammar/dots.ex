@@ -528,26 +528,55 @@ defmodule ToxicParser.Grammar.Dots do
   end
 
   defp build_missing_terminator_node(error_tok, start_meta, %State{} = state, cursor) do
+    synthetic? = synthetic_meta?(start_meta, state)
+
     payload =
       case State.error_token_diagnostic(state, TokenAdapter.meta(error_tok)) do
         %Error{} = diagnostic ->
           Error.error_node_payload(diagnostic,
             kind: :token,
             original: elem(error_tok, 2),
-            synthetic?: false
+            synthetic?: synthetic?
           )
 
         _ ->
           elem(error_tok, 2)
       end
 
+    {line, column, _} = error_anchor(start_meta, state, cursor)
+
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    Builder.Helpers.error(payload, error_meta)
+  end
+
+  defp error_anchor(meta, %State{} = state, cursor) do
     {line, column} =
-      case {Keyword.get(start_meta, :line), Keyword.get(start_meta, :column)} do
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    synthetic? = synthetic_meta?(meta, state)
+
+    {line, column} =
+      case {line, column} do
         {nil, nil} -> Cursor.position(cursor)
         {line, column} -> {line || 1, column || 1}
       end
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
-    Builder.Helpers.error(payload, error_meta)
+    {line, column, synthetic?}
+  end
+
+  defp synthetic_meta?(meta, %State{} = state) do
+    missing? =
+      case meta do
+        {{_, _}, _, _} -> false
+        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+        _ -> true
+      end
+
+    missing? or not Keyword.get(state.opts, :token_metadata, true)
   end
 end

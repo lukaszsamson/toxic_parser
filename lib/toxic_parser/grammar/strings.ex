@@ -571,6 +571,8 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   defp build_missing_terminator_node(error_tok, start_meta, %State{} = state, cursor, children) do
+    synthetic? = synthetic_meta?(start_meta, state)
+
     payload =
       case State.error_token_diagnostic(state, TokenAdapter.meta(error_tok)) do
         %Error{} = diagnostic ->
@@ -578,48 +580,35 @@ defmodule ToxicParser.Grammar.Strings do
             kind: :token,
             original: elem(error_tok, 2),
             children: children,
-            synthetic?: false
+            synthetic?: synthetic?
           )
 
         _ ->
           elem(error_tok, 2)
       end
 
-    {line, column} =
-      case {Keyword.get(start_meta, :line), Keyword.get(start_meta, :column)} do
-        {nil, nil} ->
-          case TokenAdapter.token_meta(error_tok) do
-            meta when is_list(meta) ->
-              {Keyword.get(meta, :line, 1), Keyword.get(meta, :column, 1)}
+    {line, column, _} = error_anchor(start_meta, state, cursor)
 
-            _ ->
-              Cursor.position(cursor)
-          end
-
-        {line, column} ->
-          {line || 1, column || 1}
-      end
-
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     Builder.Helpers.error(payload, error_meta)
   end
 
   defp build_missing_terminator_node_from_diagnostic(%Error{} = diagnostic, start_meta, cursor, children) do
+    synthetic? = synthetic_meta?(start_meta, nil)
+
     payload =
       Error.error_node_payload(diagnostic,
         kind: :token,
         original: diagnostic.reason,
         children: children,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    {line, column} =
-      case {Keyword.get(start_meta, :line), Keyword.get(start_meta, :column)} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
+    {line, column, _} = error_anchor(start_meta, nil, cursor)
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     Builder.Helpers.error(payload, error_meta)
   end
 
@@ -637,6 +626,61 @@ defmodule ToxicParser.Grammar.Strings do
 
       _ ->
         :none
+    end
+  end
+
+  defp error_anchor(meta, %State{} = state, cursor) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    synthetic? = synthetic_meta?(meta, state)
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {line, column, synthetic?}
+  end
+
+  defp error_anchor(meta, nil, cursor) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {line, column, synthetic_meta?(meta, nil)}
+  end
+
+  defp synthetic_meta?(meta, %State{} = state) do
+    missing? =
+      case meta do
+        {{_, _}, _, _} -> false
+        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+        _ -> true
+      end
+
+    missing? or not Keyword.get(state.opts, :token_metadata, true)
+  end
+
+  defp synthetic_meta?(meta, nil) do
+    case meta do
+      {{_, _}, _, _} -> false
+      meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+      _ -> true
     end
   end
 
@@ -802,18 +846,7 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   defp build_string_error_node(reason, meta, %State{} = state, cursor, children) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        _ -> Cursor.position(cursor)
-      end
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
+    {line, column, synthetic?} = error_anchor(meta, state, cursor)
 
     {id, state} = State.next_diagnostic_id(state)
 
@@ -826,7 +859,7 @@ defmodule ToxicParser.Grammar.Strings do
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: false,
+        synthetic?: synthetic?,
         lexer_error_code: nil
       })
 
@@ -838,10 +871,11 @@ defmodule ToxicParser.Grammar.Strings do
         kind: :invalid,
         original: reason,
         children: children,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
   end
 
