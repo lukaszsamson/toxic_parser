@@ -12,7 +12,8 @@ defmodule ToxicParser.TolerantModeTest do
     "unexpected end in expression",
     "number trailing garbage",
     "invalid float number",
-    "consecutive semicolons"
+    "consecutive semicolons",
+    "keyword list inside tuple"
   ]
 
   @error_cases [
@@ -195,9 +196,7 @@ defmodule ToxicParser.TolerantModeTest do
     if name in [
          "expression after keyword list in call",
          "expression after keyword list in list",
-         "expression after keyword list in map",
-         "keyword list inside tuple",
-         "keyword list inside bitstring"
+         "expression after keyword list in map"
        ] do
       assert has_foo_keyword?(ast)
     end

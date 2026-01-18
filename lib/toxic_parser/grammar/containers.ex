@@ -7,6 +7,7 @@ defmodule ToxicParser.Grammar.Containers do
     Builder,
     Context,
     Cursor,
+    Error,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -439,7 +440,36 @@ defmodule ToxicParser.Grammar.Containers do
       # {foo: :bar} is invalid - tuples cannot start with keyword data
       case tagged_items do
         [{:kw_data, _} | _] ->
-          {:error, unexpected_keyword_list_error(:tuple, open_meta), state, cursor, log}
+          if state.mode == :tolerant do
+            {error_ast, state} =
+              build_container_error_node(
+                unexpected_keyword_list_error(:tuple, open_meta),
+                open_meta,
+                state,
+                cursor
+              )
+
+            tagged_items = [{:expr, error_ast}]
+
+            case TokenAdapter.next(state, cursor) do
+              {:ok, {:"}", _meta, _value} = close_tok, state, cursor} ->
+                close_meta = TokenAdapter.token_meta(close_tok)
+
+                {:ok, finalize_tuple_items(tagged_items), leading_newlines, close_meta, state,
+                 cursor, log}
+
+              {:ok, {kind, _meta, _value}, state, cursor} ->
+                {:error, {:expected, :"}", got: kind}, state, cursor, log}
+
+              {:eof, state, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
+
+              {:error, diag, state, cursor} ->
+                {:error, diag, state, cursor, log}
+            end
+          else
+            {:error, unexpected_keyword_list_error(:tuple, open_meta), state, cursor, log}
+          end
 
         _ ->
           case TokenAdapter.next(state, cursor) do
@@ -486,6 +516,42 @@ defmodule ToxicParser.Grammar.Containers do
     {location,
      "unexpected keyword list inside #{context}. Did you mean to write a map (using %{...}) or a list (using [...]) instead? Syntax error after: ",
      start_token}
+  end
+
+  defp build_container_error_node(reason, meta, %State{} = state, cursor) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 
   defp handle_invalid_kw_tail_error(_state, cursor) do
