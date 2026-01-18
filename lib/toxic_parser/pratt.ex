@@ -15,6 +15,7 @@ defmodule ToxicParser.Pratt do
     Builder,
     Context,
     Cursor,
+    Error,
     EventLog,
     ExprClass,
     Identifiers,
@@ -254,7 +255,20 @@ defmodule ToxicParser.Pratt do
     case token_kind do
       :error_token ->
         meta = TokenAdapter.token_meta(token)
-        ast = Builder.Helpers.error(token_value, meta)
+        payload =
+          case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
+            %Error{} = diagnostic ->
+              Error.error_node_payload(diagnostic,
+                kind: :token,
+                original: token_value,
+                synthetic?: false
+              )
+
+            _ ->
+              token_value
+          end
+
+        ast = Builder.Helpers.error(payload, meta)
         {:ok, ast, state, cursor, log}
 
       :capture_int ->
@@ -2475,6 +2489,83 @@ defmodule ToxicParser.Pratt do
     {op, in_meta, [{:in, in_meta, [operand, right]}]}
   end
 
+  # Range ternary rewrite: a .. (b // c) -> a ..// b // c
+  # Token format: {:range_op, meta, :..}
+  defp build_binary_op(
+         {:range_op, _meta, _op} = op_token,
+         left,
+         {:"//", _meta2, [stop, step]},
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {{:..//, range_meta, [left, stop, step]}, state}
+  end
+
+  defp build_binary_op(
+         {:range_op, _meta, _op} = op_token,
+         left,
+         {:"//", _meta2, [stop, step]},
+         newlines,
+         _state,
+         _opts
+       ) do
+    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {:..//, range_meta, [left, stop, step]}
+  end
+
+  # Assoc operator (=>) - just build as normal binary op
+  # Note: Elixir doesn't add any special metadata for => operator
+  # Token format: {:assoc_op, meta, :"=>"}
+  defp build_binary_op(
+         {:assoc_op, _meta, _op} = op_token,
+         left,
+         right,
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {Builder.Helpers.binary(:"=>", left, right, op_meta), state}
+  end
+
+  defp build_binary_op(
+         {:assoc_op, _meta, _op} = op_token,
+         left,
+         right,
+         newlines,
+         _state,
+         _opts
+       ) do
+    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    Builder.Helpers.binary(:"=>", left, right, op_meta)
+  end
+
+  defp build_binary_op(
+         {_kind, _meta, op} = op_token,
+         left,
+         right,
+         newlines,
+         %State{} = state,
+         _opts
+       ) do
+    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    {Builder.Helpers.binary(op, left, right, meta), state}
+  end
+
+  defp build_binary_op(
+         {_kind, _meta, op} = op_token,
+         left,
+         right,
+         newlines,
+         _state,
+         _opts
+       ) do
+    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
+    Builder.Helpers.binary(op, left, right, meta)
+  end
+
   defp maybe_warn_not_in_deprecated(
          state,
          _op_token,
@@ -2617,83 +2708,6 @@ defmodule ToxicParser.Pratt do
     else
       state
     end
-  end
-
-  # Range ternary rewrite: a .. (b // c) -> a ..// b // c
-  # Token format: {:range_op, meta, :..}
-  defp build_binary_op(
-         {:range_op, _meta, _op} = op_token,
-         left,
-         {:"//", _meta2, [stop, step]},
-         newlines,
-         %State{} = state,
-         _opts
-       ) do
-    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    {{:..//, range_meta, [left, stop, step]}, state}
-  end
-
-  defp build_binary_op(
-         {:range_op, _meta, _op} = op_token,
-         left,
-         {:"//", _meta2, [stop, step]},
-         newlines,
-         _state,
-         _opts
-       ) do
-    range_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    {:..//, range_meta, [left, stop, step]}
-  end
-
-  # Assoc operator (=>) - just build as normal binary op
-  # Note: Elixir doesn't add any special metadata for => operator
-  # Token format: {:assoc_op, meta, :"=>"}
-  defp build_binary_op(
-         {:assoc_op, _meta, _op} = op_token,
-         left,
-         right,
-         newlines,
-         %State{} = state,
-         _opts
-       ) do
-    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    {Builder.Helpers.binary(:"=>", left, right, op_meta), state}
-  end
-
-  defp build_binary_op(
-         {:assoc_op, _meta, _op} = op_token,
-         left,
-         right,
-         newlines,
-         _state,
-         _opts
-       ) do
-    op_meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    Builder.Helpers.binary(:"=>", left, right, op_meta)
-  end
-
-  defp build_binary_op(
-         {_kind, _meta, op} = op_token,
-         left,
-         right,
-         newlines,
-         %State{} = state,
-         _opts
-       ) do
-    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    {Builder.Helpers.binary(op, left, right, meta), state}
-  end
-
-  defp build_binary_op(
-         {_kind, _meta, op} = op_token,
-         left,
-         right,
-         newlines,
-         _state,
-         _opts
-       ) do
-    meta = build_meta_with_newlines(TokenAdapter.token_meta(op_token), newlines)
-    Builder.Helpers.binary(op, left, right, meta)
   end
 
   # Build metadata from a raw Toxic location tuple

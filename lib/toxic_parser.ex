@@ -150,7 +150,7 @@ defmodule ToxicParser do
     %Result{
       ast: ast,
       comments: [],
-      diagnostics: :lists.reverse(state.diagnostics, extra_diagnostics),
+      diagnostics: annotate_anchor_paths(ast, :lists.reverse(state.diagnostics, extra_diagnostics)),
       warnings: Enum.reverse(state.warnings) ++ Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
@@ -178,7 +178,7 @@ defmodule ToxicParser do
     %Result{
       ast: ast,
       comments: [],
-      diagnostics: Enum.reverse(state.diagnostics),
+      diagnostics: annotate_anchor_paths(ast, Enum.reverse(state.diagnostics)),
       warnings: Enum.reverse(state.warnings) ++ Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
@@ -245,6 +245,82 @@ defmodule ToxicParser do
   end
 
   defp normalize_reserved_word(other), do: other
+
+  defp annotate_anchor_paths(nil, diagnostics), do: diagnostics
+
+  defp annotate_anchor_paths(ast, diagnostics) do
+    id_paths = collect_error_paths(ast, [:root], %{})
+
+    Enum.map(diagnostics, fn diagnostic ->
+      case diagnostic.details do
+        %{anchor: %{kind: :error_node} = anchor, id: id} when is_integer(id) ->
+          path = Map.get(id_paths, id)
+          updated_anchor = Map.put(anchor, :path, path || anchor[:path])
+          %{diagnostic | details: Map.put(diagnostic.details, :anchor, updated_anchor)}
+
+        _ ->
+          diagnostic
+      end
+    end)
+  end
+
+  defp collect_error_paths({:__error__, _meta, payload}, path, acc) when is_map(payload) do
+    case payload do
+      %{diag_id: id} when is_integer(id) -> Map.put(acc, id, path)
+      _ -> acc
+    end
+  end
+
+  defp collect_error_paths({:__block__, _meta, exprs}, path, acc) when is_list(exprs) do
+    Enum.with_index(exprs)
+    |> Enum.reduce(acc, fn {expr, idx}, acc ->
+      collect_error_paths(expr, path ++ [{:block, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths({:%{}, _meta, kvs}, path, acc) when is_list(kvs) do
+    Enum.with_index(kvs)
+    |> Enum.reduce(acc, fn
+      {{key, value}, idx}, acc ->
+        acc = collect_error_paths(key, path ++ [{:map_kv, idx}, :key], acc)
+        collect_error_paths(value, path ++ [{:map_kv, idx}, :value], acc)
+
+      {other, idx}, acc ->
+        collect_error_paths(other, path ++ [{:map_kv, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths({:{}, _meta, elems}, path, acc) when is_list(elems) do
+    Enum.with_index(elems)
+    |> Enum.reduce(acc, fn {elem, idx}, acc ->
+      collect_error_paths(elem, path ++ [{:tuple, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths({:<<>>, _meta, parts}, path, acc) when is_list(parts) do
+    Enum.with_index(parts)
+    |> Enum.reduce(acc, fn {part, idx}, acc ->
+      collect_error_paths(part, path ++ [{:bitstring, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths({fun, _meta, args}, path, acc) when is_list(args) do
+    acc = collect_error_paths(fun, path ++ [:callee], acc)
+
+    Enum.with_index(args)
+    |> Enum.reduce(acc, fn {arg, idx}, acc ->
+      collect_error_paths(arg, path ++ [{:call_args, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths(list, path, acc) when is_list(list) do
+    Enum.with_index(list)
+    |> Enum.reduce(acc, fn {elem, idx}, acc ->
+      collect_error_paths(elem, path ++ [{:list, idx}], acc)
+    end)
+  end
+
+  defp collect_error_paths(_other, _path, acc), do: acc
 
   # Check for remaining tokens after parsing in strict mode
   defp check_remaining_tokens(state, cursor, :strict) do

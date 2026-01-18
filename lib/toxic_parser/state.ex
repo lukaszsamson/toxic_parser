@@ -34,7 +34,9 @@ defmodule ToxicParser.State do
           max_peek: pos_integer(),
           source: binary(),
           event_log: ToxicParser.EventLog.t(),
-          literal_encoder: (term(), Macro.metadata() -> term()) | nil
+          literal_encoder: (term(), Macro.metadata() -> term()) | nil,
+          next_diagnostic_id: pos_integer(),
+          error_token_diagnostics: %{term() => Error.t()}
         }
 
   defstruct diagnostics: [],
@@ -51,7 +53,9 @@ defmodule ToxicParser.State do
             max_peek: 4,
             source: "",
             event_log: EventLog.new(),
-            literal_encoder: nil
+            literal_encoder: nil,
+            next_diagnostic_id: 1,
+            error_token_diagnostics: %{}
 
   @doc """
   Builds an initial state from source with parser options.
@@ -104,5 +108,21 @@ defmodule ToxicParser.State do
       for {pos, 1} <- :binary.matches(source, "\n"), do: pos + 1
 
     [0 | starts] |> List.to_tuple()
+  end
+
+  @doc """
+  Allocates the next diagnostic id for a parse result.
+  """
+  @spec next_diagnostic_id(t()) :: {pos_integer(), t()}
+  def next_diagnostic_id(%__MODULE__{next_diagnostic_id: id} = state) do
+    {id, %{state | next_diagnostic_id: id + 1}}
+  end
+
+  @doc """
+  Returns the diagnostic associated with a lexer error token meta, if any.
+  """
+  @spec error_token_diagnostic(t(), term()) :: Error.t() | nil
+  def error_token_diagnostic(%__MODULE__{error_token_diagnostics: map}, meta) do
+    Map.get(map, meta)
   end
 end

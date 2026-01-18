@@ -214,8 +214,9 @@ defmodule ToxicParser.TokenAdapter do
         case Cursor.next(cursor) do
           {:ok, raw, cursor} ->
             case raw do
-              {:error_token, _meta, %Toxic.Error{} = err} ->
-                {:ok, raw, add_diagnostics(state, [err]), cursor}
+              {:error_token, meta, %Toxic.Error{} = err} ->
+                {_diagnostic, state} = add_error_token_diagnostic(state, meta, err)
+                {:ok, raw, state, cursor}
 
               {kind, _, _}
               when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
@@ -239,8 +240,9 @@ defmodule ToxicParser.TokenAdapter do
           case Cursor.next(cursor) do
             {:ok, raw, cursor} ->
               case raw do
-                {:error_token, _meta, %Toxic.Error{} = err} ->
-                  {:ok, raw, add_diagnostics(state, [err]), cursor}
+                {:error_token, meta, %Toxic.Error{} = err} ->
+                  {_diagnostic, state} = add_error_token_diagnostic(state, meta, err)
+                  {:ok, raw, state, cursor}
 
                 {kind, _, _}
                 when kind in @delimiter_tokens and (state.mode == :tolerant or state.emit_events?) ->
@@ -388,7 +390,7 @@ defmodule ToxicParser.TokenAdapter do
     terminators = Cursor.current_terminators(cursor)
     state = %{state | terminators: terminators}
 
-    diagnostic = make_diagnostic(reason, state)
+    {diagnostic, state} = make_diagnostic(reason, state)
 
     if state.mode == :tolerant do
       {token, state} = synthetic_error_token(state, cursor, diagnostic)
@@ -399,17 +401,59 @@ defmodule ToxicParser.TokenAdapter do
   end
 
   defp make_diagnostic(reason, state) do
-    Error.from_toxic(
-      nil,
-      reason,
-      line_index: state.line_index,
-      terminators: state.terminators,
-      source: state.source
-    )
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_toxic(
+        nil,
+        reason,
+        line_index: state.line_index,
+        terminators: state.terminators,
+        source: state.source
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: true,
+        lexer_error_code: lexer_error_code(reason)
+      })
+
+    {diagnostic, state}
   end
 
-  defp add_diagnostics(state, diagnostics) do
-    %{state | diagnostics: :lists.reverse(diagnostics, state.diagnostics)}
+  defp add_error_token_diagnostic(state, meta, %Toxic.Error{} = err) do
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_toxic(
+        meta,
+        err,
+        line_index: state.line_index,
+        terminators: state.terminators,
+        source: state.source
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: err.code
+      })
+
+    state =
+      state
+      |> record_diagnostic(diagnostic)
+      |> record_error_token_diagnostic(meta, diagnostic)
+
+    {diagnostic, state}
+  end
+
+  defp record_diagnostic(state, diagnostic) do
+    %{state | diagnostics: [diagnostic | state.diagnostics]}
+  end
+
+  defp record_error_token_diagnostic(state, meta, diagnostic) do
+    map = Map.put(state.error_token_diagnostics, meta, diagnostic)
+    %{state | error_token_diagnostics: map}
   end
 
   defp update_terminators(state, cursor) do
@@ -435,11 +479,14 @@ defmodule ToxicParser.TokenAdapter do
 
     token = {:error_token, meta, diagnostic.reason}
 
-    state = %{
+    state =
       state
-      | diagnostics: [diagnostic | state.diagnostics]
-    }
+      |> record_diagnostic(diagnostic)
+      |> record_error_token_diagnostic(meta, diagnostic)
 
     {token, state}
   end
+
+  defp lexer_error_code(%Toxic.Error{code: code}), do: code
+  defp lexer_error_code(_reason), do: nil
 end

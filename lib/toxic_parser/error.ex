@@ -37,6 +37,25 @@ defmodule ToxicParser.Error do
     }
   end
 
+  @doc """
+  Builds a parser-phase diagnostic anchored to a token meta.
+  """
+  @spec from_parser(term(), term(), keyword()) :: t()
+  def from_parser(meta, reason, opts \\ []) do
+    line_index = Keyword.get(opts, :line_index, {})
+    range = meta_to_range(meta, %{position: Keyword.get(opts, :position)}, line_index)
+
+    %__MODULE__{
+      phase: :parser,
+      reason: reason,
+      token: Keyword.get(opts, :token),
+      expected: Keyword.get(opts, :expected),
+      severity: Keyword.get(opts, :severity, :error),
+      range: range,
+      details: Keyword.get(opts, :details, %{})
+    }
+  end
+
   defp line_only_range(line) do
     location = %{offset: 0, line: line, column: 0}
     %{start: location, end: location}
@@ -122,6 +141,30 @@ defmodule ToxicParser.Error do
       expected: Keyword.get(opts, :expected),
       range: range,
       details: %{domain: :general, terminators: Keyword.get(opts, :terminators)}
+    }
+  end
+
+  @doc """
+  Merges additional diagnostic details.
+  """
+  @spec annotate(t(), map()) :: t()
+  def annotate(%__MODULE__{} = diagnostic, details) when is_map(details) do
+    %{diagnostic | details: Map.merge(diagnostic.details, details)}
+  end
+
+  @doc """
+  Builds a structured error-node payload tied to a diagnostic.
+  """
+  @spec error_node_payload(t(), keyword()) :: map()
+  def error_node_payload(%__MODULE__{} = diagnostic, opts \\ []) do
+    %{
+      diag_id: diagnostic.details[:id],
+      phase: diagnostic.phase,
+      kind: Keyword.get(opts, :kind, :invalid),
+      original: Keyword.get(opts, :original, diagnostic.reason),
+      original_text: Keyword.get(opts, :original_text),
+      children: Keyword.get(opts, :children, []),
+      synthetic?: Keyword.get(opts, :synthetic?, false)
     }
   end
 

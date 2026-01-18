@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Expressions do
   Expression dispatcher for matched/unmatched/no-parens contexts.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, Recovery, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, Recovery, State, TokenAdapter}
   alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE}
 
   @type result ::
@@ -258,7 +258,7 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp recover_expr_error(acc, reason, %State{mode: :tolerant} = state, cursor, ctx, log) do
-    error_ast = build_error_node(reason, state, cursor)
+    {error_ast, state} = build_error_node(reason, state, cursor)
 
     with {:ok, state, cursor, log} <- Recovery.sync_expr(state, cursor, log) do
       case Cursor.peek(cursor) do
@@ -277,15 +277,53 @@ defmodule ToxicParser.Grammar.Expressions do
     {:error, reason, state, cursor, log}
   end
 
-  defp build_error_node(reason, _state, cursor) do
-    meta =
+  defp build_error_node(reason, %State{} = state, cursor) do
+    {token_meta, range_meta} =
       case Cursor.peek(cursor) do
-        {:ok, tok, _cursor} -> TokenAdapter.token_meta(tok)
-        _ -> []
+        {:ok, tok, _cursor} -> {TokenAdapter.token_meta(tok), TokenAdapter.meta(tok)}
+        _ -> {[], nil}
       end
 
-    Builder.Helpers.error(reason, meta)
+    {diagnostic, state} = parser_diagnostic(reason, range_meta, state)
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
+        synthetic?: synthetic_error_node?(range_meta)
+      )
+
+    meta = maybe_mark_synthetic(token_meta, cursor, range_meta)
+    {Builder.Helpers.error(payload, meta), state}
   end
+
+  defp parser_diagnostic(reason, range_meta, %State{} = state) do
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(range_meta, reason, line_index: state.line_index, source: state.source)
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: synthetic_error_node?(range_meta),
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+    {diagnostic, state}
+  end
+
+  defp synthetic_error_node?(nil), do: true
+  defp synthetic_error_node?(_meta), do: false
+
+  defp maybe_mark_synthetic(meta, cursor, nil) do
+    {line, column} = Cursor.position(cursor)
+    toxic_meta = %{synthetic?: true, anchor: %{line: line, column: column}}
+    Keyword.put(meta, :toxic, toxic_meta)
+  end
+
+  defp maybe_mark_synthetic(meta, _cursor, _range_meta), do: meta
 
   @doc """
   Builds an AST node for an interpolated keyword key like "foo\#{x}":
