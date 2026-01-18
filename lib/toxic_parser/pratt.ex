@@ -119,7 +119,7 @@ defmodule ToxicParser.Pratt do
          {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log) do
       led(left, state, cursor, log, 0, context)
     else
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
+      {:eof, state, cursor} -> maybe_recover_error(:unexpected_eof, state, cursor, log)
       # Handle keyword_key from Strings.parse - bubble up to caller
       {:keyword_key, _, _, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _, _} = keyword_key -> keyword_key
@@ -145,7 +145,7 @@ defmodule ToxicParser.Pratt do
          {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
       {:ok, ast, state, cursor, log}
     else
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
+      {:eof, state, cursor} -> maybe_recover_error(:unexpected_eof, state, cursor, log)
       other -> Result.normalize_error(other, cursor, log)
     end
   end
@@ -172,7 +172,7 @@ defmodule ToxicParser.Pratt do
          {:ok, ast, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
       led_dots_and_calls(ast, state, cursor, log, context)
     else
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
+      {:eof, state, cursor} -> maybe_recover_error(:unexpected_eof, state, cursor, log)
       other -> Result.normalize_error(other, cursor, log)
     end
   end
@@ -211,7 +211,7 @@ defmodule ToxicParser.Pratt do
          {:ok, left, state, cursor, log} <- nud(token, state, cursor, context, log, parse_opts) do
       led(left, state, cursor, log, min_bp, context, parse_opts)
     else
-      {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
+      {:eof, state, cursor} -> maybe_recover_error(:unexpected_eof, state, cursor, log)
       # Handle keyword_key from Strings.parse - bubble up to caller
       {:keyword_key, _, _, _, _, _} = keyword_key -> keyword_key
       {:keyword_key_interpolated, _, _, _, _, _, _, _} = keyword_key -> keyword_key
@@ -325,8 +325,10 @@ defmodule ToxicParser.Pratt do
 
       # kw_identifier at expression position is a syntax error
       :kw_identifier ->
-        {:error, Keywords.invalid_kw_identifier_error(state, cursor, token_kind), state, cursor,
-         log}
+        reason = Keywords.invalid_kw_identifier_error(state, cursor, token_kind)
+        meta = TokenAdapter.token_meta(token)
+        range_meta = TokenAdapter.meta(token)
+        maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
       _ ->
         nud_literal_or_unary(token, state, cursor, context, log, min_bp, allow_containers, opts)
@@ -365,27 +367,35 @@ defmodule ToxicParser.Pratt do
           # e.g., "1 + * 3" should error because * cannot follow +
           is_binary_only_op(token_kind) ->
             meta = TokenAdapter.token_meta(token)
-            {:error, syntax_error_before(meta, token_value), state, cursor, log}
+            reason = syntax_error_before(meta, token_value)
+            range_meta = TokenAdapter.meta(token)
+            maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
           # Semicolons cannot start an expression
           # e.g., "1+;\n2" should error because ; cannot follow +
           # Note: newlines are handled separately by EOE.skip_newlines_only
           token_kind == :";" ->
             meta = TokenAdapter.token_meta(token)
-            {:error, syntax_error_before(meta, "';'"), state, cursor, log}
+            reason = syntax_error_before(meta, "';'")
+            range_meta = TokenAdapter.meta(token)
+            maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
           # Comma cannot start an expression
           # e.g., "if true do\n  foo = [],\n  baz\nend" - comma after [] is invalid
           token_kind == :"," ->
             meta = TokenAdapter.token_meta(token)
-            {:error, syntax_error_before(meta, "','"), state, cursor, log}
+            reason = syntax_error_before(meta, "','")
+            range_meta = TokenAdapter.meta(token)
+            maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
           # Block identifiers (after, else, catch, rescue) are only valid as block labels
           # They cannot be used as variables or expressions outside block context
           # e.g., "after = 1" is invalid
           token_kind == :block_identifier ->
             meta = TokenAdapter.token_meta(token)
-            {:error, syntax_error_before(meta, "'#{token_value}'"), state, cursor, log}
+            reason = syntax_error_before(meta, "'#{token_value}'")
+            range_meta = TokenAdapter.meta(token)
+            maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
           true ->
             nud_identifier_or_literal(
@@ -519,13 +529,20 @@ defmodule ToxicParser.Pratt do
         {:ok, ast, state, cursor, log}
 
       {:ok, {got_kind, _meta, _value}, state, cursor} ->
-        {:error, {:expected, :int, got: got_kind}, state, cursor, log}
+        reason = {:expected, :int, got: got_kind}
+        meta = TokenAdapter.token_meta(capture_token)
+        range_meta = TokenAdapter.meta(capture_token)
+        maybe_recover_error(reason, state, cursor, log, meta, range_meta)
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        meta = TokenAdapter.token_meta(capture_token)
+        range_meta = TokenAdapter.meta(capture_token)
+        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
 
       {:error, diag, state, cursor} ->
-        {:error, diag, state, cursor, log}
+        meta = TokenAdapter.token_meta(capture_token)
+        range_meta = TokenAdapter.meta(capture_token)
+        maybe_recover_error(diag, state, cursor, log, meta, range_meta)
     end
   end
 
@@ -3129,6 +3146,81 @@ defmodule ToxicParser.Pratt do
   end
 
   defp precedence_unary(_), do: nil
+
+  defp maybe_recover_error(reason, %State{mode: :tolerant} = state, cursor, log) do
+    {error_ast, state} = build_error_node(reason, state, cursor, [], nil)
+    {:ok, error_ast, state, cursor, log}
+  end
+
+  defp maybe_recover_error(reason, state, cursor, log),
+    do: {:error, reason, state, cursor, log}
+
+  defp maybe_recover_error(reason, %State{mode: :tolerant} = state, cursor, log, meta, range_meta) do
+    {error_ast, state} = build_error_node(reason, state, cursor, meta, range_meta)
+    {:ok, error_ast, state, cursor, log}
+  end
+
+  defp maybe_recover_error(reason, state, cursor, log, _meta, _range_meta),
+    do: {:error, reason, state, cursor, log}
+
+  defp build_error_node(reason, %State{} = state, cursor, meta, range_meta) do
+    {diagnostic, state} = parser_diagnostic(reason, range_meta, state, cursor)
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
+        synthetic?: synthetic_error_node?(range_meta)
+      )
+
+    meta = maybe_mark_synthetic(meta, cursor, range_meta)
+    {Builder.Helpers.error(payload, meta), state}
+  end
+
+  defp parser_diagnostic(reason, range_meta, %State{} = state, cursor) do
+    {id, state} = State.next_diagnostic_id(state)
+
+    position =
+      case range_meta do
+        nil ->
+          {line, column} = Cursor.position(cursor)
+          {{line, column}, {line, column}}
+
+        _ ->
+          nil
+      end
+
+    diagnostic =
+      Error.from_parser(range_meta, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: position
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: synthetic_error_node?(range_meta),
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+    {diagnostic, state}
+  end
+
+  defp synthetic_error_node?(nil), do: true
+  defp synthetic_error_node?(_meta), do: false
+
+  defp maybe_mark_synthetic(meta, cursor, range_meta) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    toxic_meta = %{synthetic?: synthetic_error_node?(range_meta), anchor: %{line: line, column: column}}
+    Keyword.put(meta, :toxic, toxic_meta)
+  end
 
   @compile {:inline, precedence_binary: 1, precedence_unary: 1}
 end

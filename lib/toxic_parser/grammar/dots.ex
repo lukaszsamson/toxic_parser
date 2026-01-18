@@ -104,15 +104,24 @@ defmodule ToxicParser.Grammar.Dots do
                 parse_curly_call(tok, state, cursor, ctx, log, dot_meta)
 
               true ->
-                {:error, {:expected, :dot_member, got: tok_kind}, state, cursor, log}
+                reason = {:expected, :dot_member, got: tok_kind}
+                meta = Helpers.token_meta(tok)
+                {state, cursor} =
+                  if state.mode == :tolerant do
+                    TokenAdapter.pushback(state, cursor, tok)
+                  else
+                    {state, cursor}
+                  end
+
+                maybe_recover_member_error(reason, meta, state, cursor, log)
             end
         end
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        maybe_recover_member_error(:unexpected_eof, dot_meta, state, cursor, log)
 
       {:error, diag, state, cursor} ->
-        {:error, diag, state, cursor, log}
+        maybe_recover_member_error(diag, dot_meta, state, cursor, log)
     end
   end
 
@@ -548,6 +557,48 @@ defmodule ToxicParser.Grammar.Dots do
     error_meta =
       [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     Builder.Helpers.error(payload, error_meta)
+  end
+
+  defp maybe_recover_member_error(reason, meta, %State{mode: :tolerant} = state, cursor, log) do
+    {error_ast, state} = build_member_error_node(reason, meta, state, cursor)
+    {:ok, error_ast, state, cursor, log}
+  end
+
+  defp maybe_recover_member_error(reason, _meta, state, cursor, log),
+    do: {:error, reason, state, cursor, log}
+
+  defp build_member_error_node(reason, meta, %State{} = state, cursor) do
+    {line, column, synthetic?} = error_anchor(meta, state, cursor)
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: synthetic?,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
+        synthetic?: synthetic?
+      )
+
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 
   defp error_anchor(meta, %State{} = state, cursor) do

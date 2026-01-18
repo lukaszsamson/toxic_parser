@@ -90,7 +90,12 @@ defmodule ToxicParser.TolerantModeTest do
     "version control merge conflict marker",
     "quoted atom missing terminator",
     "sigil missing terminator",
-    "quoted call missing terminator"
+    "quoted call missing terminator",
+    "kw identifier at expression position",
+    "binary operator at expression start",
+    "dot missing member",
+    "capture missing int",
+    "fn missing end"
   ]
 
   @error_cases [
@@ -173,6 +178,11 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "quoted call invalid unicode escape", code: "Foo.\"\\u\""},
     %{name: "quoted call invalid bidi character", code: "Foo.\"\u202A\""},
     %{name: "quoted call missing terminator", code: ~S(Foo."unclosed)},
+    %{name: "kw identifier at expression position", code: "foo:", no_following: true},
+    %{name: "binary operator at expression start", code: "* 1"},
+    %{name: "dot missing member", code: "Foo."},
+    %{name: "capture missing int", code: "&", no_following: true},
+    %{name: "fn missing end", code: "fn -> 1", no_following: true},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -193,6 +203,7 @@ defmodule ToxicParser.TolerantModeTest do
 
   for %{name: name, code: code} = data <- @error_cases do
     opts = Map.get(data, :opts, [])
+    no_following? = Map.get(data, :no_following, false)
 
     if name in @enabled_cases do
       @tag skip: false
@@ -200,7 +211,12 @@ defmodule ToxicParser.TolerantModeTest do
 
     test "#{name} recovers and emits error node" do
       opts = opts_for(unquote(name), unquote(opts))
-      source = with_following(unquote(code))
+      source =
+        if unquote(no_following?) do
+          unquote(code)
+        else
+          with_following(unquote(code))
+        end
 
       assert {:ok, %Result{} = result} = parse_tolerant(source, opts)
 
@@ -273,9 +289,17 @@ defmodule ToxicParser.TolerantModeTest do
       "unexpected comma inside map",
       "invalid expression inside paren call"
     ]
+    no_following_names = [
+      "kw identifier at expression position",
+      "capture missing int",
+      "fn missing end"
+    ]
 
     cond do
       name in ["literal encoder error"] ->
+        assert error_meta != []
+
+      name in no_following_names ->
         assert error_meta != []
 
       name in container_names ->
@@ -285,6 +309,10 @@ defmodule ToxicParser.TolerantModeTest do
         assert error_meta != []
 
       name in ["quoted call missing terminator"] ->
+        assert has_literal_two?(ast)
+        assert error_meta != []
+
+      name in ["dot missing member"] ->
         assert has_literal_two?(ast)
         assert error_meta != []
 
@@ -358,7 +386,7 @@ defmodule ToxicParser.TolerantModeTest do
   defp assert_container_error_and_two(ast) do
     case container_elements(ast) do
       elements when is_list(elements) ->
-        assert Enum.any?(elements, &match?({:__error__, _meta, _payload}, &1))
+        assert collect_error_nodes(elements) != []
         assert has_literal_two?(elements)
 
       _ ->

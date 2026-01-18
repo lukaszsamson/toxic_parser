@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.Stabs
 
@@ -86,6 +86,9 @@ defmodule ToxicParser.Grammar.Blocks do
       # Build metadata: [newlines: N, closing: [...], line: L, column: C]
       meta = Meta.closing_meta(fn_meta, end_location, newlines)
       {:ok, {:fn, meta, clauses}, state, cursor, log}
+    else
+      {:error, reason, state, cursor, log} ->
+        maybe_recover_fn_error(reason, fn_meta, state, cursor, log)
     end
   end
 
@@ -174,5 +177,49 @@ defmodule ToxicParser.Grammar.Blocks do
 
   defp exit_scope(log, scope, meta) do
     EventLog.env(log, %{action: :exit_scope, scope: scope, name: nil}, meta)
+  end
+
+  defp maybe_recover_fn_error(reason, fn_meta, %State{mode: :tolerant} = state, cursor, log) do
+    {error_ast, state} = build_error_node(reason, fn_meta, state, cursor)
+    {:ok, error_ast, state, cursor, log}
+  end
+
+  defp maybe_recover_fn_error(reason, _fn_meta, state, cursor, log),
+    do: {:error, reason, state, cursor, log}
+
+  defp build_error_node(reason, meta, %State{} = state, cursor) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 end
