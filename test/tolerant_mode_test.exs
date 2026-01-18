@@ -13,7 +13,8 @@ defmodule ToxicParser.TolerantModeTest do
     "number trailing garbage",
     "invalid float number",
     "consecutive semicolons",
-    "keyword list inside tuple"
+    "keyword list inside tuple",
+    "keyword list inside bitstring"
   ]
 
   @error_cases [
