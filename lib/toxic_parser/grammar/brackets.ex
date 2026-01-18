@@ -1,7 +1,7 @@
 defmodule ToxicParser.Grammar.Brackets do
   @moduledoc false
 
-  alias ToxicParser.{Context, Cursor, EventLog, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, State, TokenAdapter}
   alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
 
   @type result ::
@@ -48,30 +48,87 @@ defmodule ToxicParser.Grammar.Brackets do
       {:ok, [expr], state, cursor, log} ->
         {:ok, expr, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
 
-      {:ok, [_first, _second | _rest], state, _cursor, log} ->
-        {state, cursor} = TokenAdapter.rewind(state, ref)
+      {:ok, [_first, _second | _rest] = items, state, cursor, log} ->
+        if state.mode == :tolerant do
+          {error_node, state} =
+            build_access_error_node(
+              {[], @too_many_access_syntax_message, "','"},
+              [],
+              state,
+              cursor,
+              items
+            )
 
-        with {:ok, _first_expr, state, cursor, log} <- Expressions.expr(state, cursor, ctx, log) do
-          {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
+          {:ok, error_node, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+        else
+          {state, cursor} = TokenAdapter.rewind(state, ref)
 
-          case TokenAdapter.next(state, cursor) do
-            {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
-              meta = TokenAdapter.token_meta(comma_tok)
-              {:error, {meta, @too_many_access_syntax_message, "','"}, state, cursor, log}
+          with {:ok, _first_expr, state, cursor, log} <- Expressions.expr(state, cursor, ctx, log) do
+            {state, cursor, _newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-            {:ok, {kind, _meta, _value}, state, cursor} ->
-              {:error, {:expected, :",", got: kind}, state, cursor, log}
+            case TokenAdapter.next(state, cursor) do
+              {:ok, {:",", _meta, _value} = comma_tok, state, cursor} ->
+                meta = TokenAdapter.token_meta(comma_tok)
+                {:error, {meta, @too_many_access_syntax_message, "','"}, state, cursor, log}
 
-            {:eof, state, cursor} ->
-              {:error, :unexpected_eof, state, cursor, log}
+              {:ok, {kind, _meta, _value}, state, cursor} ->
+                {:error, {:expected, :",", got: kind}, state, cursor, log}
 
-            {:error, diag, state, cursor} ->
-              {:error, diag, state, cursor, log}
+              {:eof, state, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
+
+              {:error, diag, state, cursor} ->
+                {:error, diag, state, cursor, log}
+            end
           end
         end
 
       {:error, reason, state, cursor, log} ->
         {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
     end
+  end
+
+  defp build_access_error_node(reason, meta, %State{} = state, cursor, children) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> Cursor.position(cursor)
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :unexpected,
+        original: reason,
+        children: children,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
   end
 end

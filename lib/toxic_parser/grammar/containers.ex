@@ -285,8 +285,27 @@ defmodule ToxicParser.Grammar.Containers do
             # Validate no_parens expressions are not allowed in containers
             case ExprClass.classify(expr) do
               :no_parens ->
-                {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
-                 log}
+                if state.mode == :tolerant do
+                  meta =
+                    case expr do
+                      {_, meta, _} -> meta
+                      _ -> []
+                    end
+
+                  {error_node, state} =
+                    build_kw_tail_error_node(
+                      NoParensErrors.error_no_parens_container_strict(expr),
+                      meta,
+                      state,
+                      cursor,
+                      []
+                    )
+
+                  {:ok, {:expr, error_node}, state, cursor, log}
+                else
+                  {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                   log}
+                end
 
               _ ->
                 {:ok, {:expr, expr}, state, cursor, log}
@@ -627,7 +646,14 @@ defmodule ToxicParser.Grammar.Containers do
     {line, column} =
       case meta do
         {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
         _ -> Cursor.position(cursor)
+      end
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
       end
 
     {id, state} = State.next_diagnostic_id(state)

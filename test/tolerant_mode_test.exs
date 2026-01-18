@@ -17,7 +17,9 @@ defmodule ToxicParser.TolerantModeTest do
     "keyword list inside bitstring",
     "expression after keyword list in list",
     "expression after keyword list in call",
-    "expression after keyword list in map"
+    "expression after keyword list in map",
+    "unexpected comma inside containers",
+    "too many arguments in access syntax"
   ]
 
   @error_cases [
