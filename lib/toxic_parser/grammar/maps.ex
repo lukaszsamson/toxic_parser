@@ -58,11 +58,19 @@ defmodule ToxicParser.Grammar.Maps do
         percent_meta = Helpers.token_meta(tok)
         # Skip optional EOE after %
         {state, cursor} = EOE.skip(state, cursor)
-        # Parse map_base_expr (the struct name)
-        with {:ok, base, state, cursor, log} <- parse_map_base_expr(state, cursor, ctx, log) do
-          # Skip optional EOE after base
-          {state, cursor} = EOE.skip(state, cursor)
-          parse_map_args(base, percent_meta, state, cursor, ctx, log)
+        # If we hit a lexer error right after %, emit an error node and let recovery handle the rest.
+        case Cursor.peek(cursor) do
+          {:ok, {:error_token, _meta, _value}, cursor} when state.mode == :tolerant ->
+            {error_ast, state, cursor} = build_error_token_node(state, cursor)
+            {:ok, error_ast, state, cursor, log}
+
+          _ ->
+            # Parse map_base_expr (the struct name)
+            with {:ok, base, state, cursor, log} <- parse_map_base_expr(state, cursor, ctx, log) do
+              # Skip optional EOE after base
+              {state, cursor} = EOE.skip(state, cursor)
+              parse_map_args(base, percent_meta, state, cursor, ctx, log)
+            end
         end
 
       other ->
@@ -1325,6 +1333,27 @@ defmodule ToxicParser.Grammar.Maps do
       {:error, reason, state, cursor, log} ->
         {:error, reason, state, cursor, log}
     end
+  end
+
+  defp build_error_token_node(%State{} = state, cursor) do
+    {:ok, token, state, cursor} = TokenAdapter.next(state, cursor)
+    meta = TokenAdapter.token_meta(token)
+    token_value = TokenAdapter.value(token)
+
+    payload =
+      case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
+        %Error{} = diagnostic ->
+          Error.error_node_payload(diagnostic,
+            kind: :token,
+            original: token_value,
+            synthetic?: false
+          )
+
+        _ ->
+          token_value
+      end
+
+    {Builder.Helpers.error(payload, meta), state, cursor}
   end
 
   # Parse assoc list (assoc_base): one or more assoc_expr separated by commas

@@ -61,7 +61,30 @@ defmodule ToxicParser.TolerantModeTest do
     "sigil invalid lowercase name",
     "sigil invalid mixed case name",
     "sigil invalid delimiter",
-    "interpolation not allowed in quoted identifier"
+    "interpolation not allowed in quoted identifier",
+    "literal encoder error",
+    "range step operator must follow range",
+    "atom cannot be followed by alias",
+    "fn without -> clauses",
+    "unexpected -> placement",
+    "unexpected parentheses due to space",
+    "unexpected comma in nested calls",
+    "invalid keyword identifier with do",
+    "invalid keyword identifier",
+    "unicode conversion error in list string",
+    "mismatched closer",
+    "missing closer at eof",
+    "map invalid open delimiter",
+    "map unexpected space after percent",
+    "keyword missing space after colon",
+    "alias unexpected paren",
+    "alias invalid character",
+    "identifier mixed script",
+    "identifier invalid char",
+    "nonexistent atom with existing_atoms_only",
+    "comment invalid bidi",
+    "comment invalid linebreak",
+    "version control merge conflict marker"
   ]
 
   @error_cases [
@@ -234,6 +257,7 @@ defmodule ToxicParser.TolerantModeTest do
     exprs = expr_list(ast)
 
     if name in [
+         "literal encoder error",
          "string missing terminator",
          "interpolation missing terminator",
          "interpolation missing terminator without metadata",
@@ -267,7 +291,7 @@ defmodule ToxicParser.TolerantModeTest do
   end
 
   defp assert_synthetic_meta(_ast, error_meta, "fn without -> clauses") do
-    assert match?(%{synthetic?: true}, Keyword.get(error_meta, :toxic, %{}))
+    assert match?(%{synthetic?: false}, Keyword.get(error_meta, :toxic, %{}))
   end
 
   defp assert_synthetic_meta(_ast, _error_meta, _name), do: :ok

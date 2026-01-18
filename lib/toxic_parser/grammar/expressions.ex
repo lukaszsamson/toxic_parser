@@ -4,7 +4,7 @@ defmodule ToxicParser.Grammar.Expressions do
   """
 
   alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, Recovery, State, TokenAdapter}
-  alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE}
+  alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -214,9 +214,22 @@ defmodule ToxicParser.Grammar.Expressions do
                     {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
                     collect_exprs(acc, state, cursor, ctx, log)
 
-                  {:ok, {kind, _meta, _value}, cursor}
+                  {:ok, {:",", _meta, _value}, cursor} ->
+                    {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
+                    collect_exprs(acc, state, cursor, ctx, log)
+
+                  {:ok, {kind, _meta, _value} = tok, cursor}
                   when kind in [:end_interpolation, :"}", :"]", :")", :end] ->
-                    finalize_exprs(acc, state, cursor, log)
+                    with [last | _] <- acc,
+                         error_line when is_integer(error_line) <- error_expr_line(last),
+                         token_line when is_integer(token_line) <- TokenAdapter.line(tok),
+                         true <- token_line == error_line,
+                         true <- kind in [:")", :"]", :"}", :end] do
+                      {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
+                      collect_exprs(acc, state, cursor, ctx, log)
+                    else
+                      _ -> finalize_exprs(acc, state, cursor, log)
+                    end
 
                   {:ok, _tok, cursor} ->
                     collect_exprs(acc, state, cursor, ctx, log)
@@ -230,7 +243,13 @@ defmodule ToxicParser.Grammar.Expressions do
             end
 
           true ->
-            finalize_exprs(acc, state, cursor, log)
+            case {state.mode, TokenAdapter.kind(token)} do
+              {:tolerant, kind} when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
+                recover_expr_error(acc, Keywords.invalid_kw_identifier_error(state, cursor, kind), state, cursor, ctx, log)
+
+              _ ->
+                finalize_exprs(acc, state, cursor, log)
+            end
         end
     end
   end
@@ -305,6 +324,12 @@ defmodule ToxicParser.Grammar.Expressions do
 
         {:ok, _, cursor} ->
           collect_exprs([error_ast | acc], state, cursor, ctx, log)
+
+        {:eof, cursor} ->
+          finalize_exprs([error_ast | acc], state, cursor, log)
+
+        {:error, diag, cursor} ->
+          {:error, diag, state, cursor, log}
       end
     end
   end
