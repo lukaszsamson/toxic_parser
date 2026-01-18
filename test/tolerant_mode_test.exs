@@ -6,6 +6,14 @@ defmodule ToxicParser.TolerantModeTest do
 
   @default_opts [columns: true, token_metadata: true, emit_warnings: false]
   @moduletag :skip
+  @enabled_cases [
+    "unexpected closer",
+    "unexpected end keyword",
+    "unexpected end in expression",
+    "number trailing garbage",
+    "invalid float number",
+    "consecutive semicolons"
+  ]
 
   @error_cases [
     %{
@@ -102,6 +110,10 @@ defmodule ToxicParser.TolerantModeTest do
   for %{name: name, code: code} = data <- @error_cases do
     opts = Map.get(data, :opts, [])
 
+    if name in @enabled_cases do
+      @tag skip: false
+    end
+
     test "#{name} recovers and emits error node" do
       opts = opts_for(unquote(name), unquote(opts))
       source = with_following(unquote(code))
@@ -133,14 +145,21 @@ defmodule ToxicParser.TolerantModeTest do
   defp with_following(code), do: code <> "\n2"
 
   defp collect_error_nodes(ast) do
-    {_ast, acc} =
-      Macro.prewalk(ast, [], fn
-        {:__error__, _meta, _payload} = node, acc -> {node, [node | acc]}
-        node, acc -> {node, acc}
-      end)
-
-    Enum.reverse(acc)
+    Enum.reverse(collect_error_nodes(ast, []))
   end
+
+  defp collect_error_nodes({:__error__, _meta, _payload} = node, acc), do: [node | acc]
+
+  defp collect_error_nodes({fun, _meta, args}, acc) when is_list(args) do
+    acc = collect_error_nodes(fun, acc)
+    Enum.reduce(args, acc, fn arg, acc -> collect_error_nodes(arg, acc) end)
+  end
+
+  defp collect_error_nodes(list, acc) when is_list(list) do
+    Enum.reduce(list, acc, fn item, acc -> collect_error_nodes(item, acc) end)
+  end
+
+  defp collect_error_nodes(_other, acc), do: acc
 
   defp find_diagnostic(%Result{diagnostics: diagnostics}, diag_id) do
     Enum.find(diagnostics, fn diag -> diag.details[:id] == diag_id end)

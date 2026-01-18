@@ -194,8 +194,19 @@ defmodule ToxicParser.Grammar.Expressions do
       {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
 
-      {:ok, _, cursor} ->
-        finalize_exprs(acc, state, cursor, log)
+      {:ok, token, cursor} ->
+        if should_continue_after_error?(acc, state, cursor) or should_parse_error_token?(state, token) do
+          case expr(state, cursor, ctx, log) do
+            {:ok, next_expr, state, cursor, log} ->
+              {next_expr, state, cursor} = maybe_annotate_eoe(next_expr, state, cursor)
+              collect_exprs([next_expr | acc], state, cursor, ctx, log)
+
+            {:error, reason, state, cursor, log} ->
+              recover_expr_error(acc, reason, state, cursor, ctx, log)
+          end
+        else
+          finalize_exprs(acc, state, cursor, log)
+        end
     end
   end
 
@@ -350,6 +361,40 @@ defmodule ToxicParser.Grammar.Expressions do
     toxic_meta = %{synthetic?: synthetic_error_node?(range_meta), anchor: %{line: line, column: column}}
     Keyword.put(meta, :toxic, toxic_meta)
   end
+
+  defp should_continue_after_error?(acc, %State{mode: :tolerant} = _state, cursor) do
+    case acc do
+      [last | _] ->
+        with error_line when is_integer(error_line) <- error_expr_line(last),
+             {:ok, tok, _cursor} <- Cursor.peek(cursor),
+             token_line when is_integer(token_line) <- TokenAdapter.line(tok) do
+          token_line > error_line
+        else
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp should_continue_after_error?(_acc, _state, _cursor), do: false
+
+  defp should_parse_error_token?(%State{mode: :tolerant}, token) do
+    TokenAdapter.kind(token) == :error_token
+  end
+
+  defp should_parse_error_token?(_state, _token), do: false
+
+  defp error_expr_line({:__error__, meta, _payload}) do
+    Keyword.get(meta, :line)
+  end
+
+  defp error_expr_line({{:__error__, meta, _payload}, _call_meta, _args}) do
+    Keyword.get(meta, :line)
+  end
+
+  defp error_expr_line(_other), do: nil
 
   @doc """
   Builds an AST node for an interpolated keyword key like "foo\#{x}":
