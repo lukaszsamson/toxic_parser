@@ -256,13 +256,7 @@ defmodule ToxicParser.TolerantModeTest do
   defp assert_recovered_expression(ast, error_meta, name) do
     exprs = expr_list(ast)
 
-    if name in [
-         "literal encoder error",
-         "string missing terminator",
-         "interpolation missing terminator",
-         "interpolation missing terminator without metadata",
-         "heredoc missing terminator"
-       ] do
+    if name in ["literal encoder error"] do
       assert error_meta != []
     else
       assert Enum.any?(exprs, &(&1 == 2))
