@@ -86,7 +86,8 @@ defmodule ToxicParser.TolerantModeTest do
     "comment invalid linebreak",
     "version control merge conflict marker",
     "quoted atom missing terminator",
-    "sigil missing terminator"
+    "sigil missing terminator",
+    "quoted call missing terminator"
   ]
 
   @error_cases [
@@ -165,6 +166,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "quoted call invalid hex escape", code: "Foo.\"\\x\""},
     %{name: "quoted call invalid unicode escape", code: "Foo.\"\\u\""},
     %{name: "quoted call invalid bidi character", code: "Foo.\"\u202A\""},
+    %{name: "quoted call missing terminator", code: ~S(Foo."unclosed)},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -260,11 +262,17 @@ defmodule ToxicParser.TolerantModeTest do
   defp assert_recovered_expression(ast, error_meta, name) do
     exprs = expr_list(ast)
 
-    if name in ["literal encoder error"] do
-      assert error_meta != []
-    else
-      assert Enum.any?(exprs, &(&1 == 2))
-      assert error_meta != []
+    cond do
+      name in ["literal encoder error"] ->
+        assert error_meta != []
+
+      name in ["quoted call missing terminator"] ->
+        assert has_literal_two?(ast)
+        assert error_meta != []
+
+      true ->
+        assert Enum.any?(exprs, &(&1 == 2))
+        assert error_meta != []
     end
   end
 
@@ -328,6 +336,28 @@ defmodule ToxicParser.TolerantModeTest do
   end
 
   defp has_foo_keyword?(_other, found), do: found
+
+  defp has_literal_two?(ast), do: has_literal_two?(ast, false)
+
+  defp has_literal_two?(2, _found), do: true
+  defp has_literal_two?({:__error__, _meta, _payload}, found), do: found
+
+  defp has_literal_two?({fun, _meta, args}, found) when is_list(args) do
+    found = has_literal_two?(fun, found)
+    Enum.reduce(args, found, fn arg, acc -> has_literal_two?(arg, acc) end)
+  end
+
+  defp has_literal_two?(tuple, found) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.reduce(found, fn item, acc -> has_literal_two?(item, acc) end)
+  end
+
+  defp has_literal_two?(list, found) when is_list(list) do
+    Enum.reduce(list, found, fn item, acc -> has_literal_two?(item, acc) end)
+  end
+
+  defp has_literal_two?(_other, found), do: found
 
   defp opts_for("literal encoder error", base_opts) do
     Keyword.put(base_opts, :literal_encoder, &literal_encoder_fail/2)
