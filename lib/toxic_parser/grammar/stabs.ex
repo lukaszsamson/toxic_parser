@@ -3,7 +3,7 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Context, Cursor, EventLog, Pratt, State, TokenAdapter, NoParens}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, State, TokenAdapter, NoParens}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
   require NoParens
@@ -1479,10 +1479,22 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, collect_stab(items), state, cursor, log}
 
         :invalid ->
-          {:error, invalid_stab_error(items), state, cursor, log}
+          if state.mode == :tolerant do
+            reason = invalid_stab_error(items)
+            {error_node, state} = build_stab_error_node(reason, state, cursor)
+            {:ok, [error_node], state, cursor, log}
+          else
+            {:error, invalid_stab_error(items), state, cursor, log}
+          end
 
         :block ->
-          {:error, fn_missing_stab_error(items), state, cursor, log}
+          if state.mode == :tolerant do
+            reason = fn_missing_stab_error(items)
+            {error_node, state} = build_stab_error_node(reason, state, cursor)
+            {:ok, [error_node], state, cursor, log}
+          else
+            {:error, fn_missing_stab_error(items), state, cursor, log}
+          end
       end
     end
   end
@@ -1548,11 +1560,6 @@ defmodule ToxicParser.Grammar.Stabs do
     {location, "expected anonymous functions to be defined with -> inside: ", "'fn'"}
   end
 
-  defp fn_missing_stab_error([first | _]) do
-    meta = extract_meta(first)
-    {meta, "expected anonymous functions to be defined with -> inside: ", "'fn'"}
-  end
-
   defp fn_missing_stab_error([]) do
     {[line: 1, column: 1], "expected anonymous functions to be defined with -> inside: ", "'fn'"}
   end
@@ -1578,6 +1585,51 @@ defmodule ToxicParser.Grammar.Stabs do
   end
 
   defp extract_meta(_), do: []
+
+  defp build_stab_error_node(reason, %State{} = state, cursor) do
+    {line, column} = error_location_from_reason(reason, cursor)
+
+    {id, state} = State.next_diagnostic_id(state)
+
+    diagnostic =
+      Error.from_parser(nil, reason,
+        line_index: state.line_index,
+        source: state.source,
+        position: {{line, column}, {line, column}}
+      )
+      |> Error.annotate(%{
+        id: id,
+        anchor: %{kind: :error_node, path: [], note: nil},
+        synthetic?: false,
+        lexer_error_code: nil
+      })
+
+    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
+    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
+
+    payload =
+      Error.error_node_payload(diagnostic,
+        kind: :invalid,
+        original: reason,
+        synthetic?: false
+      )
+
+    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_location_from_reason({meta, _msg, _token}, _cursor) when is_list(meta) do
+    {Keyword.get(meta, :line, 1), Keyword.get(meta, :column, 1)}
+  end
+
+  defp error_location_from_reason({meta, _msg}, _cursor) when is_list(meta) do
+    {Keyword.get(meta, :line, 1), Keyword.get(meta, :column, 1)}
+  end
+
+  defp error_location_from_reason(_reason, cursor) do
+    {line, column} = Cursor.position(cursor)
+    {line || 1, column || 1}
+  end
 
   # Build a block from multiple expressions, or return single expression as-is
   defp build_stab_block([single]), do: single

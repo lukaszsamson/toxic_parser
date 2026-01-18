@@ -117,16 +117,20 @@ defmodule ToxicParser.Grammar.Blocks do
           # Build do/end metadata like elixir_parser.yrl does
           block_meta = [do: do_location, end: end_location]
           {:ok, {block_meta, sections}, state, cursor, log}
+        else
+          {:error, reason, state, cursor, log} ->
+            maybe_recover_do_block_error(reason, do_location, state, cursor, log)
         end
 
       {:ok, {got_kind, _meta, _value}, state, cursor} ->
-        {:error, {:expected, :do, got: got_kind}, state, cursor, log}
+        reason = {:expected, :do, got: got_kind}
+        maybe_recover_do_block_error(reason, [], state, cursor, log)
 
       {:eof, state, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        maybe_recover_do_block_error(:unexpected_eof, [], state, cursor, log)
 
       {:error, diag, state, cursor} ->
-        {:error, diag, state, cursor, log}
+        maybe_recover_do_block_error(diag, [], state, cursor, log)
     end
   end
 
@@ -221,5 +225,24 @@ defmodule ToxicParser.Grammar.Blocks do
 
     error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp maybe_recover_do_block_error(reason, do_location, %State{mode: :tolerant} = state, cursor, log) do
+    {error_ast, state} = build_error_node(reason, do_location, state, cursor)
+    block_meta = build_do_block_meta(do_location, cursor)
+    {:ok, {block_meta, [do: error_ast]}, state, cursor, log}
+  end
+
+  defp maybe_recover_do_block_error(reason, _do_location, state, cursor, log),
+    do: {:error, reason, state, cursor, log}
+
+  defp build_do_block_meta(do_location, cursor) do
+    {line, column} = Cursor.position(cursor)
+    end_location = [line: line || 1, column: column || 1]
+
+    case do_location do
+      [] -> [do: end_location, end: end_location]
+      _ -> [do: do_location, end: end_location]
+    end
   end
 end
