@@ -87,7 +87,7 @@ defmodule ToxicParser.Grammar.Expressions do
         Pratt.led(ast, state, cursor, log, 0, ctx)
 
       {:error, reason, state, cursor, log} ->
-        {:error, reason, state, cursor, log}
+        maybe_recover_inline_error(reason, state, cursor, ctx, log)
 
       {:no_block, state, cursor} ->
         case Containers.parse(state, cursor, ctx, log) do
@@ -95,7 +95,7 @@ defmodule ToxicParser.Grammar.Expressions do
             handle_literal_encoder(ast, state, cursor, log)
 
           {:error, reason, state, cursor, log} ->
-            {:error, reason, state, cursor, log}
+            maybe_recover_inline_error(reason, state, cursor, ctx, log)
 
           {:no_container, state, cursor} ->
             case ToxicParser.Grammar.Strings.parse(state, cursor, ctx, log) do
@@ -145,11 +145,11 @@ defmodule ToxicParser.Grammar.Expressions do
                     end
 
                   {:error, reason, state, cursor, log} ->
-                    {:error, reason, state, cursor, log}
+                    maybe_recover_inline_error(reason, state, cursor, ctx, log)
                 end
 
               {:error, reason, state, cursor, log} ->
-                {:error, reason, state, cursor, log}
+                maybe_recover_inline_error(reason, state, cursor, ctx, log)
             end
         end
     end
@@ -277,6 +277,15 @@ defmodule ToxicParser.Grammar.Expressions do
     {:error, reason, state, cursor, log}
   end
 
+  defp maybe_recover_inline_error(reason, %State{mode: :tolerant} = state, cursor, _ctx, log) do
+    {error_ast, state} = build_error_node(reason, state, cursor)
+    {:ok, error_ast, state, cursor, log}
+  end
+
+  defp maybe_recover_inline_error(reason, state, cursor, _ctx, log) do
+    {:error, reason, state, cursor, log}
+  end
+
   defp build_error_node(reason, %State{} = state, cursor) do
     {token_meta, range_meta} =
       case Cursor.peek(cursor) do
@@ -331,13 +340,16 @@ defmodule ToxicParser.Grammar.Expressions do
   defp synthetic_error_node?(nil), do: true
   defp synthetic_error_node?(_meta), do: false
 
-  defp maybe_mark_synthetic(meta, cursor, nil) do
-    {line, column} = Cursor.position(cursor)
-    toxic_meta = %{synthetic?: true, anchor: %{line: line, column: column}}
+  defp maybe_mark_synthetic(meta, cursor, range_meta) do
+    {line, column} =
+      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    toxic_meta = %{synthetic?: synthetic_error_node?(range_meta), anchor: %{line: line, column: column}}
     Keyword.put(meta, :toxic, toxic_meta)
   end
-
-  defp maybe_mark_synthetic(meta, _cursor, _range_meta), do: meta
 
   @doc """
   Builds an AST node for an interpolated keyword key like "foo\#{x}":
