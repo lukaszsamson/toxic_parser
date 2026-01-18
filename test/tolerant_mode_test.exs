@@ -84,7 +84,9 @@ defmodule ToxicParser.TolerantModeTest do
     "nonexistent atom with existing_atoms_only",
     "comment invalid bidi",
     "comment invalid linebreak",
-    "version control merge conflict marker"
+    "version control merge conflict marker",
+    "quoted atom missing terminator",
+    "sigil missing terminator"
   ]
 
   @error_cases [
@@ -133,6 +135,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "sigil invalid lowercase name", code: "~ab()"},
     %{name: "sigil invalid mixed case name", code: "~Ab()"},
     %{name: "sigil invalid delimiter", code: "~s$foo$"},
+    %{name: "sigil missing terminator", code: ~S(~s"unclosed)},
     %{name: "identifier mixed script", code: "fooАbar"},
     %{name: "identifier invalid char", code: "foo@bar"},
     %{
@@ -156,6 +159,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "charlist heredoc invalid unicode escape", code: "'''\n\\u\n'''"},
     %{name: "quoted atom invalid hex escape", code: ":\"\\x\""},
     %{name: "quoted atom invalid unicode escape", code: ":\"\\u\""},
+    %{name: "quoted atom missing terminator", code: ~S(:"unclosed)},
     %{name: "quoted keyword invalid hex escape", code: "\"\\x\": 1"},
     %{name: "quoted keyword invalid unicode escape", code: "\"\\u\": 1"},
     %{name: "quoted call invalid hex escape", code: "Foo.\"\\x\""},

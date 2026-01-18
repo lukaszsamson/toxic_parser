@@ -146,6 +146,18 @@ defmodule ToxicParser.ErrorsStrictTest do
     unclosed heredoc))
     end
 
+    test "quoted atom missing terminator" do
+      assert_error_conforms(~S(:"unclosed), [], false)
+    end
+
+    test "quoted call missing terminator" do
+      assert_error_conforms(~S(Foo."unclosed), [], false)
+    end
+
+    test "sigil missing terminator" do
+      assert_error_conforms(~S(~s"unclosed), [], false)
+    end
+
     test "heredoc invalid header" do
       assert_error_conforms(~S("""invalid))
     end
