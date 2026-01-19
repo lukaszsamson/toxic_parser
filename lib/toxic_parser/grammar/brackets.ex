@@ -91,7 +91,13 @@ defmodule ToxicParser.Grammar.Brackets do
         end
 
       {:error, reason, state, cursor, log} ->
-        {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+        if state.mode == :tolerant do
+          meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+          {:ok, error_node, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+        else
+          {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+        end
     end
   end
 

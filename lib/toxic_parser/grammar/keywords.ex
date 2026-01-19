@@ -477,10 +477,23 @@ defmodule ToxicParser.Grammar.Keywords do
 
       {:error, {:trailing_comma, comma_tok}, state, cursor, log} ->
         meta = TokenAdapter.token_meta(comma_tok)
-        {:error, syntax_error_before(meta), state, cursor, log}
+        reason = syntax_error_before(meta)
+
+        if state.mode == :tolerant do
+          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+          {:ok, [{:__error__, error_node}], state, cursor, log}
+        else
+          {:error, reason, state, cursor, log}
+        end
 
       {:error, reason, state, cursor, log} ->
-        {:error, reason, state, cursor, log}
+        if state.mode == :tolerant and reason == :unexpected_eof do
+          meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+          {:ok, [{:__error__, error_node}], state, cursor, log}
+        else
+          {:error, reason, state, cursor, log}
+        end
     end
   end
 

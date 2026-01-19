@@ -97,6 +97,7 @@ defmodule ToxicParser.TolerantModeTest do
     "dot missing member",
     "dot container missing closer",
     "bracket access missing closer",
+    "bracket empty args",
     "capture missing int",
     "fn missing end",
     "do block missing end",
@@ -116,7 +117,9 @@ defmodule ToxicParser.TolerantModeTest do
     "no-parens trailing comma eof",
     "no-parens kw list invalid arg",
     "map kw tail unexpected token",
-    "no-parens kw list missing item"
+    "no-parens kw list missing item",
+    "no-parens kw list trailing comma eof",
+    "bitstring invalid expr"
   ]
 
   @error_cases [
@@ -205,6 +208,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "dot missing member", code: "Foo."},
     %{name: "dot container missing closer", code: "Foo.{1", no_following: true},
     %{name: "bracket access missing closer", code: "foo[1", no_following: true},
+    %{name: "bracket empty args", code: "foo[]"},
     %{name: "capture missing int", code: "&", no_following: true},
     %{name: "fn missing end", code: "fn -> 1", no_following: true},
     %{name: "do block missing end", code: "if true do 1", no_following: true},
@@ -225,6 +229,8 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "no-parens kw list invalid arg", code: "foo a: 1, +", no_following: true},
     %{name: "map kw tail unexpected token", code: "%{foo: 1 bar}", no_following: true},
     %{name: "no-parens kw list missing item", code: "foo a: 1, , b: 2"},
+    %{name: "no-parens kw list trailing comma eof", code: "foo a: 1,", no_following: true},
+    %{name: "bitstring invalid expr", code: "<<1, +>>"},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -351,7 +357,10 @@ defmodule ToxicParser.TolerantModeTest do
       "no-parens arg after comma",
       "no-parens trailing comma eof",
       "no-parens kw list invalid arg",
-      "map kw tail unexpected token"
+      "map kw tail unexpected token",
+      "no-parens kw list missing item",
+      "no-parens kw list trailing comma eof",
+      "bitstring invalid expr"
     ]
 
     cond do
