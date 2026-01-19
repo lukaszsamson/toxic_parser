@@ -354,6 +354,7 @@ defmodule ToxicParser.TolerantModeTest do
       "fn paren patterns missing closer",
       "dot container missing closer",
       "bracket access missing closer",
+      "bracket empty args",
       "no-parens arg after comma",
       "no-parens trailing comma eof",
       "no-parens kw list invalid arg",
