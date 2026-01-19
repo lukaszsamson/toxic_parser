@@ -152,6 +152,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
               case ExprClass.classify(expr) do
                 :no_parens ->
                   if state.mode == :tolerant do
+                    # Intentionally rewind so Delimited.on_error can recover from the original token.
                     {state, cursor} = TokenAdapter.rewind(state, ref)
 
                     {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}

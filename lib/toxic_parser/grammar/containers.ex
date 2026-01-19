@@ -332,6 +332,7 @@ defmodule ToxicParser.Grammar.Containers do
               case ExprClass.classify(expr) do
                 :no_parens ->
                   if state.mode == :tolerant do
+                    # Intentionally rewind so Delimited.on_error can sync at the separator.
                     {state, cursor} = TokenAdapter.rewind(state, ref)
 
                     {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
