@@ -115,7 +115,8 @@ defmodule ToxicParser.TolerantModeTest do
     "map kw tail missing comma",
     "no-parens trailing comma eof",
     "no-parens kw list invalid arg",
-    "map kw tail unexpected token"
+    "map kw tail unexpected token",
+    "no-parens kw list missing item"
   ]
 
   @error_cases [
@@ -223,6 +224,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "no-parens trailing comma eof", code: "foo a,", no_following: true},
     %{name: "no-parens kw list invalid arg", code: "foo a: 1, +", no_following: true},
     %{name: "map kw tail unexpected token", code: "%{foo: 1 bar}", no_following: true},
+    %{name: "no-parens kw list missing item", code: "foo a: 1, , b: 2"},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},

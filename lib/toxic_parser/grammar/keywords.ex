@@ -18,7 +18,7 @@ defmodule ToxicParser.Grammar.Keywords do
 
   # TokenAdapter used for next, checkpoint, rewind, pushback_many, token_meta
 
-  alias ToxicParser.Grammar.{EOE, Expressions, Strings}
+  alias ToxicParser.Grammar.{EOE, ErrorHelpers, Expressions, Strings}
 
   @type result ::
           {:ok, [Macro.t()], State.t(), ToxicParser.Cursor.t(), EventLog.t()}
@@ -451,6 +451,12 @@ defmodule ToxicParser.Grammar.Keywords do
       {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, cursor, log}
     end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+      {error_node, state} = ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+      {:ok, {:__error__, error_node}, state, cursor, log}
+    end
+
     case ToxicParser.Grammar.Delimited.parse_comma_separated(
            state,
            cursor,
@@ -463,7 +469,8 @@ defmodule ToxicParser.Grammar.Keywords do
            skip_eoe_after_item?: false,
            skip_eoe_after_separator?: true,
            stop_on_unexpected?: true,
-           on_no_item_after_separator: on_no_item_after_separator
+           on_no_item_after_separator: on_no_item_after_separator,
+           on_error: on_error
          ) do
       {:ok, kw_list, state, cursor, log} ->
         {:ok, kw_list, state, cursor, log}
