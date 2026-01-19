@@ -1590,7 +1590,6 @@ defmodule ToxicParser.Grammar.Stabs do
     ErrorHelpers.build_error_node_from_reason(:invalid, reason, state, cursor)
   end
 
-
   # Build a block from multiple expressions, or return single expression as-is
   defp build_stab_block([single]), do: single
 

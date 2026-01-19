@@ -30,7 +30,11 @@ defmodule ToxicParser.Grammar.ErrorHelpers do
   end
 
   def build_error_meta(line, column, synthetic?) do
-    [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    [
+      line: line,
+      column: column,
+      toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}
+    ]
   end
 
   def build_parser_diagnostic(reason, %State{} = state, line, column, id, synthetic?) do
@@ -109,10 +113,17 @@ defmodule ToxicParser.Grammar.ErrorHelpers do
   def synthetic_meta?(meta, %State{} = state) do
     missing? =
       case meta do
-        {{_, _}, _, _} -> false
-        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-        {line, column} when is_integer(line) and is_integer(column) -> false
-        _ -> true
+        {{_, _}, _, _} ->
+          false
+
+        meta when is_list(meta) ->
+          Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+
+        {line, column} when is_integer(line) and is_integer(column) ->
+          false
+
+        _ ->
+          true
       end
 
     missing? or not Keyword.get(state.opts, :token_metadata, true)

@@ -75,7 +75,10 @@ defmodule ToxicParser.Grammar.Bitstrings do
                     {state, cursor} = TokenAdapter.rewind(state, ref)
                     reason = NoParensErrors.error_no_parens_container_strict(expr)
                     meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-                    {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
+                    {error_node, state} =
+                      ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
                     {state, cursor} = sync_to_bitstring_separator(state, cursor)
                     {:ok, {:expr, error_node}, state, cursor, log}
                   else
@@ -141,8 +144,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
               {:ok, {kind, _meta, _value} = tok, state, cursor} ->
                 if state.mode == :tolerant do
                   {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+
                   {error_ast, state} =
-                    build_container_error_node({:expected, :">>", got: kind}, open_meta, state, cursor)
+                    build_container_error_node(
+                      {:expected, :">>", got: kind},
+                      open_meta,
+                      state,
+                      cursor
+                    )
 
                   {:ok, error_ast, state, cursor, log}
                 else
@@ -182,8 +191,14 @@ defmodule ToxicParser.Grammar.Bitstrings do
             {:ok, {kind, _meta, _value} = tok, state, cursor} ->
               if state.mode == :tolerant do
                 {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+
                 {error_ast, state} =
-                  build_container_error_node({:expected, :">>", got: kind}, open_meta, state, cursor)
+                  build_container_error_node(
+                    {:expected, :">>", got: kind},
+                    open_meta,
+                    state,
+                    cursor
+                  )
 
                 {:ok, error_ast, state, cursor, log}
               else

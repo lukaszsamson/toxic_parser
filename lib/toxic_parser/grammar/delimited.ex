@@ -231,11 +231,11 @@ defmodule ToxicParser.Grammar.Delimited do
             end
 
           {:eof, cursor} ->
-        if eof_is_close? do
-          {:ok, Enum.reverse(acc_rev), state, cursor, log}
-        else
-          {:error, :unexpected_eof, state, cursor, log}
-        end
+            if eof_is_close? do
+              {:ok, Enum.reverse(acc_rev), state, cursor, log}
+            else
+              {:error, :unexpected_eof, state, cursor, log}
+            end
 
           {:error, diag, cursor} ->
             {:error, diag, state, cursor, log}
@@ -353,7 +353,9 @@ defmodule ToxicParser.Grammar.Delimited do
 
     acc_rev = Enum.reverse(items) ++ acc_rev
     separator = opts[:separator]
-    {state, cursor, log, sync_result} = sync_to_separator(state, cursor, separator, close_kinds, log)
+
+    {state, cursor, log, sync_result} =
+      sync_to_separator(state, cursor, separator, close_kinds, log)
 
     case sync_result do
       :separator ->
@@ -369,7 +371,17 @@ defmodule ToxicParser.Grammar.Delimited do
                 {:error, {:trailing_comma, sep_tok}, state, cursor, log}
               end
             else
-              parse_items_rev(acc_rev, state, cursor, ctx, log, close_kinds, item_fun, opts, sep_tok)
+              parse_items_rev(
+                acc_rev,
+                state,
+                cursor,
+                ctx,
+                log,
+                close_kinds,
+                item_fun,
+                opts,
+                sep_tok
+              )
             end
 
           {:eof, cursor} ->

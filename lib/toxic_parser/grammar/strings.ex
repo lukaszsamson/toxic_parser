@@ -3,7 +3,18 @@ defmodule ToxicParser.Grammar.Strings do
   Parsing for strings, charlists, heredocs, sigils, and quoted atoms from Toxic token streams.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, ParseOpts, Pratt, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    Cursor,
+    Error,
+    EventLog,
+    ParseOpts,
+    Pratt,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{ErrorHelpers, Expressions}
   alias ToxicParser.Position
@@ -122,7 +133,10 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, {:missing_terminator, code, error_tok}, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, target_ends)
-          {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
+          {state, cursor} =
+            maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
           error_ast = build_missing_terminator_node(error_tok, start_meta, state, cursor, [])
           normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
         else
@@ -132,10 +146,15 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, target_ends)
+
           case missing_terminator_diagnostic(state) do
             {:ok, code, diagnostic} when reason == :unexpected_eof ->
-              {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
-              error_ast = build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+              {state, cursor} =
+                maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
+              error_ast =
+                build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+
               normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
 
             _ ->
@@ -183,7 +202,10 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, {:missing_terminator, code, error_tok}, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, target_ends)
-          {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
+          {state, cursor} =
+            maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
           error_ast = build_missing_terminator_node(error_tok, start_meta, state, cursor, [])
           normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
         else
@@ -193,10 +215,15 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, target_ends)
+
           case missing_terminator_diagnostic(state) do
             {:ok, code, diagnostic} when reason == :unexpected_eof ->
-              {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
-              error_ast = build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+              {state, cursor} =
+                maybe_recover_missing_terminator(state, cursor, start_meta, kind, code)
+
+              error_ast =
+                build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+
               normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
 
             _ ->
@@ -275,7 +302,10 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, {:missing_terminator, code, error_tok}, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, [:sigil_end])
-          {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, :sigil, code)
+
+          {state, cursor} =
+            maybe_recover_missing_terminator(state, cursor, start_meta, :sigil, code)
+
           error_ast = build_missing_terminator_node(error_tok, start_meta, state, cursor, [])
           normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
         else
@@ -285,10 +315,15 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, [:sigil_end])
+
           case missing_terminator_diagnostic(state) do
             {:ok, code, diagnostic} when reason == :unexpected_eof ->
-              {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, :sigil, code)
-              error_ast = build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+              {state, cursor} =
+                maybe_recover_missing_terminator(state, cursor, start_meta, :sigil, code)
+
+              error_ast =
+                build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+
               normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
 
             _ ->
@@ -349,7 +384,10 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, {:missing_terminator, code, error_tok}, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, [end_token_kind])
-          {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, :atom, code)
+
+          {state, cursor} =
+            maybe_recover_missing_terminator(state, cursor, start_meta, :atom, code)
+
           error_ast = build_missing_terminator_node(error_tok, start_meta, state, cursor, [])
           normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
         else
@@ -359,10 +397,15 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant do
           {state, cursor} = sync_to_string_end(state, cursor, [end_token_kind])
+
           case missing_terminator_diagnostic(state) do
             {:ok, code, diagnostic} when reason == :unexpected_eof ->
-              {state, cursor} = maybe_recover_missing_terminator(state, cursor, start_meta, :atom, code)
-              error_ast = build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+              {state, cursor} =
+                maybe_recover_missing_terminator(state, cursor, start_meta, :atom, code)
+
+              error_ast =
+                build_missing_terminator_node_from_diagnostic(diagnostic, start_meta, cursor, [])
+
               normalize_string_errors(error_ast, state, cursor, log, ctx, min_bp, opts)
 
             _ ->
@@ -424,48 +467,57 @@ defmodule ToxicParser.Grammar.Strings do
             :begin_interpolation ->
               with {:ok, interp_ast, state, cursor, log} <-
                      parse_interpolation(state, cursor, kind, log) do
-              collect_parts(
-                [{:interpolation, interp_ast} | acc],
-                state,
-                cursor,
-                target_ends,
-                kind,
-                log
-              )
-            end
-
-          :error_token ->
-            {:ok, error_tok, state, cursor} = TokenAdapter.next(state, cursor)
-
-            case error_tok do
-              {:error_token, _meta, %Toxic.Error{code: code}}
-              when code in [:string_missing_terminator, :interpolation_missing_terminator, :heredoc_missing_terminator] and
-                     state.mode == :tolerant ->
-                {:error, {:missing_terminator, code, error_tok}, state, cursor, log}
-
-              _ ->
-                error_ast = build_error_token_node(error_tok, state)
-
                 collect_parts(
-                  [{:interpolation, error_ast} | acc],
+                  [{:interpolation, interp_ast} | acc],
                   state,
                   cursor,
                   target_ends,
                   kind,
                   log
                 )
-            end
-
-          _ ->
-            if state.mode == :tolerant do
-              case TokenAdapter.next(state, cursor) do
-                {:ok, _tok, state, cursor} -> collect_parts(acc, state, cursor, target_ends, kind, log)
-                {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
-                {:error, reason, state, cursor} -> {:error, reason, state, cursor, log}
               end
-            else
-              {:error, {:unexpected_string_token, end_kind}, state, cursor, log}
-            end
+
+            :error_token ->
+              {:ok, error_tok, state, cursor} = TokenAdapter.next(state, cursor)
+
+              case error_tok do
+                {:error_token, _meta, %Toxic.Error{code: code}}
+                when code in [
+                       :string_missing_terminator,
+                       :interpolation_missing_terminator,
+                       :heredoc_missing_terminator
+                     ] and
+                       state.mode == :tolerant ->
+                  {:error, {:missing_terminator, code, error_tok}, state, cursor, log}
+
+                _ ->
+                  error_ast = build_error_token_node(error_tok, state)
+
+                  collect_parts(
+                    [{:interpolation, error_ast} | acc],
+                    state,
+                    cursor,
+                    target_ends,
+                    kind,
+                    log
+                  )
+              end
+
+            _ ->
+              if state.mode == :tolerant do
+                case TokenAdapter.next(state, cursor) do
+                  {:ok, _tok, state, cursor} ->
+                    collect_parts(acc, state, cursor, target_ends, kind, log)
+
+                  {:eof, state, cursor} ->
+                    {:error, :unexpected_eof, state, cursor, log}
+
+                  {:error, reason, state, cursor} ->
+                    {:error, reason, state, cursor, log}
+                end
+              else
+                {:error, {:unexpected_string_token, end_kind}, state, cursor, log}
+              end
           end
         end
 
@@ -475,9 +527,14 @@ defmodule ToxicParser.Grammar.Strings do
       {:error, diag, cursor} ->
         if state.mode == :tolerant do
           case TokenAdapter.next(state, cursor) do
-            {:ok, _tok, state, cursor} -> collect_parts(acc, state, cursor, target_ends, kind, log)
-            {:eof, state, cursor} -> {:error, :unexpected_eof, state, cursor, log}
-            {:error, reason, state, cursor} -> {:error, reason, state, cursor, log}
+            {:ok, _tok, state, cursor} ->
+              collect_parts(acc, state, cursor, target_ends, kind, log)
+
+            {:eof, state, cursor} ->
+              {:error, :unexpected_eof, state, cursor, log}
+
+            {:error, reason, state, cursor} ->
+              {:error, reason, state, cursor, log}
           end
         else
           {:error, diag, state, cursor, log}
@@ -593,7 +650,12 @@ defmodule ToxicParser.Grammar.Strings do
     Builder.Helpers.error(payload, error_meta)
   end
 
-  defp build_missing_terminator_node_from_diagnostic(%Error{} = diagnostic, start_meta, cursor, children) do
+  defp build_missing_terminator_node_from_diagnostic(
+         %Error{} = diagnostic,
+         start_meta,
+         cursor,
+         children
+       ) do
     synthetic? = synthetic_meta?(start_meta, nil)
 
     payload =
@@ -646,9 +708,14 @@ defmodule ToxicParser.Grammar.Strings do
 
   defp synthetic_meta?(meta, nil) do
     case meta do
-      {{_, _}, _, _} -> false
-      meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-      _ -> true
+      {{_, _}, _, _} ->
+        false
+
+      meta when is_list(meta) ->
+        Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+
+      _ ->
+        true
     end
   end
 
@@ -709,12 +776,15 @@ defmodule ToxicParser.Grammar.Strings do
                                 {:ok, error_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
                                 case error_tok do
-                                  {:error_token, _meta, %Toxic.Error{code: :interpolation_missing_terminator}} ->
-                                    {:error, {:missing_terminator, :interpolation_missing_terminator, error_tok}, state, cursor, log}
+                                  {:error_token, _meta,
+                                   %Toxic.Error{code: :interpolation_missing_terminator}} ->
+                                    {:error,
+                                     {:missing_terminator, :interpolation_missing_terminator,
+                                      error_tok}, state, cursor, log}
 
                                   _ ->
-                                    {:error, {:expected_end_interpolation, interp_end_kind}, state,
-                                     cursor, log}
+                                    {:error, {:expected_end_interpolation, interp_end_kind},
+                                     state, cursor, log}
                                 end
 
                               true ->
@@ -763,8 +833,11 @@ defmodule ToxicParser.Grammar.Strings do
                         {:ok, error_tok, state, cursor} = TokenAdapter.next(state, cursor)
 
                         case error_tok do
-                          {:error_token, _meta, %Toxic.Error{code: :interpolation_missing_terminator}} ->
-                            {:error, {:missing_terminator, :interpolation_missing_terminator, error_tok}, state, cursor, log}
+                          {:error_token, _meta,
+                           %Toxic.Error{code: :interpolation_missing_terminator}} ->
+                            {:error,
+                             {:missing_terminator, :interpolation_missing_terminator, error_tok},
+                             state, cursor, log}
 
                           _ ->
                             {:error, {:expected_end_interpolation, end_kind}, state, cursor, log}

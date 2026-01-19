@@ -453,7 +453,10 @@ defmodule ToxicParser.Grammar.Keywords do
 
     on_error = fn reason, state, cursor, _ctx, log ->
       meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-      {error_node, state} = ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+
+      {error_node, state} =
+        ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+
       {:ok, {:__error__, error_node}, state, cursor, log}
     end
 
@@ -480,7 +483,9 @@ defmodule ToxicParser.Grammar.Keywords do
         reason = syntax_error_before(meta)
 
         if state.mode == :tolerant do
-          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+          {error_node, state} =
+            ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
           {:ok, [{:__error__, error_node}], state, cursor, log}
         else
           {:error, reason, state, cursor, log}
@@ -489,7 +494,10 @@ defmodule ToxicParser.Grammar.Keywords do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant and reason == :unexpected_eof do
           meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
+          {error_node, state} =
+            ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
           {:ok, [{:__error__, error_node}], state, cursor, log}
         else
           {:error, reason, state, cursor, log}

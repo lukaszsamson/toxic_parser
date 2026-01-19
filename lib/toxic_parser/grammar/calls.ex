@@ -478,6 +478,7 @@ defmodule ToxicParser.Grammar.Calls do
 
                         _ ->
                           meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+
                           {error_node, state} =
                             ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
 
@@ -487,7 +488,16 @@ defmodule ToxicParser.Grammar.Calls do
                             {:ok, {:",", _meta, _value}, cursor} when not opts.stop_at_comma ->
                               {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
                               {state, cursor} = EOE.skip(state, cursor)
-                              parse_no_parens_args([error_node | acc], state, cursor, ctx, log, min_bp, opts)
+
+                              parse_no_parens_args(
+                                [error_node | acc],
+                                state,
+                                cursor,
+                                ctx,
+                                log,
+                                min_bp,
+                                opts
+                              )
 
                             _ ->
                               {:ok, Enum.reverse([error_node | acc]), state, cursor, log}
@@ -538,7 +548,9 @@ defmodule ToxicParser.Grammar.Calls do
                   reason = {meta, "syntax error before: ", ""}
 
                   if state.mode == :tolerant do
-                    {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+                    {error_node, state} =
+                      ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
                     {:ok, Enum.reverse([error_node, arg | acc]), state, cursor, log}
                   else
                     {:error, reason, state, cursor, log}
@@ -561,7 +573,9 @@ defmodule ToxicParser.Grammar.Calls do
                 reason = {meta, "syntax error before: ", ""}
 
                 if state.mode == :tolerant do
-                  {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+                  {error_node, state} =
+                    ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
                   {:ok, Enum.reverse([error_node, arg | acc]), state, cursor, log}
                 else
                   {:error, reason, state, cursor, log}
@@ -617,7 +631,10 @@ defmodule ToxicParser.Grammar.Calls do
 
             {:error, reason, state, cursor, log} ->
               meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-              {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
+              {error_node, state} =
+                ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
               {state, cursor} = sync_to_no_parens_separator(state, cursor)
 
               case Cursor.peek(cursor) do

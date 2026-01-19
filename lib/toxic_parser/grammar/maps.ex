@@ -3,7 +3,18 @@ defmodule ToxicParser.Grammar.Maps do
   Parsing for maps and structs, including updates inside `%{}`.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, ExprClass, Pratt, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    Cursor,
+    Error,
+    EventLog,
+    ExprClass,
+    Pratt,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.{Helpers, Meta}
   alias ToxicParser.Grammar.{Brackets, Delimited, EOE, ErrorHelpers, Expressions, Keywords}
 
@@ -58,6 +69,7 @@ defmodule ToxicParser.Grammar.Maps do
         percent_meta = Helpers.token_meta(tok)
         # Skip optional EOE after %
         {state, cursor} = EOE.skip(state, cursor)
+
         # If we hit a lexer error right after %, emit an error node and let recovery handle the rest.
         case Cursor.peek(cursor) do
           {:ok, {:error_token, _meta, _value}, cursor} when state.mode == :tolerant ->
@@ -516,39 +528,39 @@ defmodule ToxicParser.Grammar.Maps do
        ) do
     result =
       case Cursor.peek(cursor) do
-      # Empty map: map_args -> open_curly '}'
-      {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-        {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-        close_meta = Helpers.token_meta(close_tok)
-        map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
-        {:ok, build_map_ast(base, [], percent_meta, map_meta), state, cursor, log}
+        # Empty map: map_args -> open_curly '}'
+        {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+          {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+          close_meta = Helpers.token_meta(close_tok)
+          map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
+          {:ok, build_map_ast(base, [], percent_meta, map_meta), state, cursor, log}
 
-      {:ok, _, cursor} ->
-        # Try to parse map update first, then fall back to regular entries
-        case try_parse_map_update(state, cursor, ctx, log) do
-          {:ok, update_ast, close_meta, state, cursor, log} ->
-            map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
-
-            {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, cursor,
-             log}
-
-          {:not_update, state, cursor} ->
-            # Parse map_close: kw_data | assoc | assoc_base ',' kw_data
-            with {:ok, entries, close_meta, state, cursor, log} <-
-                   parse_map_close(state, cursor, ctx, log) do
+        {:ok, _, cursor} ->
+          # Try to parse map update first, then fall back to regular entries
+          case try_parse_map_update(state, cursor, ctx, log) do
+            {:ok, update_ast, close_meta, state, cursor, log} ->
               map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
-              {:ok, build_map_ast(base, entries, percent_meta, map_meta), state, cursor, log}
-            end
 
-          {:error, _, _, _, _} = err ->
-            err
-        end
+              {:ok, build_map_update_ast(base, update_ast, percent_meta, map_meta), state, cursor,
+               log}
 
-      {:eof, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+            {:not_update, state, cursor} ->
+              # Parse map_close: kw_data | assoc | assoc_base ',' kw_data
+              with {:ok, entries, close_meta, state, cursor, log} <-
+                     parse_map_close(state, cursor, ctx, log) do
+                map_meta = Meta.closing_meta(brace_meta, close_meta, leading_newlines)
+                {:ok, build_map_ast(base, entries, percent_meta, map_meta), state, cursor, log}
+              end
 
-      {:error, diag, cursor} ->
-        {:error, diag, state, cursor, log}
+            {:error, _, _, _, _} = err ->
+              err
+          end
+
+        {:eof, cursor} ->
+          {:error, :unexpected_eof, state, cursor, log}
+
+        {:error, diag, cursor} ->
+          {:error, diag, state, cursor, log}
       end
 
     case result do

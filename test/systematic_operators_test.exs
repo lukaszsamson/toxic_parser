@@ -531,7 +531,6 @@ defmodule ToxicParser.SystematicOperatorsTest do
           code2 =
             "%{#{gen_expr(expr_a, "a")} | #{s_op}#{gen_expr(expr_b, "b")} => #{gen_expr(expr_c, "c")}}"
 
-
           # Inside struct
           code3 =
             "%{#{s_op}#{gen_expr(expr_a, "a")} | #{gen_expr(expr_b, "b")} => #{gen_expr(expr_c, "c")}}"
@@ -558,8 +557,9 @@ defmodule ToxicParser.SystematicOperatorsTest do
 
     test "ternary range between two binary operators (a op1 b..c//d op2 e)" do
       failures =
-        for op1 <- @binary_ops, op2 <- @binary_ops,
-        expr_a <- @expressions -- [:no_parens],
+        for op1 <- @binary_ops,
+            op2 <- @binary_ops,
+            expr_a <- @expressions -- [:no_parens],
             expr_b <- @expressions -- [:no_parens],
             expr_c <- @expressions -- [:no_parens],
             expr_d <- @expressions -- [:no_parens],
@@ -567,7 +567,9 @@ defmodule ToxicParser.SystematicOperatorsTest do
           s1 = op_to_string(op1)
           s2 = op_to_string(op2)
 
-          check("#{gen_expr(expr_a, "a")} #{s1} #{gen_expr(expr_b, "b")}..#{gen_expr(expr_c, "c")}//#{gen_expr(expr_d, "d")} #{s2} #{gen_expr(expr_e, "e")}")
+          check(
+            "#{gen_expr(expr_a, "a")} #{s1} #{gen_expr(expr_b, "b")}..#{gen_expr(expr_c, "c")}//#{gen_expr(expr_d, "d")} #{s2} #{gen_expr(expr_e, "e")}"
+          )
         end
         |> Enum.reject(&is_nil/1)
 

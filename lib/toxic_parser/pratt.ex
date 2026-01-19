@@ -255,6 +255,7 @@ defmodule ToxicParser.Pratt do
     case token_kind do
       :error_token ->
         meta = TokenAdapter.token_meta(token)
+
         payload =
           case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
             %Error{} = diagnostic ->
@@ -3244,7 +3245,11 @@ defmodule ToxicParser.Pratt do
         {line, column} -> {line || 1, column || 1}
       end
 
-    toxic_meta = %{synthetic?: synthetic_error_node?(range_meta), anchor: %{line: line, column: column}}
+    toxic_meta = %{
+      synthetic?: synthetic_error_node?(range_meta),
+      anchor: %{line: line, column: column}
+    }
+
     Keyword.put(meta, :toxic, toxic_meta)
   end
 

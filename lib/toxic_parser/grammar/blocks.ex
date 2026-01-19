@@ -195,7 +195,13 @@ defmodule ToxicParser.Grammar.Blocks do
     ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
   end
 
-  defp maybe_recover_do_block_error(reason, do_location, %State{mode: :tolerant} = state, cursor, log) do
+  defp maybe_recover_do_block_error(
+         reason,
+         do_location,
+         %State{mode: :tolerant} = state,
+         cursor,
+         log
+       ) do
     {error_ast, state} = build_error_node(reason, do_location, state, cursor)
     block_meta = build_do_block_meta(do_location, cursor)
     {:ok, {block_meta, [do: error_ast]}, state, cursor, log}

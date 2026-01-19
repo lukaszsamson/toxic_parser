@@ -3780,18 +3780,10 @@ defmodule ToxicParser.ConformanceTest do
     end
 
     test "repro 180" do
-      assert_conforms(
-        "case x do 1 -> :ok; %-\nn{} -> :error end"
-      )
-      assert_conforms(
-        "case x do 1 -> :ok; %!\nn{} -> :error end"
-      )
-      assert_conforms(
-        "case x do 1 -> :ok; %//\nn{} -> :error end"
-      )
-      assert_conforms(
-        "case x do 1 -> :ok; %@\nn{} -> :error end"
-      )
+      assert_conforms("case x do 1 -> :ok; %-\nn{} -> :error end")
+      assert_conforms("case x do 1 -> :ok; %!\nn{} -> :error end")
+      assert_conforms("case x do 1 -> :ok; %//\nn{} -> :error end")
+      assert_conforms("case x do 1 -> :ok; %@\nn{} -> :error end")
     end
 
     test "repro 181" do

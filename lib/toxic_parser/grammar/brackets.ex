@@ -93,7 +93,10 @@ defmodule ToxicParser.Grammar.Brackets do
       {:error, reason, state, cursor, log} ->
         if state.mode == :tolerant do
           meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-          {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
+          {error_node, state} =
+            ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
           {:ok, error_node, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
         else
           {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
@@ -104,5 +107,4 @@ defmodule ToxicParser.Grammar.Brackets do
   defp build_access_error_node(reason, meta, %State{} = state, cursor, children) do
     ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor, children)
   end
-
 end

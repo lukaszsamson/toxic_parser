@@ -100,7 +100,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
 
           case Cursor.peek(cursor) do
             {:ok, {:")", _meta, _value}, cursor} ->
-            {:ok, {:kw_call, kw_list}, state, cursor, log}
+              {:ok, {:kw_call, kw_list}, state, cursor, log}
 
             {:ok, {:",", _meta, _value} = comma_tok, cursor} ->
               meta = TokenAdapter.token_meta(comma_tok)
@@ -123,7 +123,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                     {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
 
                   {:error, reason, state, cursor, log} ->
-                    {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+                    {error_node, state} =
+                      build_kw_tail_error_node(reason, meta, state, cursor, [])
 
                     {:ok, {:many, [{:expr, kw_list}, {:expr, error_node}]}, state, cursor, log}
                 end
@@ -153,8 +154,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
                   if state.mode == :tolerant do
                     {state, cursor} = TokenAdapter.rewind(state, ref)
 
-                    {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor,
-                     log}
+                    {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}
                   else
                     state = TokenAdapter.drop_checkpoint(state, ref)
                     {:error, NoParensErrors.error_no_parens_many_strict(expr), state, cursor, log}

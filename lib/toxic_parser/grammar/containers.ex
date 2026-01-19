@@ -17,7 +17,17 @@ defmodule ToxicParser.Grammar.Containers do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Bitstrings, Delimited, EOE, ErrorHelpers, Expressions, Keywords, Maps, Stabs}
+
+  alias ToxicParser.Grammar.{
+    Bitstrings,
+    Delimited,
+    EOE,
+    ErrorHelpers,
+    Expressions,
+    Keywords,
+    Maps,
+    Stabs
+  }
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -147,7 +157,9 @@ defmodule ToxicParser.Grammar.Containers do
 
       {:eof, cursor} ->
         if state.mode == :tolerant do
-          {error_ast, state} = build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+          {error_ast, state} =
+            build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+
           {:ok, error_ast, state, cursor, log}
         else
           {:error, :unexpected_eof, state, cursor, log}
@@ -197,7 +209,9 @@ defmodule ToxicParser.Grammar.Containers do
 
       {:eof, cursor} ->
         if state.mode == :tolerant do
-          {error_ast, state} = build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+          {error_ast, state} =
+            build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+
           {:ok, error_ast, state, cursor, log}
         else
           {:error, :unexpected_eof, state, cursor, log}
@@ -320,8 +334,8 @@ defmodule ToxicParser.Grammar.Containers do
                   if state.mode == :tolerant do
                     {state, cursor} = TokenAdapter.rewind(state, ref)
 
-                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state,
-                     cursor, log}
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                     log}
                   else
                     state = TokenAdapter.drop_checkpoint(state, ref)
 
@@ -373,6 +387,7 @@ defmodule ToxicParser.Grammar.Containers do
         {:ok, {kind, _meta, _value} = tok, state, cursor} ->
           if state.mode == :tolerant do
             {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+
             {error_ast, state} =
               build_container_error_node({:expected, :"]", got: kind}, open_meta, state, cursor)
 
@@ -527,8 +542,8 @@ defmodule ToxicParser.Grammar.Containers do
                   if state.mode == :tolerant do
                     {state, cursor} = TokenAdapter.rewind(state, ref)
 
-                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state,
-                     cursor, log}
+                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
+                     log}
                   else
                     state = TokenAdapter.drop_checkpoint(state, ref)
 

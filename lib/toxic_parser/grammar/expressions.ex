@@ -3,7 +3,18 @@ defmodule ToxicParser.Grammar.Expressions do
   Expression dispatcher for matched/unmatched/no-parens contexts.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, Recovery, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    Cursor,
+    Error,
+    EventLog,
+    Pratt,
+    Recovery,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Grammar.{Blocks, Calls, Containers, EOE, Keywords}
 
   @type result ::
@@ -196,7 +207,8 @@ defmodule ToxicParser.Grammar.Expressions do
 
       {:ok, token, cursor} ->
         cond do
-          should_continue_after_error?(acc, state, cursor) or should_parse_error_token?(state, token) ->
+          should_continue_after_error?(acc, state, cursor) or
+              should_parse_error_token?(state, token) ->
             case expr(state, cursor, ctx, log) do
               {:ok, next_expr, state, cursor, log} ->
                 {next_expr, state, cursor} = maybe_annotate_eoe(next_expr, state, cursor)
@@ -244,8 +256,16 @@ defmodule ToxicParser.Grammar.Expressions do
 
           true ->
             case {state.mode, TokenAdapter.kind(token)} do
-              {:tolerant, kind} when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
-                recover_expr_error(acc, Keywords.invalid_kw_identifier_error(state, cursor, kind), state, cursor, ctx, log)
+              {:tolerant, kind}
+              when kind in [:kw_identifier, :kw_identifier_safe, :kw_identifier_unsafe] ->
+                recover_expr_error(
+                  acc,
+                  Keywords.invalid_kw_identifier_error(state, cursor, kind),
+                  state,
+                  cursor,
+                  ctx,
+                  log
+                )
 
               _ ->
                 finalize_exprs(acc, state, cursor, log)
@@ -408,7 +428,11 @@ defmodule ToxicParser.Grammar.Expressions do
         {line, column} -> {line || 1, column || 1}
       end
 
-    toxic_meta = %{synthetic?: synthetic_error_node?(range_meta), anchor: %{line: line, column: column}}
+    toxic_meta = %{
+      synthetic?: synthetic_error_node?(range_meta),
+      anchor: %{line: line, column: column}
+    }
+
     Keyword.put(meta, :toxic, toxic_meta)
   end
 

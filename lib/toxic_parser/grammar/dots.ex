@@ -3,7 +3,20 @@ defmodule ToxicParser.Grammar.Dots do
   Dot expression parsing helpers (`foo.bar`, `Foo.Bar`, `foo.(...)`, `foo.()`).
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Identifiers, Position, Pratt, Result, State, TokenAdapter}
+  alias ToxicParser.{
+    Builder,
+    Context,
+    Cursor,
+    Error,
+    EventLog,
+    Identifiers,
+    Position,
+    Pratt,
+    Result,
+    State,
+    TokenAdapter
+  }
+
   alias ToxicParser.Builder.{Helpers, Meta}
   alias ToxicParser.Grammar.{Delimited, EOE, ErrorHelpers, Expressions, Keywords}
 
@@ -106,6 +119,7 @@ defmodule ToxicParser.Grammar.Dots do
               true ->
                 reason = {:expected, :dot_member, got: tok_kind}
                 meta = Helpers.token_meta(tok)
+
                 {state, cursor} =
                   if state.mode == :tolerant do
                     TokenAdapter.pushback(state, cursor, tok)
@@ -212,7 +226,10 @@ defmodule ToxicParser.Grammar.Dots do
 
     on_error = fn reason, state, cursor, _ctx, log ->
       meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
-      {error_node, state} = ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+
+      {error_node, state} =
+        ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+
       {:ok, {:expr, error_node}, state, cursor, log}
     end
 
@@ -382,7 +399,8 @@ defmodule ToxicParser.Grammar.Dots do
                       total_newlines =
                         Meta.total_newlines(leading_newlines, trailing_newlines, true)
 
-                      call_meta = Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
+                      call_meta =
+                        Meta.closing_meta(meta_with_delimiter, close_meta, total_newlines)
 
                       # Return as call AST: {atom, call_meta, args}
                       {:ok, {atom, call_meta, Enum.reverse(args)}, state, cursor, log}
@@ -528,7 +546,13 @@ defmodule ToxicParser.Grammar.Dots do
       case :binary.match(rest, "\n") do
         {idx, 1} when idx + 1 < byte_size(rest) ->
           suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
-          suffix_cursor = Cursor.new(suffix, Keyword.put(state.opts, :line, line + 1) |> Keyword.put(:column, 1))
+
+          suffix_cursor =
+            Cursor.new(
+              suffix,
+              Keyword.put(state.opts, :line, line + 1) |> Keyword.put(:column, 1)
+            )
+
           tokens = lex_suffix_tokens([], suffix_cursor)
           TokenAdapter.pushback_many(state, cursor, tokens)
 
@@ -584,5 +608,4 @@ defmodule ToxicParser.Grammar.Dots do
   defp build_member_error_node(reason, meta, %State{} = state, cursor) do
     ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
   end
-
 end

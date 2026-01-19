@@ -261,6 +261,7 @@ defmodule ToxicParser.TolerantModeTest do
 
     test "#{name} recovers and emits error node" do
       opts = opts_for(unquote(name), unquote(opts))
+
       source =
         if unquote(no_following?) do
           unquote(code)
@@ -289,7 +290,10 @@ defmodule ToxicParser.TolerantModeTest do
   end
 
   defp parse_tolerant(code, opts) do
-    ToxicParser.parse_string(code, Keyword.merge(@default_opts, opts) |> Keyword.put(:mode, :tolerant))
+    ToxicParser.parse_string(
+      code,
+      Keyword.merge(@default_opts, opts) |> Keyword.put(:mode, :tolerant)
+    )
   end
 
   defp with_following(code), do: code <> "\n2"
@@ -333,12 +337,14 @@ defmodule ToxicParser.TolerantModeTest do
 
   defp assert_recovered_expression(ast, error_meta, name) do
     exprs = expr_list(ast)
+
     container_names = [
       "unexpected comma inside containers",
       "unexpected comma inside tuple",
       "unexpected comma inside map",
       "invalid expression inside paren call"
     ]
+
     no_following_names = [
       "kw identifier at expression position",
       "capture missing int",

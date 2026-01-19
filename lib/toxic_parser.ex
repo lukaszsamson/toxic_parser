@@ -152,7 +152,8 @@ defmodule ToxicParser do
     %Result{
       ast: ast,
       comments: [],
-      diagnostics: annotate_anchor_paths(ast, :lists.reverse(state.diagnostics, extra_diagnostics)),
+      diagnostics:
+        annotate_anchor_paths(ast, :lists.reverse(state.diagnostics, extra_diagnostics)),
       warnings: Enum.reverse(state.warnings) ++ Enum.reverse(Cursor.warnings(cursor)),
       events: events,
       env: env,
