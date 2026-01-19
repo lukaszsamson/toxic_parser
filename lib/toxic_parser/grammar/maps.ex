@@ -674,7 +674,7 @@ defmodule ToxicParser.Grammar.Maps do
                 {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
                 parse_map_update_with_min_bp(state, cursor, log)
 
-              kw_identifier_error_node?(rhs) ->
+              kw_identifier_error_in?(rhs) ->
                 # kw_identifier becomes an error node in tolerant mode; reparse to treat it as kw_data.
                 {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
                 parse_map_update_with_min_bp(state, cursor, log)
@@ -891,6 +891,26 @@ defmodule ToxicParser.Grammar.Maps do
   defp is_keyword_or_assoc_entry?({{_expr, _meta, _args}, _value}), do: true
   defp is_keyword_or_assoc_entry?({:"=>", _meta, [_k, _v]}), do: true
   defp is_keyword_or_assoc_entry?(_), do: false
+
+  defp kw_identifier_error_in?(term) do
+    kw_identifier_error_node?(term) or kw_identifier_error_in_children?(term)
+  end
+
+  defp kw_identifier_error_in_children?({_, _meta, args}) when is_list(args) do
+    Enum.any?(args, &kw_identifier_error_in?/1)
+  end
+
+  defp kw_identifier_error_in_children?(list) when is_list(list) do
+    Enum.any?(list, &kw_identifier_error_in?/1)
+  end
+
+  defp kw_identifier_error_in_children?(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.any?(&kw_identifier_error_in?/1)
+  end
+
+  defp kw_identifier_error_in_children?(_), do: false
 
   defp kw_identifier_error_node?({:__error__, _meta, %{original: {_, message, token}}})
        when is_binary(token) do
