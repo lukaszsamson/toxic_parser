@@ -120,7 +120,11 @@ defmodule ToxicParser.TolerantModeTest do
     "map kw tail unexpected token",
     "no-parens kw list missing item",
     "no-parens kw list trailing comma eof",
-    "bitstring invalid expr"
+    "bitstring invalid expr",
+    "map update with multiple kw entries",
+    "map update with single kw entry",
+    "struct update with kw entries",
+    "nested map update"
   ]
 
   @error_cases [
@@ -264,12 +268,39 @@ defmodule ToxicParser.TolerantModeTest do
       name: "keyword value missing at eof",
       code: "IO.inspect(\n  :stderr,\n  label: \"label\",\n  limit:\n)",
       no_following: true
+    },
+    # Map/struct update cases - valid code that crashes in tolerant mode
+    # These hit "dead code" paths in Maps module
+    %{
+      name: "map update with multiple kw entries",
+      code: "%{v | x: 1, y: 2}",
+      no_following: true,
+      valid?: true
+    },
+    %{
+      name: "map update with single kw entry",
+      code: "%{v | x: 1}",
+      no_following: true,
+      valid?: true
+    },
+    %{
+      name: "struct update with kw entries",
+      code: "%Foo{v | x: 1}",
+      no_following: true,
+      valid?: true
+    },
+    %{
+      name: "nested map update",
+      code: "%{a | b: %{c | d: 1}}",
+      no_following: true,
+      valid?: true
     }
   ]
 
   for %{name: name, code: code} = data <- @error_cases do
     opts = Map.get(data, :opts, [])
     no_following? = Map.get(data, :no_following, false)
+    valid? = Map.get(data, :valid?, false)
 
     if name in @enabled_cases do
       @tag skip: false
@@ -288,20 +319,26 @@ defmodule ToxicParser.TolerantModeTest do
       assert {:ok, %Result{} = result} = parse_tolerant(source, opts)
 
       error_nodes = collect_error_nodes(result.ast)
-      assert error_nodes != []
 
-      {_, error_meta, payload} = hd(error_nodes)
-      assert_error_payload(payload)
-      assert_error_meta_consistency(error_meta, payload)
+      if unquote(valid?) do
+        assert error_nodes == []
+        assert result.diagnostics == []
+      else
+        assert error_nodes != []
 
-      diagnostic = find_diagnostic(result, payload.diag_id)
-      assert diagnostic != nil
-      assert payload.phase == diagnostic.phase
-      assert payload.diag_id == diagnostic.details[:id]
-      assert diagnostic.details[:anchor][:kind] == :error_node
-      assert_recovered_expression(result.ast, error_meta, unquote(name))
-      assert_preserves_valid_siblings(result.ast, unquote(name))
-      assert_synthetic_meta(result.ast, error_meta, unquote(name))
+        {_, error_meta, payload} = hd(error_nodes)
+        assert_error_payload(payload)
+        assert_error_meta_consistency(error_meta, payload)
+
+        diagnostic = find_diagnostic(result, payload.diag_id)
+        assert diagnostic != nil
+        assert payload.phase == diagnostic.phase
+        assert payload.diag_id == diagnostic.details[:id]
+        assert diagnostic.details[:anchor][:kind] == :error_node
+        assert_recovered_expression(result.ast, error_meta, unquote(name))
+        assert_preserves_valid_siblings(result.ast, unquote(name))
+        assert_synthetic_meta(result.ast, error_meta, unquote(name))
+      end
     end
   end
 

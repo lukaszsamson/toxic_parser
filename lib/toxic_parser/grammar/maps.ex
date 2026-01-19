@@ -667,14 +667,21 @@ defmodule ToxicParser.Grammar.Maps do
             end
 
           {{:|, pipe_meta, [_base, rhs]}, {:ok, _, cursor}} ->
-            if not Keyword.has_key?(pipe_meta, :parens) and is_list(rhs) and
-                 rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) do
-              # Reparse to distinguish between kw_data and bracketed list `[kw]`.
-              {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
-              parse_map_update_with_min_bp(state, cursor, log)
-            else
-              state = TokenAdapter.drop_checkpoint(state, reparse_ref)
-              handle_map_update_after_base_expr(base_expr, state, cursor, log)
+            cond do
+              not Keyword.has_key?(pipe_meta, :parens) and is_list(rhs) and
+                  rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) ->
+                # Reparse to distinguish between kw_data and bracketed list `[kw]`.
+                {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
+                parse_map_update_with_min_bp(state, cursor, log)
+
+              kw_identifier_error_node?(rhs) ->
+                # kw_identifier becomes an error node in tolerant mode; reparse to treat it as kw_data.
+                {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
+                parse_map_update_with_min_bp(state, cursor, log)
+
+              true ->
+                state = TokenAdapter.drop_checkpoint(state, reparse_ref)
+                handle_map_update_after_base_expr(base_expr, state, cursor, log)
             end
 
           {_, {:ok, _, cursor}} ->
@@ -884,6 +891,18 @@ defmodule ToxicParser.Grammar.Maps do
   defp is_keyword_or_assoc_entry?({{_expr, _meta, _args}, _value}), do: true
   defp is_keyword_or_assoc_entry?({:"=>", _meta, [_k, _v]}), do: true
   defp is_keyword_or_assoc_entry?(_), do: false
+
+  defp kw_identifier_error_node?({:__error__, _meta, %{original: {_, message, token}}})
+       when is_binary(token) do
+    token_has_colon? = String.contains?(token, ":")
+
+    message_kw_identifier? =
+      message == "syntax error before: " or match?({"unexpected keyword: ", _}, message)
+
+    token_has_colon? and message_kw_identifier?
+  end
+
+  defp kw_identifier_error_node?(_), do: false
 
   defp valid_update_entry?({:"=>", _meta, [key, _value]}, base_class),
     do: valid_update_entry?({key, nil}, base_class)
