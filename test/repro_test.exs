@@ -1,5 +1,15 @@
 defmodule ToxicParser.ReproTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case,
+    async: false,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   test "repro 1" do
     code = "&foo/1..0..case Foo.eggs() do\n  foo -> qux\n  _ -> ?a\nend//0"
@@ -1715,16 +1725,28 @@ defmodule ToxicParser.ReproTest do
     reference = s2q(code)
     actual = toxic_parse(code)
 
-    assert actual == reference,
-           """
-            AST mismatch for: #{inspect(code)}
+    case {current_mode(), reference} do
+      {:tolerant, {:error, _reason}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-           Reference:
-           #{inspect(reference, pretty: true)}
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
 
-           Actual:
-           #{inspect(actual, pretty: true)}
-           """
+      _ ->
+        assert actual == reference,
+               """
+               AST mismatch for: #{inspect(code)} (mode: #{current_mode()})
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
   end
 
   defp s2q(code) do
@@ -1737,10 +1759,14 @@ defmodule ToxicParser.ReproTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: current_mode(), token_metadata: true) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

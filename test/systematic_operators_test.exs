@@ -1,6 +1,16 @@
 defmodule ToxicParser.SystematicOperatorsTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case,
+    async: false,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
   import ExUnit.CaptureIO
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   # =============================================================================
   # Operator Classifications
@@ -636,10 +646,14 @@ defmodule ToxicParser.SystematicOperatorsTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: current_mode(), token_metadata: true) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

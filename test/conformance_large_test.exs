@@ -1,5 +1,15 @@
 defmodule ToxicParser.ConformanceLargeTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case,
+    async: true,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   describe "keyword list" do
     test "not quoted single list" do
@@ -4905,8 +4915,8 @@ defmodule ToxicParser.ConformanceLargeTest do
   defp toxic_parse(code, options \\ []) do
     case ToxicParser.parse_string(
            code,
-           [mode: :strict, token_metadata: true] |> Keyword.merge(options)
-         ) do
+           [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -4915,9 +4925,9 @@ defmodule ToxicParser.ConformanceLargeTest do
   defp toxic_parse_with_comments(code, options \\ []) do
     case ToxicParser.parse_string(
            code,
-           [mode: :strict, token_metadata: true, preserve_comments: true]
+           [mode: current_mode(), token_metadata: true, preserve_comments: true]
            |> Keyword.merge(options)
-         ) do
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -4926,11 +4936,15 @@ defmodule ToxicParser.ConformanceLargeTest do
   defp toxic_parse!(code, options \\ []) do
     case ToxicParser.parse_string(
            code,
-           [mode: :strict, token_metadata: true] |> Keyword.merge(options)
-         ) do
+           [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
+          ) do
       {:ok, result} -> result.ast
       {:error, result} -> raise format_error(result)
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

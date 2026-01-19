@@ -3,7 +3,17 @@ defmodule ToxicParser.ElixirSourceReprosTest do
   Minimal reproduction test cases for issues found when parsing real Elixir source files.
   Each test represents a bug discovered during elixir sources conformance testing.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case,
+    async: true,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   describe "multiline call newlines metadata" do
     test "call with multiline args should not have newlines when first arg on same line" do
@@ -312,7 +322,7 @@ defmodule ToxicParser.ElixirSourceReprosTest do
 
     assert actual == reference,
            """
-           AST mismatch for: #{inspect(code)}
+           AST mismatch for: #{inspect(code)} (mode: #{current_mode()})
 
            Reference:
            #{inspect(reference, pretty: true)}
@@ -332,10 +342,14 @@ defmodule ToxicParser.ElixirSourceReprosTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: current_mode(), token_metadata: true) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

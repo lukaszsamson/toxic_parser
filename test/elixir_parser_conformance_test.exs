@@ -5,7 +5,17 @@ defmodule ToxicParser.ElixirParserConformanceTest do
   These tests verify that ToxicParser produces identical results (both AST and errors)
   to the reference Elixir parser.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case,
+    async: true,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   describe "nullary ops" do
     test "in expressions" do
@@ -599,44 +609,80 @@ defmodule ToxicParser.ElixirParserConformanceTest do
     reference = s2q(code)
     actual = toxic_parse(code)
 
-    assert actual == reference,
-           """
-           AST mismatch for: #{inspect(code)}
+    case {current_mode(), reference} do
+      {:tolerant, {:error, _reason}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-           Reference:
-           #{inspect(reference, pretty: true)}
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
 
-           Actual:
-           #{inspect(actual, pretty: true)}
-           """
+      _ ->
+        assert actual == reference,
+               """
+               AST mismatch for: #{inspect(code)} (mode: #{current_mode()})
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
   end
 
   defp assert_conforms_with_literal_encoder(code) do
     reference = s2q_with_literal_encoder(code)
     actual = toxic_parse_with_literal_encoder(code)
 
-    assert actual == reference,
-           """
-           AST mismatch for: #{inspect(code)}
+    case {current_mode(), reference} do
+      {:tolerant, {:error, _reason}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-           Reference:
-           #{inspect(reference, pretty: true)}
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
 
-           Actual:
-           #{inspect(actual, pretty: true)}
-           """
+      _ ->
+        assert actual == reference,
+               """
+               AST mismatch for: #{inspect(code)} (mode: #{current_mode()})
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
   end
 
   defp assert_error_conforms(code) do
     reference = s2q(code)
     actual = toxic_parse(code)
 
-    # Both should be errors
-    assert match?({:error, _}, reference),
-           "Expected reference parser to error on: #{inspect(code)}, got: #{inspect(reference)}"
+    case {current_mode(), reference, actual} do
+      {:tolerant, {:error, _reason}, {:ok, _}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-    assert match?({:error, _}, actual),
-           "Expected ToxicParser to error on: #{inspect(code)}, got: #{inspect(actual)}"
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+
+      _ ->
+        # Both should be errors
+        assert match?({:error, _}, reference),
+               "Expected reference parser to error on: #{inspect(code)}, got: #{inspect(reference)}"
+
+        assert match?({:error, _}, actual),
+               "Expected ToxicParser to error on: #{inspect(code)} (mode: #{current_mode()}), got: #{inspect(actual)}"
+    end
   end
 
   defp assert_error_conforms_existing_atoms(code) do
@@ -651,12 +697,24 @@ defmodule ToxicParser.ElixirParserConformanceTest do
 
     actual = toxic_parse_existing_atoms(code)
 
-    # Both should be errors
-    assert match?({:error, _}, reference),
-           "Expected reference parser to error on: #{inspect(code)}, got: #{inspect(reference)}"
+    case {current_mode(), reference, actual} do
+      {:tolerant, {:error, _reason}, {:ok, _}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-    assert match?({:error, _}, actual),
-           "Expected ToxicParser to error on: #{inspect(code)}, got: #{inspect(actual)}"
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+
+      _ ->
+        # Both should be errors
+        assert match?({:error, _}, reference),
+               "Expected reference parser to error on: #{inspect(code)}, got: #{inspect(reference)}"
+
+        assert match?({:error, _}, actual),
+               "Expected ToxicParser to error on: #{inspect(code)} (mode: #{current_mode()}), got: #{inspect(actual)}"
+    end
   end
 
   defp s2q(code) do
@@ -679,7 +737,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: current_mode(), token_metadata: true) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -687,10 +745,10 @@ defmodule ToxicParser.ElixirParserConformanceTest do
 
   defp toxic_parse_with_literal_encoder(code) do
     case ToxicParser.parse_string(code,
-           mode: :strict,
+           mode: current_mode(),
            token_metadata: true,
            literal_encoder: &{:ok, {:__block__, &2, [&1]}}
-         ) do
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -698,13 +756,17 @@ defmodule ToxicParser.ElixirParserConformanceTest do
 
   defp toxic_parse_existing_atoms(code) do
     case ToxicParser.parse_string(code,
-           mode: :strict,
+           mode: current_mode(),
            token_metadata: true,
            existing_atoms_only: true
-         ) do
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

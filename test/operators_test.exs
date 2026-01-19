@@ -27,7 +27,17 @@ defmodule ToxicParser.OperatorsTest do
   `when`                                         | Right
   `<-` `\\`                                      | Left
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case,
+    async: false,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   # =============================================================================
   # Unary Operators
@@ -2432,11 +2442,15 @@ defmodule ToxicParser.OperatorsTest do
   defp toxic_parse(code, options \\ []) do
     case ToxicParser.parse_string(
            code,
-           [mode: :strict, token_metadata: true] |> Keyword.merge(options)
-         ) do
+           [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do

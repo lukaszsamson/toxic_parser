@@ -1,5 +1,15 @@
 defmodule ToxicParser.ConformanceCorpusTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case,
+    async: true,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   @projects_dir "/Users/lukaszsamson/claude_fun/elixir_oss/projects"
   @ignored_dirs ["_build", "deps", ".git", "tmp", "priv", "rel", "cover", "doc", "logs"]
@@ -155,11 +165,15 @@ defmodule ToxicParser.ConformanceCorpusTest do
   defp toxic_parse(code, options \\ []) do
     case ToxicParser.parse_string(
            code,
-           [mode: :strict, token_metadata: true] |> Keyword.merge(options)
-         ) do
+           [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
+          ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do
