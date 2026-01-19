@@ -73,9 +73,11 @@ defmodule ToxicParser.Grammar.Bitstrings do
                 :no_parens ->
                   if state.mode == :tolerant do
                     {state, cursor} = TokenAdapter.rewind(state, ref)
-
-                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state,
-                     cursor, log}
+                    reason = NoParensErrors.error_no_parens_container_strict(expr)
+                    meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+                    {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+                    {state, cursor} = sync_to_bitstring_separator(state, cursor)
+                    {:ok, {:expr, error_node}, state, cursor, log}
                   else
                     state = TokenAdapter.drop_checkpoint(state, ref)
 
@@ -249,6 +251,26 @@ defmodule ToxicParser.Grammar.Bitstrings do
       _ ->
         {line, column} = Cursor.position(cursor)
         [line: line || 1, column: column || 1]
+    end
+  end
+
+  defp sync_to_bitstring_separator(state, cursor) do
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, cursor} when kind in [:">>", :","] ->
+        {state, cursor}
+
+      {:ok, _tok, cursor} ->
+        case TokenAdapter.next(state, cursor) do
+          {:ok, _tok, state, cursor} -> sync_to_bitstring_separator(state, cursor)
+          {:eof, state, cursor} -> {state, cursor}
+          {:error, _reason, state, cursor} -> {state, cursor}
+        end
+
+      {:eof, _cursor} ->
+        {state, cursor}
+
+      {:error, _reason, _cursor} ->
+        {state, cursor}
     end
   end
 end
