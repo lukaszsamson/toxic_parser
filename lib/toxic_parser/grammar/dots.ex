@@ -259,10 +259,18 @@ defmodule ToxicParser.Grammar.Dots do
         end
 
       {:eof, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        if state.mode == :tolerant do
+          {:ok, state, cursor, log}
+        else
+          {:error, :unexpected_eof, state, cursor, log}
+        end
 
       {:error, diag, cursor} ->
-        {:error, diag, state, cursor, log}
+        if state.mode == :tolerant do
+          {:ok, state, cursor, log}
+        else
+          {:error, diag, state, cursor, log}
+        end
     end
   end
 
