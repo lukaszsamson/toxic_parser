@@ -1327,7 +1327,14 @@ defmodule ToxicParser.Grammar.Maps do
                 {:ok, [kw_list, error_node], close_meta, state, cursor, log}
 
               {:error, reason, state, cursor, log} ->
-                {:error, reason, state, cursor, log}
+                if state.mode == :tolerant do
+                  meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+                  {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+                  {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
+                  {:ok, [kw_list, error_node], close_meta, state, cursor, log}
+                else
+                  {:error, reason, state, cursor, log}
+                end
             end
 
           {:ok, {got_kind, _meta, _value}, cursor} ->
@@ -1558,5 +1565,25 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp build_map_error_node(reason, meta, %State{} = state, cursor) do
     ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+  end
+
+  defp consume_close_or_synthesize(state, cursor) do
+    case Cursor.peek(cursor) do
+      {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+        {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+        {state, cursor, Helpers.token_meta(close_tok)}
+
+      {:ok, _tok, cursor} ->
+        {:ok, _tok, state, cursor} = TokenAdapter.next(state, cursor)
+        consume_close_or_synthesize(state, cursor)
+
+      {:eof, cursor} ->
+        {line, column} = Cursor.position(cursor)
+        {state, cursor, [line: line || 1, column: column || 1]}
+
+      {:error, _diag, cursor} ->
+        {line, column} = Cursor.position(cursor)
+        {state, cursor, [line: line || 1, column: column || 1]}
+    end
   end
 end
