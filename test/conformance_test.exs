@@ -5,7 +5,17 @@ defmodule ToxicParser.ConformanceTest do
   These tests verify that the parser produces identical AST to the reference Elixir parser
   for valid inputs. The test structure mirrors `elixir_parser.yrl` nonterminals.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case,
+    async: true,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   # =============================================================================
   # TERMINALS - Basic building blocks that are valid as standalone expressions
@@ -3825,16 +3835,28 @@ defmodule ToxicParser.ConformanceTest do
     reference = s2q(code)
     actual = toxic_parse(code)
 
-    assert actual == reference,
-           """
-            AST mismatch for: #{inspect(code)}
+    case {current_mode(), reference} do
+      {:tolerant, {:error, _reason}} ->
+        assert match?({:ok, _}, actual),
+               """
+               Expected tolerant parse to succeed for: #{inspect(code)}
 
-           Reference:
-           #{inspect(reference, pretty: true)}
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
 
-           Actual:
-           #{inspect(actual, pretty: true)}
-           """
+      _ ->
+        assert actual == reference,
+               """
+               AST mismatch for: #{inspect(code)} (mode: #{current_mode()})
+
+               Reference:
+               #{inspect(reference, pretty: true)}
+
+               Actual:
+               #{inspect(actual, pretty: true)}
+               """
+    end
   end
 
   defp s2q(code) do
@@ -3847,10 +3869,14 @@ defmodule ToxicParser.ConformanceTest do
   end
 
   defp toxic_parse(code) do
-    case ToxicParser.parse_string(code, mode: :strict, token_metadata: true) do
+    case ToxicParser.parse_string(code, mode: current_mode(), token_metadata: true) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
+  end
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   defp format_error(result) do
