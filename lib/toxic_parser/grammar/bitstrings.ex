@@ -4,10 +4,8 @@ defmodule ToxicParser.Grammar.Bitstrings do
   """
 
   alias ToxicParser.{
-    Builder,
     Context,
     Cursor,
-    Error,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -17,7 +15,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Delimited, EOE, ErrorHelpers, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -234,66 +232,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
   end
 
   defp build_container_error_node(reason, meta, %State{} = state, cursor) do
-    {line, column, synthetic?} = error_anchor(meta, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :unexpected,
-        original: reason,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-    {Builder.Helpers.error(payload, error_meta), state}
-  end
-
-  defp error_anchor(meta, %State{} = state, cursor) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        _ -> {nil, nil}
-      end
-
-    synthetic? = synthetic_meta?(meta, state)
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
-
-    {line, column, synthetic?}
-  end
-
-  defp synthetic_meta?(meta, %State{} = state) do
-    missing? =
-      case meta do
-        {{_, _}, _, _} -> false
-        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-        _ -> true
-      end
-
-    missing? or not Keyword.get(state.opts, :token_metadata, true)
+    ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
   end
 
   defp error_meta_from_reason(reason, cursor) do

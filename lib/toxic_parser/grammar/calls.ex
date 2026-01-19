@@ -13,7 +13,6 @@ defmodule ToxicParser.Grammar.Calls do
     Builder,
     Context,
     Cursor,
-    Error,
     EventLog,
     ExprClass,
     Identifiers,
@@ -27,7 +26,7 @@ defmodule ToxicParser.Grammar.Calls do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Brackets, DoBlocks, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Brackets, DoBlocks, EOE, ErrorHelpers, Expressions, Keywords}
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -478,7 +477,21 @@ defmodule ToxicParser.Grammar.Calls do
                           )
 
                         _ ->
-                          {:error, reason, state, cursor, log}
+                          meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+                          {error_node, state} =
+                            ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+
+                          {state, cursor} = sync_to_no_parens_separator(state, cursor)
+
+                          case Cursor.peek(cursor) do
+                            {:ok, {:",", _meta, _value}, cursor} when not opts.stop_at_comma ->
+                              {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                              {state, cursor} = EOE.skip(state, cursor)
+                              parse_no_parens_args([error_node | acc], state, cursor, ctx, log, min_bp, opts)
+
+                            _ ->
+                              {:ok, Enum.reverse([error_node | acc]), state, cursor, log}
+                          end
                       end
                     else
                       {:error, reason, state, cursor, log}
@@ -500,7 +513,15 @@ defmodule ToxicParser.Grammar.Calls do
     # Validate no_parens expressions after a comma (grammar: call_args_no_parens_expr -> no_parens_expr : error)
     # The first arg is allowed to be no_parens (call_args_no_parens_ambig), but subsequent args must not be
     if acc != [] and ExprClass.classify(arg) == :no_parens do
-      {:error, NoParensErrors.error_no_parens_many_strict(arg), state, cursor, log}
+      reason = NoParensErrors.error_no_parens_many_strict(arg)
+
+      if state.mode == :tolerant do
+        meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+        {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+        handle_no_parens_arg(error_node, acc, state, cursor, ctx, log, min_bp, opts)
+      else
+        {:error, reason, state, cursor, log}
+      end
     else
       case Cursor.peek(cursor) do
         {:ok, {:",", _meta, _value}, cursor} ->
@@ -604,37 +625,7 @@ defmodule ToxicParser.Grammar.Calls do
   end
 
   defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
-    {line, column, synthetic?} = error_anchor(meta, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :unexpected,
-        original: reason,
-        children: children,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-    {Builder.Helpers.error(payload, error_meta), state}
+    ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor, children)
   end
 
   defp maybe_recover_paren_call_error(reason, meta, %State{mode: :tolerant} = state, cursor, log) do
@@ -646,66 +637,7 @@ defmodule ToxicParser.Grammar.Calls do
     do: {:error, reason, state, cursor, log}
 
   defp build_call_error_node(reason, meta, %State{} = state, cursor) do
-    {line, column, synthetic?} = error_anchor(meta, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :invalid,
-        original: reason,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-    {Builder.Helpers.error(payload, error_meta), state}
-  end
-
-  defp error_anchor(meta, %State{} = state, cursor) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        _ -> {nil, nil}
-      end
-
-    synthetic? = synthetic_meta?(meta, state)
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
-
-    {line, column, synthetic?}
-  end
-
-  defp synthetic_meta?(meta, %State{} = state) do
-    missing? =
-      case meta do
-        {{_, _}, _, _} -> false
-        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-        _ -> true
-      end
-
-    missing? or not Keyword.get(state.opts, :token_metadata, true)
+    ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
   end
 
   @doc """
@@ -800,6 +732,27 @@ defmodule ToxicParser.Grammar.Calls do
         other ->
           Result.normalize_error(other, cursor, log)
       end
+    end
+  end
+
+  defp sync_to_no_parens_separator(state, cursor) do
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, cursor} ->
+        if kind in [:",", :eol, :";", :")", :"]", :"}", :do] do
+          {state, cursor}
+        else
+          case TokenAdapter.next(state, cursor) do
+            {:ok, _tok, state, cursor} -> sync_to_no_parens_separator(state, cursor)
+            {:eof, state, cursor} -> {state, cursor}
+            {:error, _reason, state, cursor} -> {state, cursor}
+          end
+        end
+
+      {:eof, _cursor} ->
+        {state, cursor}
+
+      {:error, _reason, _cursor} ->
+        {state, cursor}
     end
   end
 

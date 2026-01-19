@@ -3,10 +3,8 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   # Internal helpers exposed for reuse (Pratt dot-call handling).
 
   alias ToxicParser.{
-    Builder,
     Context,
     Cursor,
-    Error,
     EventLog,
     ExprClass,
     NoParensErrors,
@@ -15,7 +13,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
     TokenAdapter
   }
 
-  alias ToxicParser.Grammar.{Delimited, EOE, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Delimited, EOE, ErrorHelpers, Expressions, Keywords}
 
   @spec parse_paren_args([Macro.t()], State.t(), Cursor.t(), Pratt.context(), EventLog.t()) ::
           {:ok, [Macro.t()], State.t(), Cursor.t(), EventLog.t()}
@@ -218,69 +216,7 @@ defmodule ToxicParser.Grammar.CallsPrivate do
   end
 
   defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
-    {line, column, synthetic?} = error_anchor(meta, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :unexpected,
-        original: reason,
-        children: children,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-    {Builder.Helpers.error(payload, error_meta), state}
-  end
-
-  defp error_anchor(meta, %State{} = state, cursor) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        {line, column} when is_integer(line) -> {line, column}
-        _ -> {nil, nil}
-      end
-
-    synthetic? = synthetic_meta?(meta, state)
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
-
-    {line, column, synthetic?}
-  end
-
-  defp synthetic_meta?(meta, %State{} = state) do
-    missing? =
-      case meta do
-        {{_, _}, _, _} -> false
-        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-        {line, column} when is_integer(line) and is_integer(column) -> false
-        _ -> true
-      end
-
-    missing? or not Keyword.get(state.opts, :token_metadata, true)
+    ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor, children)
   end
 
   defp error_meta_from_reason(reason, cursor) do

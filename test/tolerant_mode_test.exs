@@ -72,6 +72,7 @@ defmodule ToxicParser.TolerantModeTest do
     "unexpected -> placement",
     "unexpected parentheses due to space",
     "unexpected comma in nested calls",
+    "no-parens arg after comma",
     "invalid keyword identifier with do",
     "invalid keyword identifier",
     "unicode conversion error in list string",
@@ -129,6 +130,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "expression after keyword list in map", code: "%{foo: 1, :bar => :bar}"},
     %{name: "unexpected parentheses due to space", code: "foo (hello, world)"},
     %{name: "unexpected comma in nested calls", code: "foo 1, foo 2, 3"},
+    %{name: "no-parens arg after comma", code: "foo a, b c, d", no_following: true},
     %{name: "unexpected comma inside containers", code: "[foo 1, 2]"},
     %{name: "unexpected comma inside tuple", code: "{foo 1, 2}"},
     %{name: "unexpected comma inside map", code: "%{foo 1, bar: 2}"},
@@ -334,7 +336,8 @@ defmodule ToxicParser.TolerantModeTest do
       "binary op missing rhs eof",
       "fn paren patterns missing closer",
       "dot container missing closer",
-      "bracket access missing closer"
+      "bracket access missing closer",
+      "no-parens arg after comma"
     ]
 
     cond do

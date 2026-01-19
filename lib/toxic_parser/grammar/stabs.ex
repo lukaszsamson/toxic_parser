@@ -3,9 +3,9 @@ defmodule ToxicParser.Grammar.Stabs do
   Stab parsing extracted from Containers to keep paren/list/tuple handling focused.
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, State, TokenAdapter, NoParens}
+  alias ToxicParser.{Context, Cursor, EventLog, Pratt, State, TokenAdapter, NoParens}
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Containers, EOE, Expressions, Keywords, Maps}
+  alias ToxicParser.Grammar.{Containers, EOE, ErrorHelpers, Expressions, Keywords, Maps}
   require NoParens
 
   # Inlined from ToxicParser.Precedence - stab_op binding power is 10
@@ -1587,75 +1587,9 @@ defmodule ToxicParser.Grammar.Stabs do
   defp extract_meta(_), do: []
 
   defp build_stab_error_node(reason, %State{} = state, cursor) do
-    {line, column, synthetic?} = error_anchor_from_reason(reason, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :invalid,
-        original: reason,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-    {Builder.Helpers.error(payload, error_meta), state}
+    ErrorHelpers.build_error_node_from_reason(:invalid, reason, state, cursor)
   end
 
-  defp error_anchor_from_reason(reason, %State{} = state, cursor) do
-    meta =
-      case reason do
-        {meta, _msg, _token} when is_list(meta) -> meta
-        {meta, _msg} when is_list(meta) -> meta
-        {{line, column}, _, _} when is_integer(line) and is_integer(column) -> [line: line, column: column]
-        _ -> []
-      end
-
-    {line, column} = error_location_from_reason(reason, cursor)
-    synthetic? = synthetic_meta?(meta, state)
-    {line, column, synthetic?}
-  end
-
-  defp synthetic_meta?(meta, %State{} = state) do
-    missing? =
-      case meta do
-        {{_, _}, _, _} -> false
-        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
-        _ -> true
-      end
-
-    missing? or not Keyword.get(state.opts, :token_metadata, true)
-  end
-
-  defp error_location_from_reason({meta, _msg, _token}, _cursor) when is_list(meta) do
-    {Keyword.get(meta, :line, 1), Keyword.get(meta, :column, 1)}
-  end
-
-  defp error_location_from_reason({meta, _msg}, _cursor) when is_list(meta) do
-    {Keyword.get(meta, :line, 1), Keyword.get(meta, :column, 1)}
-  end
-
-  defp error_location_from_reason(_reason, cursor) do
-    {line, column} = Cursor.position(cursor)
-    {line || 1, column || 1}
-  end
 
   # Build a block from multiple expressions, or return single expression as-is
   defp build_stab_block([single]), do: single
