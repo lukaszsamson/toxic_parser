@@ -881,6 +881,7 @@ defmodule ToxicParser.Grammar.Strings do
 
   defp build_error_token_node(token, %State{} = state) do
     meta = TokenAdapter.token_meta(token)
+    synthetic? = synthetic_meta?(meta, state)
 
     payload =
       case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
@@ -888,7 +889,7 @@ defmodule ToxicParser.Grammar.Strings do
           Error.error_node_payload(diagnostic,
             kind: :token,
             original: elem(token, 2),
-            synthetic?: false
+            synthetic?: synthetic?
           )
 
         _ ->

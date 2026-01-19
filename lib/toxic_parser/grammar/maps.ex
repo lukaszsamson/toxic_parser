@@ -1353,6 +1353,7 @@ defmodule ToxicParser.Grammar.Maps do
     {:ok, token, state, cursor} = TokenAdapter.next(state, cursor)
     meta = TokenAdapter.token_meta(token)
     token_value = TokenAdapter.value(token)
+    synthetic? = synthetic_meta?(meta, state)
 
     payload =
       case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
@@ -1360,7 +1361,7 @@ defmodule ToxicParser.Grammar.Maps do
           Error.error_node_payload(diagnostic,
             kind: :token,
             original: token_value,
-            synthetic?: false
+            synthetic?: synthetic?
           )
 
         _ ->
@@ -1552,18 +1553,7 @@ defmodule ToxicParser.Grammar.Maps do
   end
 
   defp build_kw_tail_error_node(reason, meta, %State{} = state, cursor, children) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        _ -> {nil, nil}
-      end
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
+    {line, column, synthetic?} = error_anchor(meta, state, cursor)
 
     {id, state} = State.next_diagnostic_id(state)
 
@@ -1576,7 +1566,7 @@ defmodule ToxicParser.Grammar.Maps do
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: false,
+        synthetic?: synthetic?,
         lexer_error_code: nil
       })
 
@@ -1588,26 +1578,16 @@ defmodule ToxicParser.Grammar.Maps do
         kind: :unexpected,
         original: reason,
         children: children,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
   end
 
   defp build_map_error_node(reason, meta, %State{} = state, cursor) do
-    {line, column} =
-      case meta do
-        {{line, column}, _, _} -> {line, column}
-        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
-        _ -> {nil, nil}
-      end
-
-    {line, column} =
-      case {line, column} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
+    {line, column, synthetic?} = error_anchor(meta, state, cursor)
 
     {id, state} = State.next_diagnostic_id(state)
 
@@ -1620,7 +1600,7 @@ defmodule ToxicParser.Grammar.Maps do
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: false,
+        synthetic?: synthetic?,
         lexer_error_code: nil
       })
 
@@ -1631,10 +1611,41 @@ defmodule ToxicParser.Grammar.Maps do
       Error.error_node_payload(diagnostic,
         kind: :invalid,
         original: reason,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_anchor(meta, %State{} = state, cursor) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    synthetic? = synthetic_meta?(meta, state)
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {line, column, synthetic?}
+  end
+
+  defp synthetic_meta?(meta, %State{} = state) do
+    missing? =
+      case meta do
+        {{_, _}, _, _} -> false
+        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+        _ -> true
+      end
+
+    missing? or not Keyword.get(state.opts, :token_metadata, true)
   end
 end

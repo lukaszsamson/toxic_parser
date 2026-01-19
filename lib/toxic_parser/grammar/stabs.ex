@@ -1587,7 +1587,7 @@ defmodule ToxicParser.Grammar.Stabs do
   defp extract_meta(_), do: []
 
   defp build_stab_error_node(reason, %State{} = state, cursor) do
-    {line, column} = error_location_from_reason(reason, cursor)
+    {line, column, synthetic?} = error_anchor_from_reason(reason, state, cursor)
 
     {id, state} = State.next_diagnostic_id(state)
 
@@ -1600,7 +1600,7 @@ defmodule ToxicParser.Grammar.Stabs do
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: false,
+        synthetic?: synthetic?,
         lexer_error_code: nil
       })
 
@@ -1611,11 +1611,37 @@ defmodule ToxicParser.Grammar.Stabs do
       Error.error_node_payload(diagnostic,
         kind: :invalid,
         original: reason,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_anchor_from_reason(reason, %State{} = state, cursor) do
+    meta =
+      case reason do
+        {meta, _msg, _token} when is_list(meta) -> meta
+        {meta, _msg} when is_list(meta) -> meta
+        {{line, column}, _, _} when is_integer(line) and is_integer(column) -> [line: line, column: column]
+        _ -> []
+      end
+
+    {line, column} = error_location_from_reason(reason, cursor)
+    synthetic? = synthetic_meta?(meta, state)
+    {line, column, synthetic?}
+  end
+
+  defp synthetic_meta?(meta, %State{} = state) do
+    missing? =
+      case meta do
+        {{_, _}, _, _} -> false
+        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+        _ -> true
+      end
+
+    missing? or not Keyword.get(state.opts, :token_metadata, true)
   end
 
   defp error_location_from_reason({meta, _msg, _token}, _cursor) when is_list(meta) do

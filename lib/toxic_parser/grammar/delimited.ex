@@ -265,8 +265,31 @@ defmodule ToxicParser.Grammar.Delimited do
                 fun.(sep_tok, state, cursor, ctx, log)
 
               _ ->
-                {:error, {:expected, :item_after_separator, separator: opts[:separator]}, state,
-                 cursor, log}
+                reason = {:expected, :item_after_separator, separator: opts[:separator]}
+
+                case opts[:on_error] do
+                  fun when is_function(fun, 5) and state.mode == :tolerant ->
+                    case fun.(reason, state, cursor, ctx, log) do
+                      {:ok, item, state, cursor, log} ->
+                        recover_after_error_item(
+                          item,
+                          acc_rev,
+                          state,
+                          cursor,
+                          ctx,
+                          log,
+                          close_kinds,
+                          item_fun,
+                          opts
+                        )
+
+                      {:error, _reason, _state, _cursor, _log} = err ->
+                        err
+                    end
+
+                  _ ->
+                    {:error, reason, state, cursor, log}
+                end
             end
         end
 

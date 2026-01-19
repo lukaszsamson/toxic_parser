@@ -192,11 +192,7 @@ defmodule ToxicParser.Grammar.Blocks do
     do: {:error, reason, state, cursor, log}
 
   defp build_error_node(reason, meta, %State{} = state, cursor) do
-    {line, column} =
-      case {Keyword.get(meta, :line), Keyword.get(meta, :column)} do
-        {nil, nil} -> Cursor.position(cursor)
-        {line, column} -> {line || 1, column || 1}
-      end
+    {line, column, synthetic?} = error_anchor(meta, state, cursor)
 
     {id, state} = State.next_diagnostic_id(state)
 
@@ -209,7 +205,7 @@ defmodule ToxicParser.Grammar.Blocks do
       |> Error.annotate(%{
         id: id,
         anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: false,
+        synthetic?: synthetic?,
         lexer_error_code: nil
       })
 
@@ -220,11 +216,42 @@ defmodule ToxicParser.Grammar.Blocks do
       Error.error_node_payload(diagnostic,
         kind: :invalid,
         original: reason,
-        synthetic?: false
+        synthetic?: synthetic?
       )
 
-    error_meta = [line: line, column: column, toxic: %{synthetic?: false, anchor: %{line: line, column: column}}]
+    error_meta =
+      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
     {Builder.Helpers.error(payload, error_meta), state}
+  end
+
+  defp error_anchor(meta, %State{} = state, cursor) do
+    {line, column} =
+      case meta do
+        {{line, column}, _, _} -> {line, column}
+        meta when is_list(meta) -> {Keyword.get(meta, :line), Keyword.get(meta, :column)}
+        _ -> {nil, nil}
+      end
+
+    synthetic? = synthetic_meta?(meta, state)
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> Cursor.position(cursor)
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    {line, column, synthetic?}
+  end
+
+  defp synthetic_meta?(meta, %State{} = state) do
+    missing? =
+      case meta do
+        {{_, _}, _, _} -> false
+        meta when is_list(meta) -> Keyword.get(meta, :line) == nil and Keyword.get(meta, :column) == nil
+        _ -> true
+      end
+
+    missing? or not Keyword.get(state.opts, :token_metadata, true)
   end
 
   defp maybe_recover_do_block_error(reason, do_location, %State{mode: :tolerant} = state, cursor, log) do

@@ -108,7 +108,9 @@ defmodule ToxicParser.TolerantModeTest do
     "bitstring missing closer",
     "paren expression missing closer",
     "binary op missing rhs eof",
-    "fn paren patterns missing closer"
+    "fn paren patterns missing closer",
+    "bitstring no-parens expr",
+    "map kw tail missing comma"
   ]
 
   @error_cases [
@@ -209,6 +211,8 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "paren expression missing closer", code: "(1 + 2", no_following: true},
     %{name: "binary op missing rhs eof", code: "1 +", no_following: true},
     %{name: "fn paren patterns missing closer", code: "fn (a, b", no_following: true},
+    %{name: "bitstring no-parens expr", code: "<<foo 1 2>>"},
+    %{name: "map kw tail missing comma", code: "%{foo: 1 bar: 2}"},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
