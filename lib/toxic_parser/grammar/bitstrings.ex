@@ -100,13 +100,8 @@ defmodule ToxicParser.Grammar.Bitstrings do
               end
 
             {:error, reason, state, cursor, log} ->
-              if state.mode == :tolerant do
-                {state, cursor} = TokenAdapter.rewind(state, ref)
-                {:error, reason, state, cursor, log}
-              else
-                state = TokenAdapter.drop_checkpoint(state, ref)
-                {:error, reason, state, cursor, log}
-              end
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              {:error, reason, state, cursor, log}
           end
 
         {:error, reason, state, cursor, log} ->

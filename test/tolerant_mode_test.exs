@@ -248,7 +248,23 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "sigil lowercase heredoc invalid bidi character", code: "~s\"\"\"\n\u202A\n\"\"\""},
     %{name: "sigil uppercase heredoc invalid bidi character", code: "~S\"\"\"\n\u202A\n\"\"\""},
     %{name: "sigil lowercase invalid bidi delimiter", code: "~s$\u202A$"},
-    %{name: "sigil uppercase invalid bidi delimiter", code: "~S$\u202A$"}
+    %{name: "sigil uppercase invalid bidi delimiter", code: "~S$\u202A$"},
+    # ElixirSense crash cases - interpolation with reserved word inside
+    %{
+      name: "interpolation missing terminator with end keyword",
+      code: "defmodule MyModule do\n  var = \"\#{\nend",
+      no_following: true
+    },
+    %{
+      name: "charlist interpolation missing terminator with end keyword",
+      code: "defmodule MyModule do\n  var = '\#{\nend",
+      no_following: true
+    },
+    %{
+      name: "keyword value missing at eof",
+      code: "IO.inspect(\n  :stderr,\n  label: \"label\",\n  limit:\n)",
+      no_following: true
+    }
   ]
 
   for %{name: name, code: code} = data <- @error_cases do
