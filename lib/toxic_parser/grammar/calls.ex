@@ -535,8 +535,14 @@ defmodule ToxicParser.Grammar.Calls do
               {:ok, {kind, _meta, _value}, cursor} ->
                 if kind in [:eol, :";", :")", :"]", :"}", :do] do
                   meta = TokenAdapter.token_meta(comma_tok)
+                  reason = {meta, "syntax error before: ", ""}
 
-                  {:error, {meta, "syntax error before: ", ""}, state, cursor, log}
+                  if state.mode == :tolerant do
+                    {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+                    {:ok, Enum.reverse([error_node, arg | acc]), state, cursor, log}
+                  else
+                    {:error, reason, state, cursor, log}
+                  end
                 else
                   case Keywords.try_parse_call_args_no_parens_kw(state, cursor, ctx, log) do
                     {:ok, kw_list, state, cursor, log} ->
@@ -552,8 +558,14 @@ defmodule ToxicParser.Grammar.Calls do
 
               {:eof, cursor} ->
                 meta = TokenAdapter.token_meta(comma_tok)
+                reason = {meta, "syntax error before: ", ""}
 
-                {:error, {meta, "syntax error before: ", ""}, state, cursor, log}
+                if state.mode == :tolerant do
+                  {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+                  {:ok, Enum.reverse([error_node, arg | acc]), state, cursor, log}
+                else
+                  {:error, reason, state, cursor, log}
+                end
 
               {:error, diag, cursor} ->
                 {:error, diag, state, cursor, log}
@@ -604,7 +616,28 @@ defmodule ToxicParser.Grammar.Calls do
               )
 
             {:error, reason, state, cursor, log} ->
-              {:error, reason, state, cursor, log}
+              meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+              {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+              {state, cursor} = sync_to_no_parens_separator(state, cursor)
+
+              case Cursor.peek(cursor) do
+                {:ok, {:",", _meta, _value}, cursor} when not opts.stop_at_comma ->
+                  {:ok, _comma, state, cursor} = TokenAdapter.next(state, cursor)
+                  {state, cursor} = EOE.skip(state, cursor)
+
+                  parse_no_parens_args(
+                    [error_node, kw_list | acc],
+                    state,
+                    cursor,
+                    ctx,
+                    log,
+                    min_bp,
+                    opts
+                  )
+
+                _ ->
+                  {:ok, Enum.reverse([error_node, kw_list | acc]), state, cursor, log}
+              end
           end
 
         _ ->

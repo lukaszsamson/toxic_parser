@@ -210,8 +210,15 @@ defmodule ToxicParser.Grammar.Dots do
       end
     end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+      {error_node, state} = ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
+      {:ok, {:expr, error_node}, state, cursor, log}
+    end
+
     Delimited.parse_comma_separated(state, cursor, container_ctx, log, :"}", item_fun,
-      allow_empty?: true
+      allow_empty?: true,
+      on_error: on_error
     )
   end
 

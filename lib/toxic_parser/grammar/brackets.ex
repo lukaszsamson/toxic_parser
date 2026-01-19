@@ -40,10 +40,17 @@ defmodule ToxicParser.Grammar.Brackets do
 
     item_fun = fn state, cursor, ctx, log -> Expressions.expr(state, cursor, ctx, log) end
 
+    on_error = fn reason, state, cursor, _ctx, log ->
+      meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+      {error_node, state} = ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
+      {:ok, error_node, state, cursor, log}
+    end
+
     case Delimited.parse_comma_separated(checkpoint_state, cursor, ctx, log, :"]", item_fun,
            allow_empty?: false,
            allow_trailing_comma?: true,
-           skip_eoe?: true
+           skip_eoe?: true,
+           on_error: on_error
          ) do
       {:ok, [expr], state, cursor, log} ->
         {:ok, expr, TokenAdapter.drop_checkpoint(state, ref), cursor, log}

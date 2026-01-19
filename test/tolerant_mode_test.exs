@@ -112,7 +112,10 @@ defmodule ToxicParser.TolerantModeTest do
     "binary op missing rhs eof",
     "fn paren patterns missing closer",
     "bitstring no-parens expr",
-    "map kw tail missing comma"
+    "map kw tail missing comma",
+    "no-parens trailing comma eof",
+    "no-parens kw list invalid arg",
+    "map kw tail unexpected token"
   ]
 
   @error_cases [
@@ -217,6 +220,9 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "fn paren patterns missing closer", code: "fn (a, b", no_following: true},
     %{name: "bitstring no-parens expr", code: "<<foo 1 2>>"},
     %{name: "map kw tail missing comma", code: "%{foo: 1 bar: 2}"},
+    %{name: "no-parens trailing comma eof", code: "foo a,", no_following: true},
+    %{name: "no-parens kw list invalid arg", code: "foo a: 1, +", no_following: true},
+    %{name: "map kw tail unexpected token", code: "%{foo: 1 bar}", no_following: true},
     %{name: "sigil lowercase invalid delimiter hex escape", code: "~s$\\x$"},
     %{name: "sigil uppercase invalid delimiter hex escape", code: "~S$\\x$"},
     %{name: "sigil lowercase invalid delimiter unicode escape", code: "~s$\\u$"},
@@ -340,7 +346,10 @@ defmodule ToxicParser.TolerantModeTest do
       "fn paren patterns missing closer",
       "dot container missing closer",
       "bracket access missing closer",
-      "no-parens arg after comma"
+      "no-parens arg after comma",
+      "no-parens trailing comma eof",
+      "no-parens kw list invalid arg",
+      "map kw tail unexpected token"
     ]
 
     cond do

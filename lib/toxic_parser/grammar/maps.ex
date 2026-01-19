@@ -1338,13 +1338,36 @@ defmodule ToxicParser.Grammar.Maps do
             end
 
           {:ok, {got_kind, _meta, _value}, cursor} ->
-            {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
+            if state.mode == :tolerant do
+              reason = {:expected, :"}", got: got_kind}
+              meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+              {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+              {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
+              {:ok, [kw_list, error_node], close_meta, state, cursor, log}
+            else
+              {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
+            end
 
           {:eof, cursor} ->
-            {:error, :unexpected_eof, state, cursor, log}
+            if state.mode == :tolerant do
+              reason = :unexpected_eof
+              meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+              {error_node, state} = build_kw_tail_error_node(reason, meta, state, cursor, [])
+              {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
+              {:ok, [kw_list, error_node], close_meta, state, cursor, log}
+            else
+              {:error, :unexpected_eof, state, cursor, log}
+            end
 
           {:error, diag, cursor} ->
-            {:error, diag, state, cursor, log}
+            if state.mode == :tolerant do
+              meta = ErrorHelpers.error_meta_from_reason(diag, cursor)
+              {error_node, state} = build_kw_tail_error_node(diag, meta, state, cursor, [])
+              {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
+              {:ok, [kw_list, error_node], close_meta, state, cursor, log}
+            else
+              {:error, diag, state, cursor, log}
+            end
         end
 
       {:no_kw, state, cursor, log} ->
