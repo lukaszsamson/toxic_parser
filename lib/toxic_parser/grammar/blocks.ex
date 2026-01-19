@@ -9,7 +9,7 @@ defmodule ToxicParser.Grammar.Blocks do
   (fn -> ... end with stab clauses directly, no arguments before do).
   """
 
-  alias ToxicParser.{Builder, Context, Cursor, EventLog, Pratt, State, TokenAdapter}
+  alias ToxicParser.{Builder, Context, Cursor, Error, EventLog, Pratt, State, TokenAdapter}
   alias ToxicParser.Builder.Meta
   alias ToxicParser.Grammar.{ErrorHelpers, Stabs}
 
@@ -188,8 +188,42 @@ defmodule ToxicParser.Grammar.Blocks do
     {:ok, error_ast, state, cursor, log}
   end
 
-  defp maybe_recover_fn_error(reason, _fn_meta, state, cursor, log),
-    do: {:error, reason, state, cursor, log}
+  defp maybe_recover_fn_error(reason, _fn_meta, state, cursor, log) do
+    case maybe_missing_paren_reason(reason, state, cursor) do
+      {:ok, missing_reason} -> {:error, missing_reason, state, cursor, log}
+      :none -> {:error, reason, state, cursor, log}
+    end
+  end
+
+  defp maybe_missing_paren_reason({meta, "syntax error before: ", "','"}, state, cursor)
+       when is_list(meta) do
+    scan_missing_paren_reason(state, cursor)
+  end
+
+  defp maybe_missing_paren_reason(_reason, _state, _cursor), do: :none
+
+  defp scan_missing_paren_reason(state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    result = scan_missing_paren_reason(checkpoint_state, cursor, :none)
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+    result
+  end
+
+  defp scan_missing_paren_reason(state, cursor, _acc) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, _tok, state, cursor} ->
+        scan_missing_paren_reason(state, cursor, :none)
+
+      {:error, %Error{reason: {meta, "missing terminator: )", ""}}, _state, _cursor} ->
+        {:ok, {meta, "missing terminator: )", ""}}
+
+      {:error, _diag, _state, _cursor} ->
+        :none
+
+      {:eof, _state, _cursor} ->
+        :none
+    end
+  end
 
   defp build_error_node(reason, meta, %State{} = state, cursor) do
     ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)

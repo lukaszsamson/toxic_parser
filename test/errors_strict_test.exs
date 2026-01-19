@@ -49,6 +49,10 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("%{foo: 1, :bar => :bar}")
     end
 
+    test "keyword list missing comma in map" do
+      assert_error_conforms("%{foo: 1 bar: 2}")
+    end
+
     test "unexpected parentheses due to space" do
       assert_error_conforms("foo (hello, world)")
     end
@@ -65,8 +69,32 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("{foo 1, 2}")
     end
 
+    test "no-parens trailing comma eof" do
+      assert_error_conforms("foo a,", [], false)
+    end
+
+    test "no-parens kw list invalid arg" do
+      assert_error_conforms("foo a: 1, +", [], false)
+    end
+
+    test "no-parens kw list missing item" do
+      assert_error_conforms("foo a: 1, , b: 2")
+    end
+
+    test "no-parens kw list trailing comma eof" do
+      assert_error_conforms("foo a: 1,", [], false)
+    end
+
     test "too many arguments in access syntax" do
       assert_error_conforms("foo[1, 2]")
+    end
+
+    test "bracket access missing closer" do
+      assert_error_conforms("foo[1", [], false)
+    end
+
+    test "bracket empty args" do
+      assert_error_conforms("foo[]")
     end
 
     test "invalid keyword identifier with do" do
@@ -75,6 +103,14 @@ defmodule ToxicParser.ErrorsStrictTest do
 
     test "invalid keyword identifier" do
       assert_error_conforms("if true else: 1")
+    end
+
+    test "kw identifier at expression position" do
+      assert_error_conforms("foo:")
+    end
+
+    test "binary operator at expression start" do
+      assert_error_conforms("* 1")
     end
 
     test "unicode conversion error in list string" do
@@ -91,6 +127,54 @@ defmodule ToxicParser.ErrorsStrictTest do
 
     test "missing closer at eof" do
       assert_error_conforms("(", [], false)
+    end
+
+    test "list missing closer" do
+      assert_error_conforms("[1, 2", [], false)
+    end
+
+    test "tuple missing closer" do
+      assert_error_conforms("{1, 2", [], false)
+    end
+
+    test "paren call missing closer" do
+      assert_error_conforms("call(1, 2", [], false)
+    end
+
+    test "map missing closer" do
+      assert_error_conforms("%{a: 1", [], false)
+    end
+
+    test "map kw tail trailing comma eof" do
+      assert_error_conforms("%{foo: 1,", [], false)
+    end
+
+    test "map kw tail unexpected token" do
+      assert_error_conforms("%{foo: 1 bar}", [], false)
+    end
+
+    test "bitstring missing closer" do
+      assert_error_conforms("<<1, 2", [], false)
+    end
+
+    test "bitstring no-parens expr" do
+      assert_error_conforms("<<foo 1 2>>")
+    end
+
+    test "bitstring invalid expr" do
+      assert_error_conforms("<<1, +>>", [], false)
+    end
+
+    test "paren expression missing closer" do
+      assert_error_conforms("(1 + 2", [], false)
+    end
+
+    test "binary op missing rhs eof" do
+      assert_error_conforms("1 +", [], false)
+    end
+
+    test "fn paren patterns missing closer" do
+      assert_error_conforms("fn (a, b", [], false)
     end
 
     test "unexpected end keyword" do
@@ -141,6 +225,18 @@ defmodule ToxicParser.ErrorsStrictTest do
       assert_error_conforms("Foo()")
     end
 
+    test "dot missing member" do
+      assert_error_conforms("Foo.")
+    end
+
+    test "dot container missing closer" do
+      assert_error_conforms("Foo.{1", [], false)
+    end
+
+    test "dot container empty eof" do
+      assert_error_conforms("Foo.{", [], false)
+    end
+
     test "alias invalid character" do
       assert_error_conforms("Foöbar")
     end
@@ -156,6 +252,26 @@ defmodule ToxicParser.ErrorsStrictTest do
 
     test "quoted call missing terminator" do
       assert_error_conforms(~S(Foo."unclosed), [], false)
+    end
+
+    test "capture missing int" do
+      assert_error_conforms("&", [], false)
+    end
+
+    test "fn missing end" do
+      assert_error_conforms("fn -> 1", [], false)
+    end
+
+    test "do block missing end" do
+      assert_error_conforms("if true do 1", [], false)
+    end
+
+    test "case block missing end" do
+      assert_error_conforms("case x do 1 -> 2", [], false)
+    end
+
+    test "stab invalid placement" do
+      assert_error_conforms("fn 1; 2 -> 3 end")
     end
 
     test "sigil missing terminator" do

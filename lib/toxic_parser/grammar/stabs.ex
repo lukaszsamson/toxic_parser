@@ -89,7 +89,7 @@ defmodule ToxicParser.Grammar.Stabs do
           {:error, {:expected, :")", got: got_kind}, state, cursor, log}
 
         {:eof, state, cursor} ->
-          {:error, :unexpected_eof, state, cursor, log}
+          {:error, missing_terminator_reason(open_meta, cursor, :")"), state, cursor, log}
 
         {:error, diag, state, cursor} ->
           {:error, diag, state, cursor, log}
@@ -475,25 +475,87 @@ defmodule ToxicParser.Grammar.Stabs do
         # Try parsing as stab_parens_many first
         {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
 
-        case parse_stab_parens_many(open_tok, checkpoint_state, cursor, ctx, log) do
-          {:ok, patterns, state2, cursor2, log2, parens_meta} ->
-            # Check if followed by -> or when (actual stab_parens_many)
-            case Cursor.peek(cursor2) do
-              {:ok, {kind, _meta, _value}, cursor2} when kind in [:stab_op, :when_op] ->
-                # Yes, this is stab_parens_many
-                state2 = TokenAdapter.drop_checkpoint(state2, ref)
-                {:ok, patterns, state2, cursor2, log2, parens_meta}
+        case find_missing_paren_closer(checkpoint_state, cursor) do
+          {:missing, eof_cursor} ->
+            open_meta = TokenAdapter.token_meta(open_tok)
+            state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
 
-              _ ->
-                # No, it's just a parenthesized expression - rewind and parse normally
-                {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
-                parse_stab_pattern_exprs(acc, state, cursor, ctx, log)
+            {:error, missing_terminator_reason(open_meta, eof_cursor, :")"), state, eof_cursor,
+             log}
+
+          :found ->
+            case parse_stab_parens_many(open_tok, checkpoint_state, cursor, ctx, log) do
+              {:ok, patterns, state2, cursor2, log2, parens_meta} ->
+                # Check if followed by -> or when (actual stab_parens_many)
+                case Cursor.peek(cursor2) do
+                  {:ok, {kind, _meta, _value}, cursor2} when kind in [:stab_op, :when_op] ->
+                    # Yes, this is stab_parens_many
+                    state2 = TokenAdapter.drop_checkpoint(state2, ref)
+                    {:ok, patterns, state2, cursor2, log2, parens_meta}
+
+                  _ ->
+                    # No, it's just a parenthesized expression - rewind and parse normally
+                    {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+
+                    case parse_stab_pattern_exprs(acc, state, cursor, ctx, log) do
+                      {:error, reason, state, cursor, log} ->
+                        {terminators, state} = TokenAdapter.current_terminators(state, cursor)
+
+                        if syntax_error_before_comma?(reason) or :")" in terminators do
+                          open_meta = TokenAdapter.token_meta(open_tok)
+
+                          {:error, missing_terminator_reason(open_meta, cursor, :")"), state,
+                           cursor, log}
+                        else
+                          {:error, reason, state, cursor, log}
+                        end
+
+                      other ->
+                        other
+                    end
+                end
+
+              {:error, reason, state2, cursor2, log2} ->
+                cond do
+                  missing_terminator_reason?(reason) ->
+                    {:error, reason, state2, cursor2, log2}
+
+                  Cursor.eof?(cursor2) ->
+                    open_meta = TokenAdapter.token_meta(open_tok)
+
+                    {:error, missing_terminator_reason(open_meta, cursor2, :")"), state2, cursor2,
+                     log2}
+
+                  true ->
+                    {terminators, state2} = TokenAdapter.current_terminators(state2, cursor2)
+
+                    if :")" in terminators do
+                      open_meta = TokenAdapter.token_meta(open_tok)
+
+                      {:error, missing_terminator_reason(open_meta, cursor2, :")"), state2,
+                       cursor2, log2}
+                    else
+                      {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+
+                      case parse_stab_pattern_exprs(acc, state, cursor, ctx, log) do
+                        {:error, reason, state, cursor, log} ->
+                          {terminators, state} = TokenAdapter.current_terminators(state, cursor)
+
+                          if syntax_error_before_comma?(reason) or :")" in terminators do
+                            open_meta = TokenAdapter.token_meta(open_tok)
+
+                            {:error, missing_terminator_reason(open_meta, cursor, :")"), state,
+                             cursor, log}
+                          else
+                            {:error, reason, state, cursor, log}
+                          end
+
+                        other ->
+                          other
+                      end
+                    end
+                end
             end
-
-          {:error, _reason, _state2, _cursor2, _log2} ->
-            # Error parsing as stab_parens_many - try as regular pattern
-            {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
-            parse_stab_pattern_exprs(acc, state, cursor, ctx, log)
         end
 
       {:ok, {kind, _meta, _value} = tok, cursor} ->
@@ -585,7 +647,7 @@ defmodule ToxicParser.Grammar.Stabs do
         end
 
       {:eof, cursor} ->
-        {:error, :unexpected_eof, state, cursor, log}
+        {:error, missing_terminator_reason(open_meta, cursor, :")"), state, cursor, log}
 
       {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
@@ -1611,6 +1673,71 @@ defmodule ToxicParser.Grammar.Stabs do
     line = Keyword.get(meta, :line, 1)
     column = Keyword.get(meta, :column, 1)
     {[line: line, column: column], "syntax error before: ", token_value}
+  end
+
+  defp missing_terminator_reason(open_meta, cursor, expected_delimiter) do
+    line = Keyword.get(open_meta, :line, 1)
+    column = Keyword.get(open_meta, :column, 1)
+    {end_line, end_column} = Cursor.position(cursor)
+
+    reason_meta = [
+      opening_delimiter: :"(",
+      expected_delimiter: expected_delimiter,
+      line: line,
+      column: column,
+      end_line: end_line || line,
+      end_column: end_column || column
+    ]
+
+    {reason_meta, "missing terminator: #{expected_delimiter}", ""}
+  end
+
+  defp missing_terminator_reason?({meta, message, ""})
+       when is_list(meta) and is_binary(message) do
+    String.starts_with?(message, "missing terminator:")
+  end
+
+  defp missing_terminator_reason?(_), do: false
+
+  defp syntax_error_before_comma?({meta, "syntax error before: ", "','"})
+       when is_list(meta) do
+    true
+  end
+
+  defp syntax_error_before_comma?(_), do: false
+
+  defp find_missing_paren_closer(state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    {result, _state, cursor_after} = scan_paren_depth(checkpoint_state, cursor, 0)
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+
+    case result do
+      :found -> :found
+      :missing -> {:missing, cursor_after}
+    end
+  end
+
+  defp scan_paren_depth(state, cursor, depth) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, {:"(", _meta, _value}, state, cursor} ->
+        scan_paren_depth(state, cursor, depth + 1)
+
+      {:ok, {:")", _meta, _value}, state, cursor} ->
+        if depth <= 1 do
+          {:found, state, cursor}
+        else
+          scan_paren_depth(state, cursor, depth - 1)
+        end
+
+      {:ok, _tok, state, cursor} ->
+        scan_paren_depth(state, cursor, depth)
+
+      {:eof, state, cursor} ->
+        {:missing, state, cursor}
+
+      {:error, _diag, state, cursor} ->
+        {:missing, state, cursor}
+    end
   end
 
   #   %% an arg style call. unwrap_splice unwraps the splice

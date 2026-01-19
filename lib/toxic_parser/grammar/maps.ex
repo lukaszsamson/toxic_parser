@@ -1349,7 +1349,7 @@ defmodule ToxicParser.Grammar.Maps do
                 end
             end
 
-          {:ok, {got_kind, _meta, _value}, cursor} ->
+          {:ok, {got_kind, got_meta, got_value}, cursor} ->
             if state.mode == :tolerant do
               reason = {:expected, :"}", got: got_kind}
               meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
@@ -1357,7 +1357,9 @@ defmodule ToxicParser.Grammar.Maps do
               {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
               {:ok, [kw_list, error_node], close_meta, state, cursor, log}
             else
-              {:error, {:expected, :"}", got: got_kind}, state, cursor, log}
+              token_display = map_kw_tail_token_display(got_kind, got_value)
+              meta = TokenAdapter.token_meta({got_kind, got_meta, got_value})
+              {:error, syntax_error_before(meta, token_display), state, cursor, log}
             end
 
           {:eof, cursor} ->
@@ -1411,6 +1413,34 @@ defmodule ToxicParser.Grammar.Maps do
       end
 
     {Builder.Helpers.error(payload, meta), state, cursor}
+  end
+
+  defp map_kw_tail_token_display(:kw_identifier, value) when is_atom(value),
+    do: "'#{value}:'"
+
+  defp map_kw_tail_token_display(:kw_identifier, value) when is_binary(value),
+    do: "'#{value}:'"
+
+  defp map_kw_tail_token_display(:kw_identifier_safe, value) when is_atom(value),
+    do: "#{value}:"
+
+  defp map_kw_tail_token_display(:kw_identifier_safe, value) when is_binary(value),
+    do: "#{value}:"
+
+  defp map_kw_tail_token_display(:kw_identifier_unsafe, value) when is_atom(value),
+    do: "#{value}:"
+
+  defp map_kw_tail_token_display(:kw_identifier_unsafe, value) when is_binary(value),
+    do: "#{value}:"
+
+  defp map_kw_tail_token_display(_kind, value) when is_atom(value), do: Atom.to_string(value)
+  defp map_kw_tail_token_display(_kind, value) when is_binary(value), do: value
+  defp map_kw_tail_token_display(kind, _value), do: Atom.to_string(kind)
+
+  defp syntax_error_before(meta, token_value) when is_binary(token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
   end
 
   # Parse assoc list (assoc_base): one or more assoc_expr separated by commas

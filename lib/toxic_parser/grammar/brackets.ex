@@ -99,12 +99,34 @@ defmodule ToxicParser.Grammar.Brackets do
 
           {:ok, error_node, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
         else
-          {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+          case reason do
+            {:expected, :item, got: :"]"} ->
+              meta =
+                case Cursor.peek(cursor) do
+                  {:ok, {_, tok_meta, _}, _cursor} ->
+                    TokenAdapter.token_meta({:"]", tok_meta, nil})
+
+                  _ ->
+                    []
+                end
+
+              {:error, syntax_error_before(meta, "']'"), TokenAdapter.drop_checkpoint(state, ref),
+               cursor, log}
+
+            _ ->
+              {:error, reason, TokenAdapter.drop_checkpoint(state, ref), cursor, log}
+          end
         end
     end
   end
 
   defp build_access_error_node(reason, meta, %State{} = state, cursor, children) do
     ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor, children)
+  end
+
+  defp syntax_error_before(meta, token_value) when is_binary(token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
   end
 end

@@ -447,8 +447,46 @@ defmodule ToxicParser.Grammar.Keywords do
     end
 
     on_no_item_after_separator = fn comma_tok, state, cursor, _ctx, log ->
-      meta = TokenAdapter.token_meta(comma_tok)
-      {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state, cursor, log}
+      case Cursor.peek(cursor) do
+        {:ok, {:",", tok_meta, _value}, _cursor} ->
+          meta = TokenAdapter.token_meta({:",", tok_meta, nil})
+          {:error, {meta, "syntax error before: ", "','"}, state, cursor, log}
+
+        {:ok, {kind, tok_meta, value}, _cursor} ->
+          {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+          arg_ctx = Context.no_parens_expr()
+
+          result =
+            Pratt.parse_with_min_bp(
+              checkpoint_state,
+              cursor,
+              arg_ctx,
+              log,
+              0,
+              ParseOpts.stop_at_assoc()
+            )
+
+          state = TokenAdapter.drop_checkpoint(state, ref)
+
+          case result do
+            {:ok, _expr, _state, _cursor, _log} ->
+              meta = TokenAdapter.token_meta(comma_tok)
+
+              {:error, {meta, unexpected_expression_after_kw_call_message(), "','"}, state,
+               cursor, log}
+
+            {:error, _reason, _state, _cursor, _log} ->
+              meta = TokenAdapter.token_meta({kind, tok_meta, value})
+              {:error, syntax_error_before(meta), state, cursor, log}
+          end
+
+        {:eof, _cursor} ->
+          meta = TokenAdapter.token_meta(comma_tok)
+          {:error, syntax_error_before(meta), state, cursor, log}
+
+        {:error, diag, _cursor} ->
+          {:error, diag, state, cursor, log}
+      end
     end
 
     on_error = fn reason, state, cursor, _ctx, log ->
@@ -500,7 +538,14 @@ defmodule ToxicParser.Grammar.Keywords do
 
           {:ok, [{:__error__, error_node}], state, cursor, log}
         else
-          {:error, reason, state, cursor, log}
+          if reason == :unexpected_eof do
+            {line, column} = Cursor.position(cursor)
+            column = if is_integer(column) and column > 1, do: column - 1, else: column
+            meta = [line: line || 1, column: column || 1]
+            {:error, syntax_error_before(meta), state, cursor, log}
+          else
+            {:error, reason, state, cursor, log}
+          end
         end
     end
   end
@@ -674,6 +719,12 @@ defmodule ToxicParser.Grammar.Keywords do
                     opts
                   )
                 end
+
+              {:eof, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
+
+              {:error, diag, cursor} ->
+                {:error, diag, state, cursor, log}
             end
 
           {:ok, _, cursor} ->

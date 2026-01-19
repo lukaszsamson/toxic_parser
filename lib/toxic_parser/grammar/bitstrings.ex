@@ -9,6 +9,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
     EventLog,
     ExprClass,
     NoParensErrors,
+    ParseOpts,
     Pratt,
     State,
     TokenAdapter
@@ -82,10 +83,15 @@ defmodule ToxicParser.Grammar.Bitstrings do
                     {state, cursor} = sync_to_bitstring_separator(state, cursor)
                     {:ok, {:expr, error_node}, state, cursor, log}
                   else
+                    reason =
+                      case bitstring_no_parens_reason(state, cursor, ref, log) do
+                        {:ok, reason} -> reason
+                        :error -> NoParensErrors.error_no_parens_container_strict(expr)
+                      end
+
                     state = TokenAdapter.drop_checkpoint(state, ref)
 
-                    {:error, NoParensErrors.error_no_parens_container_strict(expr), state, cursor,
-                     log}
+                    {:error, reason, state, cursor, log}
                   end
 
                 _ ->
@@ -114,26 +120,75 @@ defmodule ToxicParser.Grammar.Bitstrings do
       {:ok, {:expr, error_node}, state, cursor, log}
     end
 
-    with {:ok, tagged_items, state, cursor, log} <-
-           Delimited.parse_comma_separated(state, cursor, container_ctx, log, :">>", item_fun,
-             allow_empty?: true,
-             on_error: on_error
-           ) do
-      # Check for invalid keyword list at start of bitstring
-      # <<foo: :bar>> is invalid - bitstrings cannot start with keyword data
-      case tagged_items do
-        [{:kw_data, _} | _] ->
-          if state.mode == :tolerant do
-            {error_ast, state} =
-              build_container_error_node(
-                unexpected_keyword_list_error(:bitstring, open_meta),
-                open_meta,
-                state,
-                cursor
-              )
+    case Delimited.parse_comma_separated(state, cursor, container_ctx, log, :">>", item_fun,
+           allow_empty?: true,
+           on_error: on_error
+         ) do
+      {:ok, tagged_items, state, cursor, log} ->
+        # Check for invalid keyword list at start of bitstring
+        # <<foo: :bar>> is invalid - bitstrings cannot start with keyword data
+        case tagged_items do
+          [{:kw_data, _} | _] ->
+            if state.mode == :tolerant do
+              {error_ast, state} =
+                build_container_error_node(
+                  unexpected_keyword_list_error(:bitstring, open_meta),
+                  open_meta,
+                  state,
+                  cursor
+                )
 
-            tagged_items = [{:expr, error_ast}]
+              tagged_items = [{:expr, error_ast}]
 
+              case TokenAdapter.next(state, cursor) do
+                {:ok, {:">>", _meta, _value} = close_tok, state, cursor} ->
+                  close_meta = TokenAdapter.token_meta(close_tok)
+                  meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
+                  ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
+                  {:ok, ast, state, cursor, log}
+
+                {:ok, {kind, _meta, _value} = tok, state, cursor} ->
+                  if state.mode == :tolerant do
+                    {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+
+                    {error_ast, state} =
+                      build_container_error_node(
+                        {:expected, :">>", got: kind},
+                        open_meta,
+                        state,
+                        cursor
+                      )
+
+                    {:ok, error_ast, state, cursor, log}
+                  else
+                    {:error, {:expected, :">>", got: kind}, state, cursor, log}
+                  end
+
+                {:eof, state, cursor} ->
+                  if state.mode == :tolerant do
+                    {error_ast, state} =
+                      build_container_error_node(:unexpected_eof, open_meta, state, cursor)
+
+                    {:ok, error_ast, state, cursor, log}
+                  else
+                    {:error, :unexpected_eof, state, cursor, log}
+                  end
+
+                {:error, diag, state, cursor} ->
+                  if state.mode == :tolerant do
+                    {error_ast, state} =
+                      build_container_error_node(diag, open_meta, state, cursor)
+
+                    {:ok, error_ast, state, cursor, log}
+                  else
+                    {:error, diag, state, cursor, log}
+                  end
+              end
+            else
+              {:error, unexpected_keyword_list_error(:bitstring, open_meta), state, cursor, log}
+            end
+
+          _ ->
             case TokenAdapter.next(state, cursor) do
               {:ok, {:">>", _meta, _value} = close_tok, state, cursor} ->
                 close_meta = TokenAdapter.token_meta(close_tok)
@@ -176,54 +231,25 @@ defmodule ToxicParser.Grammar.Bitstrings do
                   {:error, diag, state, cursor, log}
                 end
             end
-          else
-            {:error, unexpected_keyword_list_error(:bitstring, open_meta), state, cursor, log}
-          end
+        end
 
-        _ ->
-          case TokenAdapter.next(state, cursor) do
-            {:ok, {:">>", _meta, _value} = close_tok, state, cursor} ->
-              close_meta = TokenAdapter.token_meta(close_tok)
-              meta = Meta.closing_meta(open_meta, close_meta, leading_newlines)
-              ast = {:<<>>, meta, finalize_bitstring_items(tagged_items)}
-              {:ok, ast, state, cursor, log}
+      {:error, {:expected_comma_or, :">>", got: _}, state, cursor, log}
+      when state.mode != :tolerant ->
+        case TokenAdapter.next(state, cursor) do
+          {:ok, {kind, _meta, value} = tok, state, cursor} ->
+            meta = TokenAdapter.token_meta(tok)
+            token_display = bitstring_token_display(kind, value)
+            {:error, syntax_error_before(meta, token_display), state, cursor, log}
 
-            {:ok, {kind, _meta, _value} = tok, state, cursor} ->
-              if state.mode == :tolerant do
-                {state, cursor} = TokenAdapter.pushback(state, cursor, tok)
+          {:eof, state, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
 
-                {error_ast, state} =
-                  build_container_error_node(
-                    {:expected, :">>", got: kind},
-                    open_meta,
-                    state,
-                    cursor
-                  )
+          {:error, diag, state, cursor} ->
+            {:error, diag, state, cursor, log}
+        end
 
-                {:ok, error_ast, state, cursor, log}
-              else
-                {:error, {:expected, :">>", got: kind}, state, cursor, log}
-              end
-
-            {:eof, state, cursor} ->
-              if state.mode == :tolerant do
-                {error_ast, state} =
-                  build_container_error_node(:unexpected_eof, open_meta, state, cursor)
-
-                {:ok, error_ast, state, cursor, log}
-              else
-                {:error, :unexpected_eof, state, cursor, log}
-              end
-
-            {:error, diag, state, cursor} ->
-              if state.mode == :tolerant do
-                {error_ast, state} = build_container_error_node(diag, open_meta, state, cursor)
-                {:ok, error_ast, state, cursor, log}
-              else
-                {:error, diag, state, cursor, log}
-              end
-          end
-      end
+      {:error, reason, state, cursor, log} ->
+        {:error, reason, state, cursor, log}
     end
   end
 
@@ -257,6 +283,42 @@ defmodule ToxicParser.Grammar.Bitstrings do
     ErrorHelpers.build_error_node(:unexpected, reason, meta, state, cursor)
   end
 
+  defp bitstring_no_parens_reason(state, _cursor, ref, log) do
+    {state, cursor} = TokenAdapter.rewind(state, ref)
+
+    with {:ok, _callee_tok, state, cursor} <- TokenAdapter.next(state, cursor) do
+      {state, cursor} = EOE.skip(state, cursor)
+      arg_ctx = Context.no_parens_expr()
+
+      case Pratt.parse_with_min_bp(
+             state,
+             cursor,
+             arg_ctx,
+             log,
+             0,
+             ParseOpts.stop_at_assoc()
+           ) do
+        {:ok, _arg, state, cursor, _log} ->
+          {_state, cursor} = EOE.skip(state, cursor)
+
+          case Cursor.peek(cursor) do
+            {:ok, {kind, meta, value}, _cursor} ->
+              meta = TokenAdapter.token_meta({kind, meta, value})
+              token_display = bitstring_token_display(kind, value)
+              {:ok, syntax_error_before(meta, token_display)}
+
+            _ ->
+              :error
+          end
+
+        _ ->
+          :error
+      end
+    else
+      _ -> :error
+    end
+  end
+
   defp error_meta_from_reason(reason, cursor) do
     case reason do
       {meta, _msg, _token} when is_list(meta) ->
@@ -272,6 +334,24 @@ defmodule ToxicParser.Grammar.Bitstrings do
         {line, column} = Cursor.position(cursor)
         [line: line || 1, column: column || 1]
     end
+  end
+
+  defp bitstring_token_display(:int, value) when is_list(value),
+    do: "\"#{List.to_string(value)}\""
+
+  defp bitstring_token_display(:int, value) when is_integer(value),
+    do: "\"#{value}\""
+
+  defp bitstring_token_display(_kind, value) when is_binary(value), do: value
+  defp bitstring_token_display(_kind, value) when is_atom(value), do: Atom.to_string(value)
+  defp bitstring_token_display(_kind, value) when is_integer(value), do: Integer.to_string(value)
+  defp bitstring_token_display(_kind, value) when is_list(value), do: List.to_string(value)
+  defp bitstring_token_display(kind, _value), do: Atom.to_string(kind)
+
+  defp syntax_error_before(meta, token_value) when is_binary(token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
   end
 
   defp sync_to_bitstring_separator(state, cursor) do

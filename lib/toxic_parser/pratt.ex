@@ -538,7 +538,12 @@ defmodule ToxicParser.Pratt do
       {:eof, state, cursor} ->
         meta = TokenAdapter.token_meta(capture_token)
         range_meta = TokenAdapter.meta(capture_token)
-        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+
+        if state.mode == :tolerant do
+          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+        else
+          {:error, syntax_error_before(meta), state, cursor, log}
+        end
 
       {:error, diag, state, cursor} ->
         meta = TokenAdapter.token_meta(capture_token)
@@ -638,142 +643,223 @@ defmodule ToxicParser.Pratt do
        ) do
     case TokenAdapter.next(state, cursor) do
       {:ok, {operand_kind, operand_meta, operand_value} = operand_token, state, cursor} ->
-        # Special case: ... and .. followed by pure binary operator or terminator should be standalone
-        # e.g., "... * 1" should parse as (* (...) 1), not (... *)
-        # e.g., "fn -> ... end" - the ... before end should be standalone
-        # BUT: dual_op (+/-) after ellipsis should be unary, not binary
-        # e.g., "... + 1 * 2" should parse as "...((+1) * 2)" not "(... + 1) * 2"
-        ellipsis_terminators = [
-          :end,
-          :do,
-          :eol,
-          :";",
-          :")",
-          :"]",
-          :"}",
-          :">>",
-          :end_interpolation,
-          :",",
-          :when_op,
-          :stab_op,
-          :block_identifier
-        ]
-
-        # dual_op can be unary (+/-), ternary_op can be unary (//)
-        # so they should NOT trigger standalone ellipsis
-        is_pure_binary_op =
-          operand_kind not in [:dual_op, :ternary_op] and
-            precedence_binary(operand_kind) != nil
-
-        if op_kind in [:ellipsis_op, :range_op] and
-             (is_pure_binary_op or operand_kind in ellipsis_terminators) do
-          ast = {op_value, TokenAdapter.token_meta(op_token), []}
-          {state, cursor} = TokenAdapter.pushback(state, cursor, operand_token)
-          {:ok, ast, state, cursor, log}
-          # Special case: at_op + bracket_identifier (e.g., @foo[1])
-          # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
-          # The @foo becomes the subject, bracket access is handled at outer level
+        if operand_kind == :">>" and op_kind not in [:ellipsis_op, :range_op] do
+          meta = TokenAdapter.token_meta(operand_token)
+          range_meta = TokenAdapter.meta(operand_token)
+          reason = syntax_error_before(meta, "'>>'")
+          maybe_recover_error(reason, state, cursor, log, meta, range_meta)
         else
-          if op_kind == :at_op do
-            at_bp =
-              case precedence_unary(:at_op) do
-                {bp, _assoc} -> bp
-                _ -> 320
-              end
+          # Special case: ... and .. followed by pure binary operator or terminator should be standalone
+          # e.g., "... * 1" should parse as (* (...) 1), not (... *)
+          # e.g., "fn -> ... end" - the ... before end should be standalone
+          # BUT: dual_op (+/-) after ellipsis should be unary, not binary
+          # e.g., "... + 1 * 2" should parse as "...((+1) * 2)" not "(... + 1) * 2"
+          ellipsis_terminators = [
+            :end,
+            :do,
+            :eol,
+            :";",
+            :")",
+            :"]",
+            :"}",
+            :">>",
+            :end_interpolation,
+            :",",
+            :when_op,
+            :stab_op,
+            :block_identifier
+          ]
 
-            if operand_kind == :bracket_identifier do
-              op = op_value
-              meta = TokenAdapter.token_meta(op_token)
-              # Use raw meta tuple (not keyword list) for from_token compatibility
-              operand =
-                Builder.Helpers.from_token({:identifier, operand_meta, operand_value})
+          # dual_op can be unary (+/-), ternary_op can be unary (//)
+          # so they should NOT trigger standalone ellipsis
+          is_pure_binary_op =
+            operand_kind not in [:dual_op, :ternary_op] and
+              precedence_binary(operand_kind) != nil
 
-              ast = Builder.Helpers.unary(op, operand, meta)
+          if op_kind in [:ellipsis_op, :range_op] and
+               (is_pure_binary_op or operand_kind in ellipsis_terminators) do
+            ast = {op_value, TokenAdapter.token_meta(op_token), []}
+            {state, cursor} = TokenAdapter.pushback(state, cursor, operand_token)
+            {:ok, ast, state, cursor, log}
+            # Special case: at_op + bracket_identifier (e.g., @foo[1])
+            # Grammar: bracket_at_expr -> at_op_eol dot_bracket_identifier bracket_arg
+            # The @foo becomes the subject, bracket access is handled at outer level
+          else
+            if op_kind == :at_op do
+              at_bp =
+                case precedence_unary(:at_op) do
+                  {bp, _assoc} -> bp
+                  _ -> 320
+                end
 
-              case Cursor.peek(cursor) do
-                {:ok, {:"[", _, _}, cursor} ->
-                  led_bracket(ast, state, cursor, log, at_bp, context, %ParseOpts{})
+              if operand_kind == :bracket_identifier do
+                op = op_value
+                meta = TokenAdapter.token_meta(op_token)
+                # Use raw meta tuple (not keyword list) for from_token compatibility
+                operand =
+                  Builder.Helpers.from_token({:identifier, operand_meta, operand_value})
 
-                {:ok, _, cursor} ->
-                  {:ok, ast, state, cursor, log}
+                ast = Builder.Helpers.unary(op, operand, meta)
+
+                case Cursor.peek(cursor) do
+                  {:ok, {:"[", _, _}, cursor} ->
+                    led_bracket(ast, state, cursor, log, at_bp, context, %ParseOpts{})
+
+                  {:ok, _, cursor} ->
+                    {:ok, ast, state, cursor, log}
+                end
+              else
+                operand_token_for_parse = operand_token
+
+                operand_ctx = unary_operand_context(context)
+                operand_min_bp = at_bp
+
+                {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+                unary_opts = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
+
+                with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
+                       parse_rhs(
+                         operand_token_for_parse,
+                         checkpoint_state,
+                         cursor,
+                         operand_ctx,
+                         log,
+                         operand_min_bp,
+                         unary_opts
+                       ) do
+                  operand_result =
+                    case Cursor.peek(cursor_after_base) do
+                      # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
+                      # This matches cases like `@ @ (case ... end)[x]` where the bracket applies to the inner @,
+                      # and the outer @ wraps the whole access_expr.
+                      {:ok, {:"[", _, _}, cursor_after_base} ->
+                        if match?({:@, _, [_]}, operand_base) do
+                          with {:ok, operand_with_bracket, state_after_bracket,
+                                cursor_after_bracket, log} <-
+                                 led_bracket(
+                                   operand_base,
+                                   state_after_base,
+                                   cursor_after_base,
+                                   log,
+                                   at_bp,
+                                   operand_ctx,
+                                   unary_opts
+                                 ) do
+                            {:ok, operand_with_bracket,
+                             TokenAdapter.drop_checkpoint(state_after_bracket, ref),
+                             cursor_after_bracket, log}
+                          end
+                        else
+                          {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
+                           cursor_after_base, log}
+                        end
+
+                      {:ok, {next_tok_kind, _meta, _value}, cursor_after_base} ->
+                        if operand_ctx.allow_do_block and
+                             ExprClass.classify(operand_base) == :unmatched and
+                             not has_parens_meta?(operand_base) do
+                          case {next_tok_kind, bp(next_tok_kind)} do
+                            {_, nil} ->
+                              {:ok, operand_base,
+                               TokenAdapter.drop_checkpoint(state_after_base, ref),
+                               cursor_after_base, log}
+
+                            {kind, next_bp}
+                            when kind in [:., :dot_call_op] and next_bp < at_bp ->
+                              {:ok, operand_base,
+                               TokenAdapter.drop_checkpoint(state_after_base, ref),
+                               cursor_after_base, log}
+
+                            {_, next_bp} when next_bp < at_bp ->
+                              {state_full, cursor_full} =
+                                TokenAdapter.rewind(state_after_base, ref)
+
+                              full_unary_opts = %ParseOpts{unary_operand: true, min_bp: 0}
+
+                              with {:ok, operand_full, state_full, cursor_full, log} <-
+                                     parse_rhs(
+                                       operand_token_for_parse,
+                                       state_full,
+                                       cursor_full,
+                                       operand_ctx,
+                                       log,
+                                       0,
+                                       full_unary_opts
+                                     ) do
+                                {:ok, operand_full, state_full, cursor_full, log}
+                              end
+
+                            _ ->
+                              {:ok, operand_base,
+                               TokenAdapter.drop_checkpoint(state_after_base, ref),
+                               cursor_after_base, log}
+                          end
+                        else
+                          {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
+                           cursor_after_base, log}
+                        end
+
+                      {:eof, cursor_after_base} ->
+                        {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
+                         cursor_after_base, log}
+                    end
+
+                  with {:ok, operand, state, cursor, log} <- operand_result do
+                    op = op_value
+                    meta = TokenAdapter.token_meta(op_token)
+                    ast = Builder.Helpers.unary(op, operand, meta)
+                    {:ok, ast, state, cursor, log}
+                  end
+                end
               end
             else
-              operand_token_for_parse = operand_token
+              # Unary operands follow elixir_parser.yrl:
+              # - matched_expr -> unary_op_eol matched_expr
+              # - unmatched_expr -> unary_op_eol expr
+              # - no_parens_expr -> unary_op_eol no_parens_expr
+              operand_context = unary_operand_context(context)
 
-              operand_ctx = unary_operand_context(context)
-              operand_min_bp = at_bp
+              operand_min_bp =
+                case precedence_unary(op_kind) do
+                  {bp, _assoc} -> bp
+                  nil -> 300
+                end
 
               {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
-              unary_opts = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
+              unary_opts_operand = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
 
               with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
                      parse_rhs(
-                       operand_token_for_parse,
+                       operand_token,
                        checkpoint_state,
                        cursor,
-                       operand_ctx,
+                       operand_context,
                        log,
                        operand_min_bp,
-                       unary_opts
+                       unary_opts_operand
                      ) do
                 operand_result =
                   case Cursor.peek(cursor_after_base) do
-                    # Allow bracket access to bind inside the operand when the operand itself is an @-expr.
-                    # This matches cases like `@ @ (case ... end)[x]` where the bracket applies to the inner @,
-                    # and the outer @ wraps the whole access_expr.
-                    {:ok, {:"[", _, _}, cursor_after_base} ->
-                      if match?({:@, _, [_]}, operand_base) do
-                        with {:ok, operand_with_bracket, state_after_bracket,
-                              cursor_after_bracket, log} <-
-                               led_bracket(
-                                 operand_base,
-                                 state_after_base,
-                                 cursor_after_base,
-                                 log,
-                                 at_bp,
-                                 operand_ctx,
-                                 unary_opts
-                               ) do
-                          {:ok, operand_with_bracket,
-                           TokenAdapter.drop_checkpoint(state_after_bracket, ref),
-                           cursor_after_bracket, log}
-                        end
-                      else
-                        {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
-                         cursor_after_base, log}
-                      end
-
                     {:ok, {next_tok_kind, _meta, _value}, cursor_after_base} ->
-                      if operand_ctx.allow_do_block and
+                      if operand_context.allow_do_block and
                            ExprClass.classify(operand_base) == :unmatched and
                            not has_parens_meta?(operand_base) do
-                        case {next_tok_kind, bp(next_tok_kind)} do
-                          {_, nil} ->
-                            {:ok, operand_base,
-                             TokenAdapter.drop_checkpoint(state_after_base, ref),
-                             cursor_after_base, log}
-
-                          {kind, next_bp}
-                          when kind in [:., :dot_call_op] and next_bp < at_bp ->
-                            {:ok, operand_base,
-                             TokenAdapter.drop_checkpoint(state_after_base, ref),
-                             cursor_after_base, log}
-
-                          {_, next_bp} when next_bp < at_bp ->
+                        case bp(next_tok_kind) do
+                          next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
                             {state_full, cursor_full} =
                               TokenAdapter.rewind(state_after_base, ref)
 
-                            full_unary_opts = %ParseOpts{unary_operand: true, min_bp: 0}
+                            unary_opts_full = %ParseOpts{unary_operand: true, min_bp: 0}
 
                             with {:ok, operand_full, state_full, cursor_full, log} <-
                                    parse_rhs(
-                                     operand_token_for_parse,
+                                     operand_token,
                                      state_full,
                                      cursor_full,
-                                     operand_ctx,
+                                     operand_context,
                                      log,
                                      0,
-                                     full_unary_opts
+                                     unary_opts_full
                                    ) do
                               {:ok, operand_full, state_full, cursor_full, log}
                             end
@@ -797,85 +883,12 @@ defmodule ToxicParser.Pratt do
                   op = op_value
                   meta = TokenAdapter.token_meta(op_token)
                   ast = Builder.Helpers.unary(op, operand, meta)
-                  {:ok, ast, state, cursor, log}
+
+                  # After building the unary, continue with led() to handle trailing operators.
+                  # Use the unary's precedence (operand_min_bp) so only higher-precedence operators
+                  # can attach.
+                  led(ast, state, cursor, log, operand_min_bp, context)
                 end
-              end
-            end
-          else
-            # Unary operands follow elixir_parser.yrl:
-            # - matched_expr -> unary_op_eol matched_expr
-            # - unmatched_expr -> unary_op_eol expr
-            # - no_parens_expr -> unary_op_eol no_parens_expr
-            operand_context = unary_operand_context(context)
-
-            operand_min_bp =
-              case precedence_unary(op_kind) do
-                {bp, _assoc} -> bp
-                nil -> 300
-              end
-
-            {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
-            unary_opts_operand = %ParseOpts{unary_operand: true, min_bp: operand_min_bp}
-
-            with {:ok, operand_base, state_after_base, cursor_after_base, log} <-
-                   parse_rhs(
-                     operand_token,
-                     checkpoint_state,
-                     cursor,
-                     operand_context,
-                     log,
-                     operand_min_bp,
-                     unary_opts_operand
-                   ) do
-              operand_result =
-                case Cursor.peek(cursor_after_base) do
-                  {:ok, {next_tok_kind, _meta, _value}, cursor_after_base} ->
-                    if operand_context.allow_do_block and
-                         ExprClass.classify(operand_base) == :unmatched and
-                         not has_parens_meta?(operand_base) do
-                      case bp(next_tok_kind) do
-                        next_bp when is_integer(next_bp) and next_bp < operand_min_bp ->
-                          {state_full, cursor_full} =
-                            TokenAdapter.rewind(state_after_base, ref)
-
-                          unary_opts_full = %ParseOpts{unary_operand: true, min_bp: 0}
-
-                          with {:ok, operand_full, state_full, cursor_full, log} <-
-                                 parse_rhs(
-                                   operand_token,
-                                   state_full,
-                                   cursor_full,
-                                   operand_context,
-                                   log,
-                                   0,
-                                   unary_opts_full
-                                 ) do
-                            {:ok, operand_full, state_full, cursor_full, log}
-                          end
-
-                        _ ->
-                          {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
-                           cursor_after_base, log}
-                      end
-                    else
-                      {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
-                       cursor_after_base, log}
-                    end
-
-                  {:eof, cursor_after_base} ->
-                    {:ok, operand_base, TokenAdapter.drop_checkpoint(state_after_base, ref),
-                     cursor_after_base, log}
-                end
-
-              with {:ok, operand, state, cursor, log} <- operand_result do
-                op = op_value
-                meta = TokenAdapter.token_meta(op_token)
-                ast = Builder.Helpers.unary(op, operand, meta)
-
-                # After building the unary, continue with led() to handle trailing operators.
-                # Use the unary's precedence (operand_min_bp) so only higher-precedence operators
-                # can attach.
-                led(ast, state, cursor, log, operand_min_bp, context)
               end
             end
           end
@@ -889,7 +902,12 @@ defmodule ToxicParser.Pratt do
         else
           meta = TokenAdapter.token_meta(op_token)
           range_meta = TokenAdapter.meta(op_token)
-          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+
+          if state.mode == :tolerant do
+            maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+          else
+            {:error, syntax_error_before(meta), state, cursor, log}
+          end
         end
 
       {:error, diag, state, cursor} ->
@@ -928,7 +946,12 @@ defmodule ToxicParser.Pratt do
       {:eof, state, cursor} ->
         meta = TokenAdapter.token_meta(op_token)
         range_meta = TokenAdapter.meta(op_token)
-        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+
+        if state.mode == :tolerant do
+          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+        else
+          {:error, syntax_error_before(meta), state, cursor, log}
+        end
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
@@ -2317,7 +2340,12 @@ defmodule ToxicParser.Pratt do
       {:eof, state, cursor} ->
         meta = TokenAdapter.token_meta(op_token)
         range_meta = TokenAdapter.meta(op_token)
-        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+
+        if state.mode == :tolerant do
+          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+        else
+          {:error, syntax_error_before(meta), state, cursor, log}
+        end
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
@@ -2440,7 +2468,12 @@ defmodule ToxicParser.Pratt do
       {:eof, state, cursor} ->
         meta = TokenAdapter.token_meta(op_token)
         range_meta = TokenAdapter.meta(op_token)
-        maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+
+        if state.mode == :tolerant do
+          maybe_recover_error(:unexpected_eof, state, cursor, log, meta, range_meta)
+        else
+          {:error, syntax_error_before(meta), state, cursor, log}
+        end
 
       {:error, diag, state, cursor} ->
         {:error, diag, state, cursor, log}
