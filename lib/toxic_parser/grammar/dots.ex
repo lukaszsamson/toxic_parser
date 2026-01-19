@@ -569,8 +569,7 @@ defmodule ToxicParser.Grammar.Dots do
 
     {line, column, _} = ErrorHelpers.error_anchor(start_meta, state, cursor)
 
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    error_meta = ErrorHelpers.build_error_meta(line, column, synthetic?)
     Builder.Helpers.error(payload, error_meta)
   end
 
@@ -583,37 +582,7 @@ defmodule ToxicParser.Grammar.Dots do
     do: {:error, reason, state, cursor, log}
 
   defp build_member_error_node(reason, meta, %State{} = state, cursor) do
-    {line, column, synthetic?} = ErrorHelpers.error_anchor(meta, state, cursor)
-
-    {id, state} = State.next_diagnostic_id(state)
-
-    diagnostic =
-      Error.from_parser(nil, reason,
-        line_index: state.line_index,
-        source: state.source,
-        position: {{line, column}, {line, column}}
-      )
-      |> Error.annotate(%{
-        id: id,
-        anchor: %{kind: :error_node, path: [], note: nil},
-        synthetic?: synthetic?,
-        lexer_error_code: nil
-      })
-
-    diagnostic = %{diagnostic | details: Map.put(diagnostic.details, :source, :grammar)}
-    state = %{state | diagnostics: [diagnostic | state.diagnostics]}
-
-    payload =
-      Error.error_node_payload(diagnostic,
-        kind: :invalid,
-        original: reason,
-        synthetic?: synthetic?
-      )
-
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
-
-    {Builder.Helpers.error(payload, error_meta), state}
+    ErrorHelpers.build_error_node(:invalid, reason, meta, state, cursor)
   end
 
 end

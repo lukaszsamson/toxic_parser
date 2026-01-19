@@ -589,8 +589,7 @@ defmodule ToxicParser.Grammar.Strings do
 
     {line, column, _} = ErrorHelpers.error_anchor(start_meta, state, cursor)
 
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    error_meta = ErrorHelpers.build_error_meta(line, column, synthetic?)
     Builder.Helpers.error(payload, error_meta)
   end
 
@@ -607,8 +606,7 @@ defmodule ToxicParser.Grammar.Strings do
 
     {line, column, _} = error_anchor(start_meta, nil, cursor)
 
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    error_meta = ErrorHelpers.build_error_meta(line, column, synthetic?)
     Builder.Helpers.error(payload, error_meta)
   end
 
@@ -844,8 +842,7 @@ defmodule ToxicParser.Grammar.Strings do
         synthetic?: synthetic?
       )
 
-    error_meta =
-      [line: line, column: column, toxic: %{synthetic?: synthetic?, anchor: %{line: line, column: column}}]
+    error_meta = ErrorHelpers.build_error_meta(line, column, synthetic?)
     {Builder.Helpers.error(payload, error_meta), state}
   end
 
