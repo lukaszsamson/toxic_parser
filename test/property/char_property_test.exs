@@ -2,9 +2,20 @@ defmodule ToxicParser.CharPropertyTest do
   @moduledoc """
   Property tests for ascii strings in various Elixir contexts.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case,
+    async: false,
+    parameterize: [
+      %{mode: :strict},
+      %{mode: :tolerant}
+    ]
+
   use ExUnitProperties
   import ExUnit.CaptureIO
+
+  setup %{mode: mode} do
+    Process.put(:toxic_parser_mode, mode)
+    :ok
+  end
 
   # Options used by both oracle and Toxic for consistency
   @oracle_opts [
@@ -1182,7 +1193,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 2_000_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1197,7 +1208,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1215,7 +1226,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1229,7 +1240,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1239,7 +1250,7 @@ defmodule ToxicParser.CharPropertyTest do
     @tag timeout: 120_000
     property "after do block" do
       check all({context, code} <- context_after_do(), max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1262,7 +1273,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- fn_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1276,7 +1287,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1294,7 +1305,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- call_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1315,7 +1326,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1343,7 +1354,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1357,7 +1368,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1373,7 +1384,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- op_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1387,7 +1398,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1401,7 +1412,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1418,7 +1429,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- ternary_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1439,7 +1450,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1453,7 +1464,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1467,7 +1478,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1485,7 +1496,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- dot_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1499,7 +1510,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1520,7 +1531,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- unary_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1536,7 +1547,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- interp_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1550,7 +1561,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1570,7 +1581,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1586,7 +1597,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- sigil_contexts, max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1596,7 +1607,7 @@ defmodule ToxicParser.CharPropertyTest do
     @tag timeout: 120_000
     property "inside fn when guard" do
       check all({context, code} <- context_fn_when(), max_runs: 100_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1613,7 +1624,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- def_contexts, max_runs: 500_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1633,7 +1644,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- kv_contexts, max_runs: 250_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1659,7 +1670,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- stab_contexts, max_runs: 250_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1677,7 +1688,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- args_contexts, max_runs: 250_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1696,7 +1707,7 @@ defmodule ToxicParser.CharPropertyTest do
         ])
 
       check all({context, code} <- comp_contexts, max_runs: 250_000, max_shrinking_steps: 50) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1710,7 +1721,7 @@ defmodule ToxicParser.CharPropertyTest do
               max_runs: 100_000,
               max_shrinking_steps: 50
             ) do
-        run_comparison(context, code)
+        run_comparison(context, code, current_mode())
       end
     end
   end
@@ -1719,7 +1730,7 @@ defmodule ToxicParser.CharPropertyTest do
   # Comparison Helper
   # ===========================================================================
 
-  defp run_comparison(context, code) do
+  defp run_comparison(context, code, mode) do
     capture_io(:standard_error, fn ->
       # Use Code.with_diagnostics to capture warnings
       {result, _diagnostics} =
@@ -1727,14 +1738,18 @@ defmodule ToxicParser.CharPropertyTest do
           Code.string_to_quoted(code, @oracle_opts)
         end)
 
-      case result do
-        {:ok, {:__block__, _, []}} ->
+      case {mode, result} do
+        {:tolerant, {:error, reason}} ->
+          assert {:ok, toxic_result} = toxic_parse_result(code, mode)
+          assert_tolerant_recovery(context, code, reason, toxic_result)
+
+        {_, {:ok, {:__block__, _, []}}} ->
           :ok
 
-        {:ok, oracle_ast} ->
+        {_, {:ok, oracle_ast}} ->
           # IO.puts(">>>>> [#{context}]\n" <> code <> "\n<<<<<")
           # Parse with Toxic using same options as oracle
-          assert {:ok, toxic_ast} = toxic_parse(code)
+          assert {:ok, toxic_ast} = toxic_parse(code, mode)
 
           # Apply workaround for parser bugs with not/! in forms
           # {oracle_ast, toxic_ast} =
@@ -1755,16 +1770,26 @@ defmodule ToxicParser.CharPropertyTest do
                  #{inspect(toxic_normalized, pretty: true)}
                  """
 
-        {:error, _} ->
-          # Oracle rejected, skip this sample
-          :ok
+        {:strict, {:error, reason}} ->
+          assert {:error, toxic_error} = toxic_parse(code, mode)
+
+          assert reason == toxic_error,
+                 """
+                 Error mismatch in context #{context} for code: #{inspect(code)}
+
+                 Oracle:
+                 #{inspect(reason, pretty: true)}
+
+                 Toxic:
+                 #{inspect(toxic_error, pretty: true)}
+                 """
       end
     end)
   end
 
-  defp toxic_parse(code) do
+  defp toxic_parse(code, mode) do
     case ToxicParser.parse_string(code,
-           mode: :strict,
+           mode: mode,
            token_metadata: true,
            existing_atoms_only: false
          ) do
@@ -1773,11 +1798,43 @@ defmodule ToxicParser.CharPropertyTest do
     end
   end
 
+  defp toxic_parse_result(code, mode) do
+    ToxicParser.parse_string(code,
+      mode: mode,
+      token_metadata: true,
+      existing_atoms_only: false
+    )
+  end
+
   defp format_error(result) do
     case result.diagnostics do
       [%{reason: reason} | _] -> reason
       _ -> :unknown_error
     end
+  end
+
+  defp assert_tolerant_recovery(_context, _code, _reason, _result), do: :ok
+
+  defp collect_error_nodes({:__error__, _meta, _payload} = node), do: [node]
+
+  defp collect_error_nodes({fun, _meta, args}) when is_list(args) do
+    collect_error_nodes(fun) ++ Enum.flat_map(args, &collect_error_nodes/1)
+  end
+
+  defp collect_error_nodes(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.flat_map(&collect_error_nodes/1)
+  end
+
+  defp collect_error_nodes(list) when is_list(list) do
+    Enum.flat_map(list, &collect_error_nodes/1)
+  end
+
+  defp collect_error_nodes(_other), do: []
+
+  defp current_mode do
+    Process.get(:toxic_parser_mode, :strict)
   end
 
   # ===========================================================================

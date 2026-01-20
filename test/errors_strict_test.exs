@@ -456,6 +456,90 @@ defmodule ToxicParser.ErrorsStrictTest do
     test "sigil uppercase invalid bidi delimiter" do
       assert_error_conforms("~S$\u202A$")
     end
+
+    test "property 1" do
+      assert_error_conforms("foo do :ok end  do :error end")
+    end
+
+    test "property 2" do
+      assert_error_conforms("for x <- [1], 0@, do: x")
+    end
+
+    test "property 3" do
+      assert_error_conforms("%{x | }")
+    end
+
+    test "property 4" do
+      assert_error_conforms("\"\#{!}\"")
+    end
+
+    test "property 5" do
+      assert_error_conforms("-(b")
+    end
+
+    test "property 6" do
+      assert_error_conforms("case x do 1 -> @ end")
+    end
+
+    test "property 7" do
+      assert_error_conforms("foo 1, (b")
+    end
+
+    test "property 8" do
+      assert_error_conforms("[a: ]")
+    end
+
+    test "property 9" do
+      assert_error_conforms("<<a::0!>>")
+    end
+
+    test "property 10" do
+      assert_error_conforms("fn x when { -> 1 end")
+    end
+
+    test "property 11" do
+      assert_error_conforms("fn () when / -> :ok end")
+    end
+
+    test "property 12" do
+      assert_error_conforms("A.0.foo()")
+    end
+
+    test "property 13" do
+      assert_error_conforms("[\"foo\#{i<}\": 1]")
+    end
+
+    test "property 14" do
+      assert_error_conforms("<<a, s:  >>")
+    end
+
+    test "property 15" do
+      assert_error_conforms("x + { * y")
+    end
+
+    test "property 16" do
+      assert_error_conforms("foo do :ok end 0")
+    end
+
+    test "property 17" do
+      assert_error_conforms("{/")
+    end
+
+    test "property 18" do
+      assert_error_conforms("foo do ! end")
+    end
+
+    test "property 19" do
+      assert_error_conforms("%e+{}")
+    end
+
+    test "property 20" do
+      assert_error_conforms(":ok |> (b")
+    end
+
+    test "property 21" do
+      assert_error_conforms("foo(a: 1, 0)")
+    end
   end
 
   defp assert_error_conforms(code, opts \\ []) do

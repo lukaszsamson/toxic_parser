@@ -329,7 +329,19 @@ defmodule ToxicParser.TolerantModeTest do
       name: "map update with empty kw value",
       code: "%{var |   }",
       no_following: true
-    }
+    },
+    %{name: "property test 1", code: "foo %"},
+    %{name: "property test 2", code: "x..%e[//y"},
+    %{name: "property test 3", code: "fn a, % end"},
+    %{name: "property test 4", code: "<<a, s: % >>"},
+    %{name: "property test 5", code: "f g %e[, h"},
+    %{name: "property test 6", code: "foo.%"},
+    %{name: "property test 7", code: "%{x | e|e}"},
+    %{name: "property test 8", code: "fn x when fn{'% -> 1 end"},
+    %{name: "property test 9", code: "%{x | l|n}"},
+    %{name: "property test 10", code: "with x <- (? do x end"},
+    %{name: "property test 11", code: "[\"foo\#{t^\"}\": 1]"},
+    %{name: "property test 12", code: "-(b"},
   ]
 
   for %{name: name, code: code} = data <- @error_cases do
