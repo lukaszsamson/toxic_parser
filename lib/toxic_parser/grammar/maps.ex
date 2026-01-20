@@ -687,6 +687,14 @@ defmodule ToxicParser.Grammar.Maps do
           {_, {:ok, _, cursor}} ->
             state = TokenAdapter.drop_checkpoint(state, reparse_ref)
             handle_map_update_after_base_expr(base_expr, state, cursor, log)
+
+          {_, {:eof, cursor}} ->
+            state = TokenAdapter.drop_checkpoint(state, reparse_ref)
+            {:error, :unexpected_eof, state, cursor, log}
+
+          {_, {:error, diag, cursor}} ->
+            state = TokenAdapter.drop_checkpoint(state, reparse_ref)
+            {:error, diag, state, cursor, log}
         end
 
       {:keyword_key, _, _, state, cursor, _} ->
@@ -732,9 +740,14 @@ defmodule ToxicParser.Grammar.Maps do
             {state, cursor} = EOE.skip(state, cursor)
             parse_map_update_trailing_entries(base, pipe_meta, rhs_entries, state, cursor, log)
 
-          _ ->
-            raise "dead code"
-            {:not_update, state, cursor}
+          {:eof, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
+
+          {:error, diag, cursor} ->
+            {:error, diag, state, cursor, log}
+
+          {:ok, _, cursor} ->
+            {:error, :expected_closing_brace, state, cursor, log}
         end
 
       :not_update ->
@@ -742,7 +755,6 @@ defmodule ToxicParser.Grammar.Maps do
 
         case Cursor.peek(cursor) do
           {:ok, {:pipe_op, _, _} = pipe_tok, cursor} ->
-            raise "dead code"
             {:ok, _pipe, state, cursor} = TokenAdapter.next(state, cursor)
             {state, cursor, newlines_after_pipe} = EOE.skip_newlines_only(state, cursor, 0)
             pipe_meta_kw = token_meta_with_newlines(pipe_tok, max(newlines, newlines_after_pipe))
@@ -1143,16 +1155,21 @@ defmodule ToxicParser.Grammar.Maps do
             {state, cursor} = EOE.skip(state, cursor)
 
             case Cursor.peek(cursor) do
-              {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-                {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-                close_meta = Helpers.token_meta(close_tok)
-                update_ast = map_update_ast(pipe_meta, base, kw_list)
-                {:ok, update_ast, close_meta, state, cursor, log}
+          {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+            {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+            close_meta = Helpers.token_meta(close_tok)
+            update_ast = map_update_ast(pipe_meta, base, kw_list)
+            {:ok, update_ast, close_meta, state, cursor, log}
 
-              _ ->
-                raise "dead code"
-                {:not_update, state, cursor}
-            end
+          {:eof, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
+
+          {:error, diag, cursor} ->
+            {:error, diag, state, cursor, log}
+
+          {:ok, _, cursor} ->
+            {:error, :expected_closing_brace, state, cursor, log}
+        end
 
           {:no_kw, state, cursor, log} ->
             # assoc_expr(s): %{base | k => v, ...}

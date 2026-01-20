@@ -123,7 +123,13 @@ defmodule ToxicParser.TolerantModeTest do
     "map update with multiple kw entries",
     "map update with single kw entry",
     "struct update with kw entries",
-    "nested map update"
+    "nested map update",
+    "incomplete map update with module attr truncated field",
+    "incomplete struct update truncated value",
+    "incomplete map update truncated field",
+    "incomplete struct update truncated field",
+    "pin operator without expression in case",
+    "map update with empty kw value"
   ]
 
   @error_cases [
@@ -293,6 +299,36 @@ defmodule ToxicParser.TolerantModeTest do
       code: "%{a | b: %{c | d: 1}}",
       no_following: true,
       valid?: true
+    },
+    # Incomplete map/struct update cases from ElixirSense completion scenarios
+    %{
+      name: "incomplete map update with module attr truncated field",
+      code: "%{@str | fiel",
+      no_following: true
+    },
+    %{
+      name: "incomplete struct update truncated value",
+      code: "%MyServer{some_arg | field_1: ot",
+      no_following: true
+    },
+    %{
+      name: "incomplete map update truncated field",
+      code: "%{some_arg | fiel",
+      no_following: true
+    },
+    %{
+      name: "incomplete struct update truncated field",
+      code: "%MyServer{some_arg | fiel",
+      no_following: true
+    },
+    %{
+      name: "pin operator without expression in case",
+      code: "case x do\n  {^} -> :ok\nend"
+    },
+    %{
+      name: "map update with empty kw value",
+      code: "%{var |   }",
+      no_following: true
     }
   ]
 
@@ -402,6 +438,7 @@ defmodule ToxicParser.TolerantModeTest do
       "interpolation missing terminator with end keyword",
       "charlist interpolation missing terminator with end keyword",
       "keyword value missing at eof",
+      "pin operator without expression in case",
       "capture missing int",
       "fn missing end",
       "do block missing end",
@@ -425,7 +462,12 @@ defmodule ToxicParser.TolerantModeTest do
       "map kw tail unexpected token",
       "no-parens kw list missing item",
       "no-parens kw list trailing comma eof",
-      "bitstring invalid expr"
+      "bitstring invalid expr",
+      "incomplete map update with module attr truncated field",
+      "incomplete struct update truncated value",
+      "incomplete map update truncated field",
+      "incomplete struct update truncated field",
+      "map update with empty kw value"
     ]
 
     cond do

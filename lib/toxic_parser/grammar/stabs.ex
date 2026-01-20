@@ -373,6 +373,12 @@ defmodule ToxicParser.Grammar.Stabs do
       {:ok, _, cursor} ->
         # No stab operator - not a stab clause
         {:not_stab, state, cursor, log}
+
+      {:eof, cursor} ->
+        {:error, :unexpected_eof, state, cursor, log}
+
+      {:error, diag, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -889,6 +895,12 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
 
         {:ok, _, cursor} ->
+          {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
+
+        {:eof, cursor} ->
+          {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
+
+        {:error, _diag, cursor} ->
           {:ok, Enum.reverse([expr | acc]), state_after_eoe, cursor, log}
       end
     end
