@@ -5,7 +5,7 @@ defmodule ToxicParser.Builder do
 
   alias ToxicParser.EventLog
 
-  @type error_node :: {:__error__, map(), map()}
+  @type error_node :: {:__error__, map(), [map()]}
 
   @callback init(keyword()) :: any()
   @callback handle_event(EventLog.event(), any()) :: any()
@@ -28,6 +28,6 @@ defmodule ToxicParser.Builder do
   """
   @spec error_node(map(), map()) :: error_node()
   def error_node(meta, payload) when is_map(meta) and is_map(payload) do
-    {:__error__, meta, payload}
+    {:__error__, meta, [payload]}
   end
 end

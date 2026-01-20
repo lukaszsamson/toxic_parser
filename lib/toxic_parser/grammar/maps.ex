@@ -924,7 +924,7 @@ defmodule ToxicParser.Grammar.Maps do
 
   defp kw_identifier_error_in_children?(_), do: false
 
-  defp kw_identifier_error_node?({:__error__, _meta, %{original: {_, message, token}}})
+  defp kw_identifier_error_node?({:__error__, _meta, [%{original: {_, message, token}}]})
        when is_binary(token) do
     token_has_colon? = String.contains?(token, ":")
 

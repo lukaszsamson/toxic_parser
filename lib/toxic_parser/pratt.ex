@@ -1541,10 +1541,15 @@ defmodule ToxicParser.Pratt do
                   {:error, reason} -> {:error, reason}
                 end
 
+              # Preserve error nodes from member parsing.
               # Call with args: {name, meta, args}
               # Bracket access is always allowed after a call result (no whitespace check needed)
               {name, meta, args} when is_list(args) ->
-                {:ok, {{{:., dot_meta, [left, name]}, meta, args}, false, true}}
+                if name == :__error__ and Keyword.has_key?(meta, :toxic) do
+                  {:ok, {rhs, false, false}}
+                else
+                  {:ok, {{{:., dot_meta, [left, name]}, meta, args}, false, true}}
+                end
 
               # Other AST node
               other ->
@@ -3049,10 +3054,15 @@ defmodule ToxicParser.Pratt do
               {:__aliases__, rhs_meta, [rhs_alias]} ->
                 build_dot_alias(left, rhs_alias, rhs_meta, dot_meta)
 
+              # Preserve error nodes from member parsing.
               # Paren call on RHS (tokenized as dot_paren_identifier)
               # Build as a call on the dotted target: Foo.bar() => {{:., ..., [Foo, :bar]}, meta, args}
               {name, meta, args} when is_atom(name) and is_list(args) ->
-                {:ok, {{:., dot_meta, [left, name]}, meta, args}}
+                if name == :__error__ and Keyword.has_key?(meta, :toxic) do
+                  {:ok, rhs}
+                else
+                  {:ok, {{:., dot_meta, [left, name]}, meta, args}}
+                end
 
               # Simple identifier with :no_parens_call flag - treat same as simple identifier
               # In struct base context, { is the struct body, not a no-parens call argument

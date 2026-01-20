@@ -361,11 +361,12 @@ defmodule ToxicParser.TolerantModeTest do
       else
         assert error_nodes != []
 
-        {_, error_meta, payload} = hd(error_nodes)
-        assert_error_payload(payload)
-        assert_error_meta_consistency(error_meta, payload)
+      {_, error_meta, payloads} = hd(error_nodes)
+      payload = error_payload(payloads)
+      assert_error_payload(payload)
+      assert_error_meta_consistency(error_meta, payload)
 
-        diagnostic = find_diagnostic(result, payload.diag_id)
+      diagnostic = find_diagnostic(result, payload.diag_id)
         assert diagnostic != nil
         assert payload.phase == diagnostic.phase
         assert payload.diag_id == diagnostic.details[:id]
@@ -412,6 +413,9 @@ defmodule ToxicParser.TolerantModeTest do
   defp find_diagnostic(%Result{diagnostics: diagnostics}, diag_id) do
     Enum.find(diagnostics, fn diag -> diag.details[:id] == diag_id end)
   end
+
+  defp error_payload([payload]), do: payload
+  defp error_payload(payload), do: payload
 
   defp assert_error_payload(payload) do
     assert is_map(payload)

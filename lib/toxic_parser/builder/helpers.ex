@@ -78,7 +78,7 @@ defmodule ToxicParser.Builder.Helpers do
   @doc "Builds an error node payload."
   @spec error(term(), keyword()) :: Macro.t()
   def error(payload, meta \\ []) do
-    {:__error__, meta, payload}
+    {:__error__, meta, [payload]}
   end
 
   @doc """
