@@ -5,7 +5,6 @@ defmodule ToxicParser.TolerantModeTest do
   alias ToxicParser.Result
 
   @default_opts [columns: true, token_metadata: true, emit_warnings: false]
-  @moduletag :skip
   @enabled_cases [
     "unexpected closer",
     "unexpected end keyword",
@@ -400,6 +399,9 @@ defmodule ToxicParser.TolerantModeTest do
 
     no_following_names = [
       "kw identifier at expression position",
+      "interpolation missing terminator with end keyword",
+      "charlist interpolation missing terminator with end keyword",
+      "keyword value missing at eof",
       "capture missing int",
       "fn missing end",
       "do block missing end",

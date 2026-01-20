@@ -729,6 +729,12 @@ defmodule ToxicParser.Grammar.Keywords do
 
           {:ok, _, cursor} ->
             {:ok, Enum.reverse([pair | acc]), state, cursor, log}
+
+          {:eof, cursor} ->
+            {:error, :unexpected_eof, state, cursor, log}
+
+          {:error, diag, cursor} ->
+            {:error, diag, state, cursor, log}
         end
 
       other ->

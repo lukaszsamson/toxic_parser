@@ -1287,6 +1287,12 @@ defmodule ToxicParser.Grammar.Stabs do
 
       {:ok, _, cursor} ->
         {expr, state, cursor}
+
+      {:eof, cursor} ->
+        {expr, state, cursor}
+
+      {:error, _diag, cursor} ->
+        {expr, state, cursor}
     end
   end
 
