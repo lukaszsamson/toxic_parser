@@ -314,7 +314,8 @@ defmodule ToxicParser.Grammar.Expressions do
 
   # Annotate an expression with end_of_expression metadata if followed by separator.
   # This implements the `annotate_eoe` pattern from elixir_parser.yrl.
-  defp maybe_annotate_eoe(ast, state, cursor) do
+  @doc false
+  def maybe_annotate_eoe(ast, state, cursor) do
     case Cursor.peek(cursor) do
       {:ok, {kind, _meta, _value} = sep_token, cursor} when kind in [:eol, :";"] ->
         sep_meta = EOE.build_sep_meta(sep_token)

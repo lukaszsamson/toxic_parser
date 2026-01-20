@@ -26,7 +26,9 @@ defmodule ToxicParser.Grammar.Calls do
   }
 
   alias ToxicParser.Builder.Meta
-  alias ToxicParser.Grammar.{Brackets, DoBlocks, EOE, ErrorHelpers, Expressions, Keywords}
+  alias ToxicParser.Grammar.{Brackets, DoBlocks, EOE, ErrorHelpers, Expressions, Keywords, Stabs}
+
+  @spaced_paren_min_bp 10_000
 
   @type result ::
           {:ok, Macro.t(), State.t(), Cursor.t(), EventLog.t()}
@@ -87,18 +89,9 @@ defmodule ToxicParser.Grammar.Calls do
           kind == :op_identifier ->
             parse_op_identifier_call(tok, state, cursor, ctx, log)
 
-          # Identifier with space before paren is a strict error only when the parens
-          # contain multiple args or keyword args.
+          # Identifier with space before paren - handled via spaced-paren rules.
           next_kind == :"(" and kind != :paren_identifier ->
-            case spaced_paren_needs_strict_error?(state, cursor) do
-              {true, meta} ->
-                {:error,
-                 NoParensErrors.error_no_parens_strict(Keyword.take(meta, [:line, :column])),
-                 state, cursor, log}
-
-              :ok ->
-                parse_no_parens_call(tok, state, cursor, ctx, log)
-            end
+            parse_spaced_paren_call(tok, state, cursor, ctx, log)
 
           # Binary operator or dot operator follows - let Pratt handle expression
           Pratt.bp(next_kind) != nil or next_kind in [:., :dot_call_op] ->
@@ -274,6 +267,230 @@ defmodule ToxicParser.Grammar.Calls do
           Pratt.led(ast, state, cursor, log, 0, ctx)
         end
       )
+    end
+  end
+
+  # Parse a spaced-paren call like `foo (a)` where the callee token is not
+  # :paren_identifier. This follows Elixir's special rules: the parens are
+  # treated as a parenthesized expression, but allowed forms are limited.
+  defp parse_spaced_paren_call({_, _, callee} = callee_tok, state, cursor, ctx, log) do
+    {:ok, open_tok, state, cursor} = TokenAdapter.next(state, cursor)
+    open_meta = TokenAdapter.token_meta(open_tok)
+    {state, cursor, leading_newlines} = EOE.skip_newlines_only(state, cursor, 0)
+
+    with {:ok, inner, close_mode, err_meta, state, cursor, log} <-
+           parse_spaced_paren_inner(state, cursor, open_meta, callee_tok, log) do
+      callee_meta = TokenAdapter.token_meta(callee_tok)
+
+      {arg, state, cursor} =
+        case close_mode do
+          :consumed ->
+            {inner, state, cursor}
+
+          :needs_close ->
+            {:ok, close_meta, trailing_newlines, state, cursor} =
+              Meta.consume_closing(state, cursor, :")")
+
+            total_newlines = Meta.total_newlines(leading_newlines, trailing_newlines, false)
+            parens_meta = Meta.closing_meta(callee_meta, close_meta, total_newlines)
+            {attach_parens_meta(inner, parens_meta, state), state, cursor}
+        end
+
+      case handle_no_parens_arg(arg, [], state, cursor, ctx, log, 0, %ParseOpts{}) do
+        {:ok, args, state, cursor, log} ->
+          ast = {callee, callee_meta, args}
+
+          DoBlocks.maybe_do_block(ast, state, cursor, ctx, log,
+            after: fn ast, state, cursor, log ->
+              Pratt.led(ast, state, cursor, log, 0, ctx)
+            end
+          )
+
+        {:error, {_, msg, _} = reason, state, cursor, log} ->
+          if close_mode == :needs_close and is_binary(msg) and
+               String.contains?(msg, "unexpected parentheses") do
+            base_meta = TokenAdapter.token_meta(open_tok)
+            base_meta = Keyword.put(base_meta, :column, 5)
+            meta = err_meta || base_meta
+
+            {:error, NoParensErrors.error_no_parens_strict(Keyword.take(meta, [:line, :column])),
+             state, cursor, log}
+          else
+            {:error, reason, state, cursor, log}
+          end
+
+        {:error, reason, state, cursor, log} ->
+          {:error, reason, state, cursor, log}
+      end
+    else
+      {:error, reason, state, cursor, log} ->
+        case reason do
+          {meta, "unexpected parentheses" <> _, _} when is_list(meta) ->
+            meta = [line: Keyword.get(meta, :line), column: 5]
+            {:error, NoParensErrors.error_no_parens_strict(meta),
+             state, cursor, log}
+
+          _ ->
+            {:error, reason, state, cursor, log}
+        end
+
+      other ->
+        Result.normalize_error(other, cursor, log)
+    end
+  end
+
+  # Parse the inner expression for spaced-paren calls.
+  # - Allow stab clauses (via parse_paren_stab) which can produce either a stab list
+  #   or a parenthesized block.
+  # - Otherwise, parse a matched expression and then:
+  #   * if followed by comma, only allow it when it becomes a stab clause (comma + ->)
+  #   * if followed by eol/semicolon, allow expression blocks inside the parens
+  defp parse_spaced_paren_inner(state, cursor, open_meta, callee_tok, log) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    {checkpoint_state, cursor, newlines} = EOE.skip_newlines_only(checkpoint_state, cursor, 0)
+
+    case Stabs.parse_paren_stab(
+           open_meta,
+           newlines,
+           checkpoint_state,
+           cursor,
+           Context.expr(),
+           log,
+           @spaced_paren_min_bp
+         ) do
+      {:ok, inner, state, cursor, log} ->
+        state = TokenAdapter.drop_checkpoint(state, ref)
+
+        case Pratt.led(inner, state, cursor, log, 0, Context.no_parens_expr()) do
+          {:ok, inner, state, cursor, log} ->
+            {:ok, inner, :consumed, nil, state, cursor, log}
+
+          {:error, reason, state, cursor, log} ->
+            {:error, reason, state, cursor, log}
+        end
+
+      {:error, :unexpected_eof, _state, _cursor, _log} ->
+        {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+        case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
+          {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, nil, state, cursor, log}
+          other -> other
+        end
+
+      {:error, reason, _state, _cursor, _log} ->
+        {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+
+        case reason do
+          {_, "unexpected parentheses" <> _, _} when state.mode == :strict ->
+            {:error, reason, state, cursor, log}
+
+          {meta, "unexpected parentheses" <> _, _} ->
+            case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
+              {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, meta, state, cursor, log}
+              other -> other
+            end
+
+          _ ->
+            case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
+              {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, nil, state, cursor, log}
+              other -> other
+            end
+        end
+    end
+  end
+
+  defp parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
+    with {:ok, expr, state, cursor, log} <-
+           Expressions.expr(state, cursor, Context.matched_expr(), log) do
+      case Cursor.peek(cursor) do
+        {:ok, {:",", _meta, _value}, _cursor} ->
+          meta = TokenAdapter.token_meta(callee_tok)
+          {:error, NoParensErrors.error_no_parens_strict(Keyword.take(meta, [:line, :column])),
+           state, cursor, log}
+
+        {:ok, {kind, _meta, _value}, _cursor} when kind in [:eol, :";"] ->
+          parse_spaced_paren_block(expr, state, cursor, log)
+
+        _ ->
+          {:ok, expr, state, cursor, log}
+      end
+    end
+  end
+
+  defp parse_spaced_paren_block(first_expr, state, cursor, log) do
+    case Cursor.peek(cursor) do
+      {:ok, sep_tok, _cursor} when elem(sep_tok, 0) in [:eol, :";"] ->
+        {:ok, _sep, state, cursor} = TokenAdapter.next(state, cursor)
+        sep_meta = EOE.build_sep_meta(sep_tok)
+        first_expr = EOE.annotate_eoe(first_expr, sep_meta)
+        {state, cursor} = EOE.skip(state, cursor)
+
+        case Cursor.peek(cursor) do
+          {:ok, {:")", _meta, _value}, _cursor} ->
+            {:ok, {:__block__, [], [first_expr]}, state, cursor, log}
+
+          _ ->
+            with {:ok, next_expr, state, cursor, log} <-
+                   Expressions.expr(state, cursor, Context.matched_expr(), log) do
+              {next_expr, state, cursor} = Expressions.maybe_annotate_eoe(next_expr, state, cursor)
+
+              case collect_spaced_paren_exprs([next_expr], state, cursor, Context.matched_expr(), log) do
+                {:ok, exprs_rev, state, cursor, log} ->
+                  exprs = Enum.reverse(exprs_rev)
+                  {:ok, {:__block__, [], [first_expr | exprs]}, state, cursor, log}
+
+                {:error, reason, state, cursor, log} ->
+                  {:error, reason, state, cursor, log}
+              end
+            end
+        end
+
+      _ ->
+        {:ok, {:__block__, [], [first_expr]}, state, cursor, log}
+    end
+  end
+
+  defp attach_parens_meta({name, meta, args}, parens_meta, _state) when is_list(meta) do
+    {name, [{:parens, parens_meta} | meta], args}
+  end
+
+  defp attach_parens_meta(literal, _parens_meta, %State{} = state) do
+    Builder.Helpers.literal(literal, [], state)
+  end
+
+  defp collect_spaced_paren_exprs(acc, state, cursor, ctx, log) do
+    case Cursor.peek(cursor) do
+      {:ok, {kind, _meta, _value}, cursor} when kind in [:eol, :";"] ->
+        {state, cursor} = EOE.skip(state, cursor)
+
+        case Cursor.peek(cursor) do
+          {:eof, cursor} ->
+            {:ok, acc, state, cursor, log}
+
+          {:ok, {kind, _meta, _value}, cursor} when kind in [:")", :"]", :"}", :end] ->
+            {:ok, acc, state, cursor, log}
+
+          {:ok, _tok, cursor} ->
+            case Expressions.expr(state, cursor, ctx, log) do
+              {:ok, next_expr, state, cursor, log} ->
+                {next_expr, state, cursor} = Expressions.maybe_annotate_eoe(next_expr, state, cursor)
+                collect_spaced_paren_exprs([next_expr | acc], state, cursor, ctx, log)
+
+              {:error, reason, state, cursor, log} ->
+                {:error, reason, state, cursor, log}
+            end
+
+          {:error, diag, cursor} ->
+            {:error, diag, state, cursor, log}
+        end
+
+      {:eof, cursor} ->
+        {:ok, acc, state, cursor, log}
+
+      {:ok, _token, cursor} ->
+        {:ok, acc, state, cursor, log}
+
+      {:error, diag, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -867,46 +1084,6 @@ defmodule ToxicParser.Grammar.Calls do
       meta = TokenAdapter.token_meta(callee_tok)
       ast = {callee, meta, args}
       DoBlocks.maybe_do_block(ast, state, cursor, ctx, log)
-    end
-  end
-
-  defp spaced_paren_needs_strict_error?(state, cursor) do
-    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
-    {:ok, open_tok, checkpoint_state, cursor} = TokenAdapter.next(checkpoint_state, cursor)
-    open_meta = TokenAdapter.token_meta(open_tok)
-    {checkpoint_state, cursor, _newlines} = EOE.skip_count_newlines(checkpoint_state, cursor, 0)
-
-    result =
-      case Cursor.peek(cursor) do
-        {:ok, {:")", _meta, _value}, _cursor} ->
-          :ok
-
-        {:ok, _token, cursor} ->
-          case Expressions.expr(checkpoint_state, cursor, Context.matched_expr(), EventLog.new()) do
-            {:ok, _arg, checkpoint_state, cursor, _log} ->
-              {_checkpoint_state, cursor} = EOE.skip(checkpoint_state, cursor)
-
-              case Cursor.peek(cursor) do
-                {:ok, {:",", _meta, _value}, _cursor} ->
-                  {:strict_error, open_meta}
-
-                _ ->
-                  :ok
-              end
-
-            {:error, _reason, _checkpoint_state, _cursor, _log} ->
-              {:strict_error, open_meta}
-          end
-      end
-
-    case result do
-      :ok ->
-        {_state, _cursor} = TokenAdapter.rewind(checkpoint_state, ref)
-        :ok
-
-      {:strict_error, meta} ->
-        {_state, _cursor} = TokenAdapter.rewind(checkpoint_state, ref)
-        {true, meta}
     end
   end
 end
