@@ -185,7 +185,6 @@ defmodule ToxicParser.Grammar.DoBlocks do
         {name, block_meta ++ meta, [sections]}
 
       other ->
-        raise "dead code"
         Builder.Helpers.call(other, [sections], block_meta)
     end
   end
@@ -203,7 +202,6 @@ defmodule ToxicParser.Grammar.DoBlocks do
           # For op_identifier calls, use min_bp=0 to include all operators
           # in the argument per lexer disambiguation.
           # Example: %{c!s|n => 1} should parse c!(s|n) not c!(s)
-          raise "dead code"
           effective_min_bp = if match?({:op_identifier, _, _}, token), do: 0, else: min_bp
           parse_no_parens.(token, state, cursor, ctx, log, effective_min_bp)
         else
@@ -211,6 +209,9 @@ defmodule ToxicParser.Grammar.DoBlocks do
         end
 
       {:eof, cursor} ->
+        {:ok, ast, state, cursor, log}
+
+      {:error, _diag, cursor} ->
         {:ok, ast, state, cursor, log}
     end
   end

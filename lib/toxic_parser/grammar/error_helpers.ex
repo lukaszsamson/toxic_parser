@@ -92,6 +92,10 @@ defmodule ToxicParser.Grammar.ErrorHelpers do
 
   def error_meta_from_reason(reason, cursor) do
     case reason do
+      %Toxic.Error{details: %{line: line, column: column}}
+      when is_integer(line) and is_integer(column) ->
+        [line: line, column: column]
+
       {meta, _msg, _token} when is_list(meta) ->
         meta
 

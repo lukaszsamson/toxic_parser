@@ -556,6 +556,23 @@ defmodule ToxicParser.Grammar.Keywords do
     {[line: line, column: column], "syntax error before: ", ""}
   end
 
+  defp syntax_error_before(meta, token_value) do
+    line = Keyword.get(meta, :line, 1)
+    column = Keyword.get(meta, :column, 1)
+    {[line: line, column: column], "syntax error before: ", token_value}
+  end
+
+  defp keyword_closer_display(kind, value) do
+    case kind do
+      :"]" -> "']'"
+      :"}" -> "'}'"
+      :")" -> "')'"
+      :">>" -> "'>>'"
+      :end -> "'end'"
+      _ -> "'#{value}'"
+    end
+  end
+
   defp unexpected_expression_after_kw_call_message do
     "unexpected expression after keyword list. Keyword lists must always come as the last argument. " <>
       "Therefore, this is not allowed:\n\n" <>
@@ -693,6 +710,10 @@ defmodule ToxicParser.Grammar.Keywords do
                     {_mode, :container} ->
                       {:error, kw_tail_follow_up_error(meta), state, cursor, log}
 
+                    {:strict, :many} ->
+                      {:error, {meta, unexpected_expression_after_kw_call_message(), "','"},
+                       state, cursor, log}
+
                     _ ->
                       parse_kw_list(
                         [pair | acc],
@@ -797,31 +818,38 @@ defmodule ToxicParser.Grammar.Keywords do
   defp parse_kw_value(key, key_meta, state, cursor, log, min_bp, value_ctx, error_kind) do
     {state, cursor} = EOE.skip(state, cursor)
 
-    # Use min_bp if provided to stop parsing at certain operators (e.g., ->)
-    # The value context depends on where the keyword list appears in the grammar.
-    result =
-      if min_bp > 0 do
-        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, min_bp)
-      else
-        Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, ParseOpts.stop_at_assoc())
-      end
+    case Cursor.peek(cursor) do
+      {:ok, {kind, meta, value}, cursor}
+      when kind in [:")", :"]", :"}", :">>", :end] and state.mode == :strict ->
+        meta = TokenAdapter.token_meta({kind, meta, value})
+        token_display = keyword_closer_display(kind, value)
+        {:error, syntax_error_before(meta, token_display), state, cursor, log}
 
-    with {:ok, value_ast, state, cursor, log} <- result do
-      # Validate no_parens expressions are not allowed in container/call contexts
-      # (error_kind = nil means skip validation, e.g., for no-parens keyword values)
-      if error_kind != nil and ExprClass.classify(value_ast) == :no_parens do
-        error =
-          case error_kind do
-            :container -> NoParensErrors.error_no_parens_container_strict(value_ast)
-            :many -> NoParensErrors.error_no_parens_many_strict(value_ast)
+      _ ->
+        result =
+          if min_bp > 0 do
+            Pratt.parse_with_min_bp(state, cursor, value_ctx, log, min_bp)
+          else
+            Pratt.parse_with_min_bp(state, cursor, value_ctx, log, 0, ParseOpts.stop_at_assoc())
           end
 
-        {:error, error, state, cursor, log}
-      else
-        key_ast = Builder.Helpers.literal(key, key_meta, state)
-        state = maybe_warn_nested_no_parens_keyword(state, key_ast, value_ast)
-        {:ok, {key_ast, value_ast}, state, cursor, log}
-      end
+        with {:ok, value_ast, state, cursor, log} <- result do
+          # Validate no_parens expressions are not allowed in container/call contexts
+          # (error_kind = nil means skip validation, e.g., for no-parens keyword values)
+          if error_kind != nil and ExprClass.classify(value_ast) == :no_parens do
+            error =
+              case error_kind do
+                :container -> NoParensErrors.error_no_parens_container_strict(value_ast)
+                :many -> NoParensErrors.error_no_parens_many_strict(value_ast)
+              end
+
+            {:error, error, state, cursor, log}
+          else
+            key_ast = Builder.Helpers.literal(key, key_meta, state)
+            state = maybe_warn_nested_no_parens_keyword(state, key_ast, value_ast)
+            {:ok, {key_ast, value_ast}, state, cursor, log}
+          end
+        end
     end
   end
 

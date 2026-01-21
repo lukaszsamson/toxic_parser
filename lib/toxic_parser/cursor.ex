@@ -77,7 +77,8 @@ defmodule ToxicParser.Cursor do
           {:ok, tok, {rest, line, column, driver_hot, cfg, rest_tokens, tok}}
 
         {:eof, driver_hot} ->
-          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
+          {:eof,
+            {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
           {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
@@ -108,7 +109,8 @@ defmodule ToxicParser.Cursor do
           {:ok, hd(tokens), {rest, line, column, driver_hot, cfg, tokens, last_token}}
 
         {:eof, driver_hot} ->
-          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
+          {:eof,
+            {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
           {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
@@ -165,6 +167,11 @@ defmodule ToxicParser.Cursor do
   @spec position(t()) :: {pos_integer(), pos_integer()}
   def position({_rest, line, column, _driver_hot, _cfg, _pending, _last_token}) do
     {line, column}
+  end
+
+  @spec last_token(t()) :: token() | nil
+  def last_token({_rest, _line, _column, _driver_hot, _cfg, _pending, last_token}) do
+    last_token
   end
 
   @doc "Get current lexer warnings from the cursor scope."

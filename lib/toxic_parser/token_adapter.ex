@@ -465,13 +465,6 @@ defmodule ToxicParser.TokenAdapter do
     %{state | terminators: terms}
   end
 
-  # Process tokens for peek_n - just extract error diagnostics
-  # defp process_tokens_for_peek(tokens, state) do
-  #   Enum.map_reduce(tokens, state, fn raw, state ->
-  #     {raw, maybe_extract_error_diagnostic(raw, state)}
-  #   end)
-  # end
-
   defp synthetic_error_token(state, cursor, diagnostic) do
     {line, col} = Cursor.position(cursor)
 

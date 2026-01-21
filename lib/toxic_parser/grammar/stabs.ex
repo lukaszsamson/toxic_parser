@@ -16,6 +16,27 @@ defmodule ToxicParser.Grammar.Stabs do
   # The `when` at the TOP LEVEL of patterns is handled specially after parsing (to extract guards).
   @stab_pattern_min_bp @stab_op_bp + 1
 
+  @binary_only_guard_ops [
+    :stab_op,
+    :assoc_op,
+    :pipe_op,
+    :or_op,
+    :and_op,
+    :comp_op,
+    :rel_op,
+    :match_op,
+    :type_op,
+    :arrow_op,
+    :in_op,
+    :xor_op,
+    :ternary_op,
+    :concat_op,
+    :mult_op,
+    :power_op,
+    :dot_call_op,
+    :.
+  ]
+
   # After leading semicolon: either close paren (empty) or stab content
   def parse_paren_stab_or_empty(
         open_meta,
@@ -186,6 +207,7 @@ defmodule ToxicParser.Grammar.Stabs do
         parse_stab_clause_after_patterns(patterns, [], state, cursor, ctx, log, terminator)
 
       {:error, reason, state, cursor, log} ->
+        reason = maybe_guard_delimiter_error(reason, state, cursor)
         {:error, reason, state, cursor, log}
     end
   end
@@ -242,133 +264,38 @@ defmodule ToxicParser.Grammar.Stabs do
           {:ok, clause, state, cursor, log}
         end
 
+      {:ok, {:identifier, _meta, :when} = when_tok, cursor} ->
+        # In some contexts the lexer yields `:when` as an identifier. Treat it like `:when_op`.
+        {:ok, _when, state, cursor} = TokenAdapter.next(state, cursor)
+        when_meta = TokenAdapter.token_meta(when_tok)
+        {state, cursor} = EOE.skip(state, cursor)
+
+        handle_when_guard(
+          patterns,
+          parens_meta,
+          when_meta,
+          state,
+          cursor,
+          ctx,
+          log,
+          terminator
+        )
+
       {:ok, {:when_op, _, _} = when_tok, cursor} ->
         # Pattern followed by guard then stab
         {:ok, _when, state, cursor} = TokenAdapter.next(state, cursor)
         when_meta = TokenAdapter.token_meta(when_tok)
         {state, cursor} = EOE.skip(state, cursor)
-
-        # If the next token is a keyword pair starter (`y:`), this cannot be a stab guard.
-        # It's the `when` operator with a keyword list RHS (see `no_parens_op_expr`).
-        case Cursor.peek(cursor) do
-          {:ok, {_, _meta, tok_value} = tok, cursor} ->
-            if Keywords.starts_kw?(tok) do
-              cond do
-                patterns == [] ->
-                  # `when foo: 1` has no LHS for the `when` operator, and `foo: 1` is not a valid
-                  # guard expression on its own. Match Elixir's "syntax error before: foo".
-                  {:error, syntax_error_before(TokenAdapter.token_meta(tok), tok_value), state,
-                   cursor, log}
-
-                true ->
-                  # This may be the special `when` operator form that allows a keyword list RHS:
-                  # `no_parens_op_expr -> when_op_eol call_args_no_parens_kw`.
-                  #
-                  # If it is followed by `->`, treat it as part of the patterns (not a guard).
-                  min_bp = @stab_op_bp + 1
-
-                  with {:ok, kw_list, state, cursor, log} <-
-                         Keywords.parse_kw_no_parens_call_with_min_bp(
-                           state,
-                           cursor,
-                           ctx,
-                           log,
-                           min_bp
-                         ) do
-                    {state, cursor} = EOE.skip(state, cursor)
-
-                    case Cursor.peek(cursor) do
-                      {:ok, {:stab_op, _, _}, cursor} ->
-                        {patterns, parens_meta} =
-                          if match?([_], patterns) and parens_meta != [] do
-                            unwrapped = unwrap_splice(patterns)
-
-                            {patterns_with_parens, _stab_meta} =
-                              apply_parens_meta(unwrapped, parens_meta, [])
-
-                            {patterns_with_parens, []}
-                          else
-                            {patterns, parens_meta}
-                          end
-
-                        left = List.last(patterns)
-                        when_ast = {:when, when_meta, [left, kw_list]}
-                        new_patterns = List.replace_at(patterns, -1, when_ast)
-
-                        parse_stab_clause_after_patterns(
-                          new_patterns,
-                          parens_meta,
-                          state,
-                          cursor,
-                          ctx,
-                          log,
-                          terminator
-                        )
-
-                      {:ok, _, cursor} ->
-                        {:not_stab, state, cursor, log}
-                    end
-                  end
-              end
-            else
-              # Parse guard expression with min_bp > stab_op (10) to stop before ->
-              # Use `expr` context (elixir_parser.yrl: `... when_op expr stab_op ...`).
-              with {:ok, guard, state, cursor, log} <-
-                     Pratt.parse_with_min_bp(
-                       state,
-                       cursor,
-                       Context.expr(),
-                       log,
-                       @stab_op_bp + 1
-                     ) do
-                case TokenAdapter.next(state, cursor) do
-                  {:ok, {:stab_op, _, _} = stab_tok, state, cursor} ->
-                    stab_base_meta = TokenAdapter.token_meta(stab_tok)
-
-                    # Newlines metadata for `->` comes from the EOE after the operator (stab_op_eol)
-                    # and from the token itself when `->` starts on a new line.
-                    token_newlines = TokenAdapter.newlines(stab_tok)
-                    {state, cursor, newlines_after} = EOE.skip_newlines_only(state, cursor, 0)
-                    newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
-
-                    stab_meta =
-                      if newlines > 0,
-                        do: [{:newlines, newlines} | stab_base_meta],
-                        else: stab_base_meta
-
-                    with {:ok, body, state, cursor, log} <-
-                           parse_stab_body(state, cursor, ctx, log, terminator) do
-                      # unwrap_splice for stab clause patterns
-                      unwrapped = unwrap_splice(patterns)
-                      # Apply parens meta before wrapping with guard
-                      {final_patterns, final_stab_meta} =
-                        apply_parens_meta(unwrapped, parens_meta, stab_meta)
-
-                      # Wrap patterns with guard in a when clause
-                      patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
-                      body = wrap_unquote_splicing_body(body)
-                      clause = {:->, final_stab_meta, [patterns_with_guard, body]}
-                      {:ok, clause, state, cursor, log}
-                    end
-
-                  {:ok, _token, state, cursor} ->
-                    # No stab after when+guard - this is just `when` as a binary operator
-                    # Return :not_stab so we can try parsing as a regular expression
-                    {:not_stab, state, cursor, log}
-
-                  {:eof, state, cursor} ->
-                    {:not_stab, state, cursor, log}
-
-                  {:error, diag, state, cursor} ->
-                    {:error, diag, state, cursor, log}
-                end
-              end
-            end
-
-          {:ok, _, cursor} ->
-            # Cursor.peek should not return eof here (terminator inserted), but be defensive.
-            {:not_stab, state, cursor, log}
-        end
+        handle_when_guard(
+          patterns,
+          parens_meta,
+          when_meta,
+          state,
+          cursor,
+          ctx,
+          log,
+          terminator
+        )
 
       {:ok, _, cursor} ->
         # No stab operator - not a stab clause
@@ -379,6 +306,150 @@ defmodule ToxicParser.Grammar.Stabs do
 
       {:error, diag, cursor} ->
         {:error, diag, state, cursor, log}
+    end
+  end
+
+  defp handle_when_guard(
+         patterns,
+         parens_meta,
+         when_meta,
+         state,
+         cursor,
+         ctx,
+         log,
+         terminator
+       ) do
+    case {state.mode, patterns, Cursor.peek(cursor)} do
+      {:strict, [], {:ok, {kind, _meta, _value}, _cursor}}
+      when kind in @binary_only_guard_ops ->
+        {:error, syntax_error_before(when_meta, "'when'"), state, cursor, log}
+
+      _ ->
+    # If the next token is a keyword pair starter (`y:`), this cannot be a stab guard.
+    # It's the `when` operator with a keyword list RHS (see `no_parens_op_expr`).
+    case Cursor.peek(cursor) do
+      {:ok, {_, _meta, tok_value} = tok, cursor} ->
+        if Keywords.starts_kw?(tok) do
+          cond do
+            patterns == [] ->
+              # `when foo: 1` has no LHS for the `when` operator, and `foo: 1` is not a valid
+              # guard expression on its own. Match Elixir's "syntax error before: foo".
+              {:error, syntax_error_before(TokenAdapter.token_meta(tok), tok_value), state,
+               cursor, log}
+
+            true ->
+              # This may be the special `when` operator form that allows a keyword list RHS:
+              # `no_parens_op_expr -> when_op_eol call_args_no_parens_kw`.
+              #
+              # If it is followed by `->`, treat it as part of the patterns (not a guard).
+              min_bp = @stab_op_bp + 1
+
+              with {:ok, kw_list, state, cursor, log} <-
+                     Keywords.parse_kw_no_parens_call_with_min_bp(
+                       state,
+                       cursor,
+                       ctx,
+                       log,
+                       min_bp
+                     ) do
+                {state, cursor} = EOE.skip(state, cursor)
+
+                case Cursor.peek(cursor) do
+                  {:ok, {:stab_op, _, _}, cursor} ->
+                    {patterns, parens_meta} =
+                      if match?([_], patterns) and parens_meta != [] do
+                        unwrapped = unwrap_splice(patterns)
+
+                        {patterns_with_parens, _stab_meta} =
+                          apply_parens_meta(unwrapped, parens_meta, [])
+
+                        {patterns_with_parens, []}
+                      else
+                        {patterns, parens_meta}
+                      end
+
+                    left = List.last(patterns)
+                    when_ast = {:when, when_meta, [left, kw_list]}
+                    new_patterns = List.replace_at(patterns, -1, when_ast)
+
+                    parse_stab_clause_after_patterns(
+                      new_patterns,
+                      parens_meta,
+                      state,
+                      cursor,
+                      ctx,
+                      log,
+                      terminator
+                    )
+
+                  {:ok, _, cursor} ->
+                    {:not_stab, state, cursor, log}
+                end
+              end
+          end
+        else
+          # Parse guard expression with min_bp > stab_op (10) to stop before ->
+          # Use `expr` context (elixir_parser.yrl: `... when_op expr stab_op ...`).
+          case Pratt.parse_with_min_bp(
+                 state,
+                 cursor,
+                 Context.expr(),
+                 log,
+                 @stab_op_bp + 1
+               ) do
+            {:ok, guard, state, cursor, log} ->
+              case TokenAdapter.next(state, cursor) do
+                {:ok, {:stab_op, _, _} = stab_tok, state, cursor} ->
+                  stab_base_meta = TokenAdapter.token_meta(stab_tok)
+
+                  # Newlines metadata for `->` comes from the EOE after the operator (stab_op_eol)
+                  # and from the token itself when `->` starts on a new line.
+                  token_newlines = TokenAdapter.newlines(stab_tok)
+                  {state, cursor, newlines_after} = EOE.skip_newlines_only(state, cursor, 0)
+                  newlines = if newlines_after > 0, do: newlines_after, else: token_newlines
+
+                  stab_meta =
+                    if newlines > 0,
+                      do: [{:newlines, newlines} | stab_base_meta],
+                      else: stab_base_meta
+
+                  with {:ok, body, state, cursor, log} <-
+                         parse_stab_body(state, cursor, ctx, log, terminator) do
+                    # unwrap_splice for stab clause patterns
+                    unwrapped = unwrap_splice(patterns)
+                    # Apply parens meta before wrapping with guard
+                    {final_patterns, final_stab_meta} =
+                      apply_parens_meta(unwrapped, parens_meta, stab_meta)
+
+                    # Wrap patterns with guard in a when clause
+                    patterns_with_guard = unwrap_when(final_patterns, guard, when_meta)
+                    body = wrap_unquote_splicing_body(body)
+                    clause = {:->, final_stab_meta, [patterns_with_guard, body]}
+                    {:ok, clause, state, cursor, log}
+                  end
+
+                {:ok, _token, state, cursor} ->
+                  # No stab after when+guard - this is just `when` as a binary operator
+                  # Return :not_stab so we can try parsing as a regular expression
+                  {:not_stab, state, cursor, log}
+
+                {:eof, state, cursor} ->
+                  {:not_stab, state, cursor, log}
+
+                {:error, diag, state, cursor} ->
+                  {:error, diag, state, cursor, log}
+              end
+
+            {:error, reason, state, cursor, log} ->
+              reason = maybe_guard_delimiter_error(reason, state, cursor)
+              {:error, reason, state, cursor, log}
+          end
+        end
+
+      {:ok, _, cursor} ->
+        # Cursor.peek should not return eof here (terminator inserted), but be defensive.
+        {:not_stab, state, cursor, log}
+    end
     end
   end
 
@@ -496,6 +567,10 @@ defmodule ToxicParser.Grammar.Stabs do
                 case Cursor.peek(cursor2) do
                   {:ok, {kind, _meta, _value}, cursor2} when kind in [:stab_op, :when_op] ->
                     # Yes, this is stab_parens_many
+                    state2 = TokenAdapter.drop_checkpoint(state2, ref)
+                    {:ok, patterns, state2, cursor2, log2, parens_meta}
+
+                  {:ok, {:identifier, _meta, :when}, cursor2} ->
                     state2 = TokenAdapter.drop_checkpoint(state2, ref)
                     {:ok, patterns, state2, cursor2, log2, parens_meta}
 
@@ -980,15 +1055,26 @@ defmodule ToxicParser.Grammar.Stabs do
       # Container tokens - parse container base then continue with led at min_bp
       # Use parse_container_base which doesn't call Pratt.led internally
       {:ok, {kind, _meta, _value}, cursor} when kind in [:"{", :"[", :"<<"] ->
-        with {:ok, ast, state, cursor, log} <-
-               Containers.parse_container_base(state, cursor, Context.expr(), log) do
-          # Continue with led to handle trailing operators
-          Pratt.led(ast, state, cursor, log, @stab_pattern_min_bp, Context.expr())
+        case Containers.parse_container_base(state, cursor, Context.expr(), log) do
+          {:ok, ast, state, cursor, log} ->
+            # Continue with led to handle trailing operators
+            Pratt.led(ast, state, cursor, log, @stab_pattern_min_bp, Context.expr())
+
+          {:error, reason, state, cursor, log} ->
+            reason = maybe_guard_delimiter_error(reason, state, cursor)
+            {:error, reason, state, cursor, log}
         end
 
       # Map literal %{} or struct %Name{}
       {:ok, {kind, _meta, _value}, cursor} when kind in [:%{}, :%] ->
-        Maps.parse_map(state, cursor, Context.expr(), log, @stab_pattern_min_bp)
+        case Maps.parse_map(state, cursor, Context.expr(), log, @stab_pattern_min_bp) do
+          {:ok, ast, state, cursor, log} ->
+            {:ok, ast, state, cursor, log}
+
+          {:error, reason, state, cursor, log} ->
+            reason = maybe_guard_delimiter_error(reason, state, cursor)
+            {:error, reason, state, cursor, log}
+        end
 
       # Other tokens - use Pratt parser with min_bp to stop before ->
       {:ok, _, cursor} ->
@@ -1036,6 +1122,7 @@ defmodule ToxicParser.Grammar.Stabs do
             end
 
           {:error, reason, state, cursor, log} ->
+            reason = maybe_guard_delimiter_error(reason, state, cursor)
             {:error, reason, state, cursor, log}
         end
     end
@@ -1691,6 +1778,100 @@ defmodule ToxicParser.Grammar.Stabs do
     line = Keyword.get(meta, :line, 1)
     column = Keyword.get(meta, :column, 1)
     {[line: line, column: column], "syntax error before: ", token_value}
+  end
+
+  defp maybe_guard_delimiter_error({meta, "syntax error before: ", "'->'"} = reason, state, cursor)
+       when is_list(meta) do
+    case Cursor.last_token(cursor) do
+      {:"{", open_meta, _value} ->
+        case scan_for_end(state, cursor) do
+          {:ok, end_meta} ->
+            open_location = TokenAdapter.token_meta({:"{", open_meta, nil})
+            end_location = TokenAdapter.token_meta({:end, end_meta, nil})
+
+            reason_meta = [
+              line: Keyword.get(open_location, :line, 1),
+              column: Keyword.get(open_location, :column, 1),
+              end_line: Keyword.get(end_location, :line, 1),
+              end_column: Keyword.get(end_location, :column, 1),
+              error_type: :mismatched_delimiter,
+              opening_delimiter: :"{",
+              closing_delimiter: :end,
+              expected_delimiter: :"}"
+            ]
+
+            {reason_meta, "unexpected reserved word: ", "end"}
+
+          :not_found ->
+            reason
+        end
+
+      _ ->
+        reason
+    end
+  end
+
+  defp maybe_guard_delimiter_error({meta, "missing terminator: }", ""} = reason, state, cursor)
+       when is_list(meta) do
+    if Keyword.get(meta, :opening_delimiter) == :"{"
+       and Keyword.get(meta, :expected_delimiter) == :"}" do
+      case scan_for_end(state, cursor) do
+        {:ok, end_meta} ->
+          end_location = TokenAdapter.token_meta({:end, end_meta, nil})
+
+          reason_meta = [
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            end_line: Keyword.get(end_location, :line, 1),
+            end_column: Keyword.get(end_location, :column, 1),
+            error_type: :mismatched_delimiter,
+            opening_delimiter: :"{",
+            closing_delimiter: :end,
+            expected_delimiter: :"}"
+          ]
+
+          {reason_meta, "unexpected reserved word: ", "end"}
+
+        :not_found ->
+          reason
+      end
+    else
+      reason
+    end
+  end
+
+  defp maybe_guard_delimiter_error(reason, _state, _cursor), do: reason
+
+  defp scan_for_end(state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    result = scan_for_end(checkpoint_state, cursor, :not_found)
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+    result
+  end
+
+  defp scan_for_end(state, cursor, _acc) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, {:end, meta, _value}, _state, _cursor} ->
+        {:ok, meta}
+
+      {:ok, _tok, state, cursor} ->
+        scan_for_end(state, cursor, :not_found)
+
+      {:eof, _state, _cursor} ->
+        :not_found
+
+      {:error, {meta, message, token}, _state, _cursor}
+      when is_list(meta) and (is_binary(message) or is_list(message)) ->
+        if String.starts_with?(to_string(message), "unexpected reserved word:") and
+             to_string(token) == "end" do
+          {:ok, meta}
+        else
+          :not_found
+        end
+
+      {:error, _reason, _state, _cursor} ->
+        :not_found
+    end
   end
 
   defp missing_terminator_reason(open_meta, cursor, expected_delimiter) do

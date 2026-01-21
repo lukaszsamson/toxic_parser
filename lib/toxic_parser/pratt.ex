@@ -21,6 +21,7 @@ defmodule ToxicParser.Pratt do
     Identifiers,
     NoParens,
     ParseOpts,
+    Position,
     Precedence,
     Result,
     State,
@@ -37,6 +38,7 @@ defmodule ToxicParser.Pratt do
     DoBlocks,
     Dots,
     EOE,
+    ErrorHelpers,
     Expressions,
     Keywords
   }
@@ -256,17 +258,36 @@ defmodule ToxicParser.Pratt do
       :error_token ->
         meta = TokenAdapter.token_meta(token)
 
-        payload =
+        {payload, meta, state, cursor} =
           case State.error_token_diagnostic(state, TokenAdapter.meta(token)) do
             %Error{} = diagnostic ->
-              Error.error_node_payload(diagnostic,
-                kind: :token,
-                original: token_value,
-                synthetic?: false
-              )
+              meta = ErrorHelpers.error_meta_from_reason(diagnostic.reason, cursor)
+
+              payload =
+                Error.error_node_payload(diagnostic,
+                  kind: :token,
+                  original: token_value,
+                  synthetic?: false
+                )
+
+              {state, cursor} =
+                if state.mode == :tolerant do
+                  recover_after_error_token(state, cursor, diagnostic.reason, meta)
+                else
+                  {state, cursor}
+                end
+
+              {payload, meta, state, cursor}
 
             _ ->
-              token_value
+              {state, cursor} =
+                if state.mode == :tolerant do
+                  recover_after_error_token(state, cursor, token_value, meta)
+                else
+                  {state, cursor}
+                end
+
+              {token_value, meta, state, cursor}
           end
 
         ast = Builder.Helpers.error(payload, meta)
@@ -3172,6 +3193,12 @@ defmodule ToxicParser.Pratt do
       {:ok, _, cursor} ->
         # Not a dot, paren, or bracket - return what we have
         {:ok, left, state, cursor, log}
+
+      {:eof, cursor} ->
+        {:ok, left, state, cursor, log}
+
+      {:error, diag, cursor} ->
+        {:error, diag, state, cursor, log}
     end
   end
 
@@ -3295,6 +3322,87 @@ defmodule ToxicParser.Pratt do
 
     Keyword.put(meta, :toxic, toxic_meta)
   end
+
+  defp recover_after_error_token(%State{} = state, cursor, reason, meta) do
+    case error_token_suffix(state, reason, meta) do
+      {:ok, suffix, line, column} ->
+        tokens = lex_suffix_tokens(state, suffix, line, column)
+        tokens = maybe_prepend_eol_for_missing_closer(tokens, reason, meta)
+        {state, cursor} = TokenAdapter.pushback_many(state, cursor, tokens)
+        {state, cursor}
+
+      :none ->
+        {state, cursor}
+    end
+  end
+
+  defp error_token_suffix(%State{} = state, _reason, meta) do
+    line = Keyword.get(meta, :line)
+    column = Keyword.get(meta, :column)
+
+    {line, column} =
+      case {line, column} do
+        {nil, nil} -> {1, 1}
+        {line, column} -> {line || 1, column || 1}
+      end
+
+    %{offset: offset} = Position.to_location(line, column, state.line_index)
+    size = byte_size(state.source)
+
+    if offset >= size do
+      :none
+    else
+      rest = binary_part(state.source, offset, size - offset)
+
+      case :binary.match(rest, "\n") do
+        {idx, 1} when idx + 1 < byte_size(rest) ->
+          suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
+          {:ok, suffix, line + 1, 1}
+
+        _ ->
+          :none
+      end
+    end
+  end
+
+  defp lex_suffix_tokens(%State{} = state, suffix, line, column) do
+    opts =
+      state.opts
+      |> Keyword.put(:mode, state.mode)
+      |> Keyword.put(:line, line)
+      |> Keyword.put(:column, column)
+
+    suffix_cursor = Cursor.new(suffix, opts)
+    lex_suffix_tokens([], suffix_cursor)
+  end
+
+  defp lex_suffix_tokens(acc, suffix_cursor) do
+    case Cursor.next(suffix_cursor) do
+      {:ok, tok, suffix_cursor} ->
+        lex_suffix_tokens([tok | acc], suffix_cursor)
+
+      {:eof, _suffix_cursor} ->
+        Enum.reverse(acc)
+
+      {:error, _reason, _suffix_cursor} ->
+        Enum.reverse(acc)
+    end
+  end
+
+  defp maybe_prepend_eol_for_missing_closer(tokens, %Toxic.Error{} = reason, meta) do
+    case reason do
+      %Toxic.Error{code: :terminator_missing_closer} ->
+        line = Keyword.get(meta, :line) || 1
+        column = Keyword.get(meta, :column) || 1
+        eol = {:eol, {{line, column}, {line + 1, 1}, 1}, nil}
+        [eol | tokens]
+
+      _ ->
+        tokens
+    end
+  end
+
+  defp maybe_prepend_eol_for_missing_closer(tokens, _reason, _meta), do: tokens
 
   @compile {:inline, precedence_binary: 1, precedence_unary: 1}
 end

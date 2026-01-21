@@ -337,8 +337,22 @@ defmodule ToxicParser.Grammar.Bitstrings do
   defp bitstring_token_display(:int, value) when is_integer(value),
     do: "\"#{value}\""
 
-  defp bitstring_token_display(_kind, value) when is_binary(value), do: value
-  defp bitstring_token_display(_kind, value) when is_atom(value), do: Atom.to_string(value)
+  defp bitstring_token_display(_kind, value) when is_binary(value) do
+    if Regex.match?(~r/^[A-Za-z0-9_]+$/, value) do
+      value
+    else
+      "'#{value}'"
+    end
+  end
+  defp bitstring_token_display(_kind, value) when is_atom(value) do
+    token = Atom.to_string(value)
+
+    if Regex.match?(~r/^[A-Za-z0-9_]+$/, token) do
+      token
+    else
+      "'#{token}'"
+    end
+  end
   defp bitstring_token_display(_kind, value) when is_integer(value), do: Integer.to_string(value)
   defp bitstring_token_display(_kind, value) when is_list(value), do: List.to_string(value)
   defp bitstring_token_display(kind, _value), do: Atom.to_string(kind)

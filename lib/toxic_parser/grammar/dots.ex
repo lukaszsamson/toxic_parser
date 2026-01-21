@@ -117,8 +117,15 @@ defmodule ToxicParser.Grammar.Dots do
                 parse_curly_call(tok, state, cursor, ctx, log, dot_meta)
 
               true ->
-                reason = {:expected, :dot_member, got: tok_kind}
                 meta = Helpers.token_meta(tok)
+                token_display = token_display(tok_kind, tok_value)
+
+                reason =
+                  if state.mode == :strict do
+                    syntax_error_before(meta, token_display)
+                  else
+                    {:expected, :dot_member, got: tok_kind}
+                  end
 
                 {state, cursor} =
                   if state.mode == :tolerant do
@@ -317,6 +324,12 @@ defmodule ToxicParser.Grammar.Dots do
     column = Keyword.get(meta, :column, 1)
     {[line: line, column: column], "syntax error before: ", token_value}
   end
+
+  defp token_display(:int, value) when is_list(value), do: "\"#{List.to_string(value)}\""
+  defp token_display(:int, value) when is_integer(value), do: "\"#{value}\""
+  defp token_display(_kind, value) when is_atom(value), do: Atom.to_string(value)
+  defp token_display(_kind, value) when is_binary(value), do: value
+  defp token_display(kind, _value), do: Atom.to_string(kind)
 
   # Parse quoted identifier: D."foo" or D."foo"() or D."foo" arg (no-parens)
   # Token sequence: quoted_identifier_start -> string_fragment* -> quoted_identifier_end/quoted_op_identifier_end

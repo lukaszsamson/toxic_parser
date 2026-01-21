@@ -488,6 +488,7 @@ defmodule ToxicParser.Grammar.Strings do
                        :heredoc_missing_terminator
                      ] and
                        state.mode == :tolerant ->
+                  {state, cursor} = maybe_pushback_fragment_remainder(acc, state, cursor)
                   {:error, {:missing_terminator, code, error_tok}, state, cursor, log}
 
                 _ ->
@@ -553,7 +554,8 @@ defmodule ToxicParser.Grammar.Strings do
     case missing_terminator_suffix(state, start_meta, kind, code) do
       {:ok, suffix, line, column} ->
         tokens = lex_suffix_tokens(state, suffix, line, column)
-        TokenAdapter.pushback_many(state, cursor, tokens)
+        {state, cursor} = TokenAdapter.pushback_many(state, cursor, tokens)
+        {state, cursor}
 
       :none ->
         {state, cursor}
@@ -573,10 +575,20 @@ defmodule ToxicParser.Grammar.Strings do
 
       case missing_terminator_strategy(kind, code) do
         :first_newline ->
+          close_idx = first_close_index(rest, ["]", ")", "}"])
+
           case :binary.match(rest, "\n") do
+            {idx, 1} when is_integer(close_idx) and close_idx < idx ->
+              suffix = binary_part(rest, close_idx, byte_size(rest) - close_idx)
+              {:ok, suffix, line, column + close_idx}
+
             {idx, 1} when idx + 1 < byte_size(rest) ->
               suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
               {:ok, suffix, line + 1, 1}
+
+            _ when is_integer(close_idx) ->
+              suffix = binary_part(rest, close_idx, byte_size(rest) - close_idx)
+              {:ok, suffix, line, column + close_idx}
 
             _ ->
               :none
@@ -602,6 +614,18 @@ defmodule ToxicParser.Grammar.Strings do
   end
 
   defp missing_terminator_strategy(_kind, _code), do: :first_newline
+
+  defp first_close_index(rest, closes) do
+    Enum.reduce(closes, nil, fn close, acc ->
+      case :binary.match(rest, close) do
+        {idx, 1} ->
+          if is_integer(acc) and acc <= idx, do: acc, else: idx
+
+        _ ->
+          acc
+      end
+    end)
+  end
 
   defp lex_suffix_tokens(%State{} = state, suffix, line, column) do
     opts =
@@ -1327,6 +1351,56 @@ defmodule ToxicParser.Grammar.Strings do
       message = Exception.message(e)
       message = if is_list(message), do: List.to_string(message), else: message
       {:error, {meta, message, "'"}}
+  end
+
+  defp maybe_pushback_fragment_remainder(acc, %State{} = state, cursor) do
+    case acc do
+      [{:fragment, fragment} | _] when is_binary(fragment) ->
+        case split_fragment_remainder(fragment) do
+          {:ok, remainder} ->
+            {restate, recursor} =
+              TokenAdapter.new(remainder, Keyword.put(state.opts, :mode, state.mode))
+
+            tokens = collect_remainder_tokens(restate, recursor, [])
+
+            if tokens == [] do
+              {state, cursor}
+            else
+              TokenAdapter.pushback_many(state, cursor, tokens)
+            end
+
+          :none ->
+            {state, cursor}
+        end
+
+      _ ->
+        {state, cursor}
+    end
+  end
+
+  defp split_fragment_remainder(fragment) do
+    parts = String.split(fragment, "\n")
+
+    case List.last(parts) do
+      remainder when is_binary(remainder) and remainder != "" and length(parts) > 1 ->
+        {:ok, remainder}
+
+      _ ->
+        :none
+    end
+  end
+
+  defp collect_remainder_tokens(state, cursor, acc) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, tok, state, cursor} ->
+        collect_remainder_tokens(state, cursor, acc ++ [tok])
+
+      {:eof, _state, _cursor} ->
+        acc
+
+      {:error, _reason, _state, _cursor} ->
+        acc
+    end
   end
 
   defp string_kind(:bin_string_start), do: :binary

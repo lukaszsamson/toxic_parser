@@ -195,8 +195,80 @@ defmodule ToxicParser do
   defp parser_error(reason, %State{} = state, cursor) do
     normalized_reason =
       case reason do
+        {:syntax_error_before, token} ->
+          {line, column} = Cursor.position(cursor)
+          location = [line: line || 1, column: column || 1]
+          {location, "syntax error before: ", format_syntax_error_token(token)}
+
+        {:expected_end_interpolation, _kind} ->
+          case Cursor.last_token(cursor) do
+            {kind, meta, value} ->
+              token_meta = TokenAdapter.token_meta({kind, meta, value})
+              location =
+                case Keyword.take(token_meta, [:line, :column]) do
+                  [line: line, column: column] when kind == :end_interpolation ->
+                    [line: line, column: max(column - 1, 1)]
+
+                  other ->
+                    other
+                end
+              {location, "syntax error before: ", ""}
+
+            _ ->
+              {line, column} = Cursor.position(cursor)
+              location = [line: line || 1, column: column || 1]
+              {location, "syntax error before: ", ""}
+          end
+
+        :unexpected_eof ->
+          case Cursor.peek(cursor) do
+            {:ok, {kind, meta, value}, _cursor} when kind in [:")", :"]", :"}", :">>", :end] ->
+              token_meta = TokenAdapter.token_meta({kind, meta, value})
+              location = Keyword.take(token_meta, [:line, :column])
+              token_display =
+                case kind do
+                  :")" -> "')'"
+                  :"]" -> "']'"
+                  :"}" -> "'}'"
+                  :">>" -> "'>>'"
+                  :end -> "'end'"
+                end
+              {location, "syntax error before: ", token_display}
+
+            _ ->
+              case Cursor.last_token(cursor) do
+                {kind, meta, value} when kind in [:")", :"]", :"}", :">>", :end] ->
+                  token_meta = TokenAdapter.token_meta({kind, meta, value})
+                  location = Keyword.take(token_meta, [:line, :column])
+                  token_display =
+                    case kind do
+                      :")" -> "')'"
+                      :"]" -> "']'"
+                      :"}" -> "'}'"
+                      :">>" -> "'>>'"
+                      :end -> "'end'"
+                    end
+
+                  {location, "syntax error before: ", token_display}
+
+                _ ->
+                  :unexpected_eof
+              end
+          end
+
+        {:expected, :"{", got: :dual_op} ->
+          {line, column} = Cursor.position(cursor)
+          location = [line: line || 1, column: (column || 1) + 1]
+          {location, "syntax error before: ", ""}
+
         {loc, {prefix, detail}, token} when is_list(prefix) or is_binary(prefix) ->
           {loc, {to_string(prefix), to_string(detail)}, normalize_token_string(token)}
+
+        {meta, "missing terminator: }", ""} = reason when is_list(meta) ->
+          case maybe_mismatched_end_reason(meta, state, cursor) do
+            {:ok, mismatched_reason} -> mismatched_reason
+            :none -> reason
+          end
 
         {loc, msg, token} when is_list(msg) ->
           normalize_reserved_word({loc, List.to_string(msg), normalize_token_string(token)})
@@ -281,6 +353,125 @@ defmodule ToxicParser do
 
   defp normalize_reserved_word(other), do: other
 
+  defp maybe_mismatched_end_reason(meta, %State{} = state, cursor) do
+    if Keyword.get(meta, :opening_delimiter) == :"{"
+       and Keyword.get(meta, :expected_delimiter) == :"}" do
+      case scan_for_token(state, cursor, :end) do
+        {:ok, end_meta} ->
+          reason_meta = [
+            line: Keyword.get(meta, :line, 1),
+            column: Keyword.get(meta, :column, 1),
+            end_line: Keyword.get(end_meta, :line, 1),
+            end_column: Keyword.get(end_meta, :column, 1),
+            error_type: :mismatched_delimiter,
+            opening_delimiter: :"{",
+            closing_delimiter: :end,
+            expected_delimiter: :"}"
+          ]
+
+          {:ok, {reason_meta, "unexpected reserved word: ", "end"}}
+
+        :not_found ->
+          case scan_for_mismatched_end_reason(state, cursor) do
+            {:ok, reason} -> {:ok, normalize_reserved_word(reason)}
+            :not_found -> :none
+          end
+      end
+    else
+      :none
+    end
+  end
+
+  defp scan_for_token(%State{} = state, cursor, kind) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    result = scan_for_token(checkpoint_state, cursor, kind, :not_found)
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+    result
+  end
+
+  defp scan_for_token(state, cursor, kind, _acc) do
+    case TokenAdapter.next(state, cursor) do
+      {:ok, {^kind, meta, _value}, _state, _cursor} ->
+        {:ok, TokenAdapter.token_meta({kind, meta, nil})}
+
+      {:ok, _tok, state, cursor} ->
+        scan_for_token(state, cursor, kind, :not_found)
+
+      {:eof, _state, _cursor} ->
+        :not_found
+
+      {:error, _reason, _state, _cursor} ->
+        :not_found
+    end
+  end
+
+  defp scan_for_mismatched_end_reason(%State{} = state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    result = scan_for_mismatched_end_reason(checkpoint_state, cursor, :not_found)
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+    result
+  end
+
+  defp scan_for_mismatched_end_reason(state, cursor, _acc) do
+    case TokenAdapter.next(state, cursor) do
+      {:error, %Error{reason: {meta, message, token}}, _state, cursor}
+      when is_list(meta) and (is_binary(message) or is_list(message)) ->
+        if String.starts_with?(to_string(message), "unexpected reserved word:") and
+             to_string(token) == "end" do
+          {end_line, end_column} = Cursor.position(cursor)
+          meta = normalize_mismatched_meta(meta, end_line, end_column)
+          {:ok, {meta, to_string(message), to_string(token)}}
+        else
+          :not_found
+        end
+
+      {:error, {meta, message, token}, _state, cursor}
+      when is_list(meta) and (is_binary(message) or is_list(message)) ->
+        if String.starts_with?(to_string(message), "unexpected reserved word:") and
+             to_string(token) == "end" do
+          {end_line, end_column} = Cursor.position(cursor)
+          meta = normalize_mismatched_meta(meta, end_line, end_column)
+          {:ok, {meta, to_string(message), to_string(token)}}
+        else
+          :not_found
+        end
+
+      {:ok, _tok, state, cursor} ->
+        scan_for_mismatched_end_reason(state, cursor, :not_found)
+
+      {:eof, _state, _cursor} ->
+        :not_found
+
+      {:error, _reason, _state, _cursor} ->
+        :not_found
+    end
+  end
+
+  defp normalize_mismatched_meta(meta, end_line, end_column) do
+    [
+      line: Keyword.get(meta, :line, 1),
+      column: Keyword.get(meta, :column, 1),
+      end_line: end_line,
+      end_column: end_column,
+      error_type: Keyword.get(meta, :error_type),
+      opening_delimiter: Keyword.get(meta, :opening_delimiter),
+      closing_delimiter: Keyword.get(meta, :closing_delimiter),
+      expected_delimiter: Keyword.get(meta, :expected_delimiter)
+    ]
+  end
+
+  defp format_syntax_error_token(token) when is_binary(token) do
+    cond do
+      token == "" -> ""
+      String.starts_with?(token, ["'", "\""]) -> token
+      Regex.match?(~r/^\d+$/, token) -> "\"#{token}\""
+      Regex.match?(~r/^[A-Za-z_][A-Za-z0-9_]*$/, token) -> token
+      true -> "'#{token}'"
+    end
+  end
+
+  defp format_syntax_error_token(token), do: token
+
   defp annotate_anchor_paths(nil, diagnostics), do: diagnostics
 
   defp annotate_anchor_paths(ast, diagnostics) do
@@ -297,6 +488,13 @@ defmodule ToxicParser do
           diagnostic
       end
     end)
+  end
+
+  defp collect_error_paths({:__error__, _meta, [payload]}, path, acc) when is_map(payload) do
+    case payload do
+      %{diag_id: id} when is_integer(id) -> Map.put(acc, id, path)
+      _ -> acc
+    end
   end
 
   defp collect_error_paths({:__error__, _meta, payload}, path, acc) when is_map(payload) do
@@ -369,7 +567,9 @@ defmodule ToxicParser do
          state}
 
       {:ok, token, _cursor} ->
-        {:error, {:syntax_error_before, format_token(token)}, state}
+        meta = TokenAdapter.token_meta(token)
+        token_display = format_syntax_error_token(format_token(token))
+        {:error, {meta, "syntax error before: ", token_display}, state}
 
       {:error, _reason, _cursor} ->
         # Lexer error on remaining input - already an error state
@@ -387,13 +587,15 @@ defmodule ToxicParser do
       :list_string_start -> format_charlist_token(value)
       :sigil_start -> format_sigil_token(value)
       :alias -> Atom.to_string(value)
-      :int when is_integer(value) -> Integer.to_string(value)
-      :int when is_list(value) -> List.to_string(value)
+      :int when is_integer(value) -> "\"#{value}\""
+      :int when is_list(value) -> "\"#{List.to_string(value)}\""
       :int -> inspect(value)
       :flt when is_float(value) -> Float.to_string(value)
       :flt -> inspect(value)
       :char -> format_char_token(value)
       :atom -> inspect(value)
+      _ when is_nil(value) -> Atom.to_string(kind)
+      _ when is_binary(value) -> value
       _ when is_atom(value) -> Atom.to_string(value)
       _ -> inspect(kind)
     end

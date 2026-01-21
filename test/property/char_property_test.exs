@@ -1815,24 +1815,6 @@ defmodule ToxicParser.CharPropertyTest do
 
   defp assert_tolerant_recovery(_context, _code, _reason, _result), do: :ok
 
-  defp collect_error_nodes({:__error__, _meta, _payload} = node), do: [node]
-
-  defp collect_error_nodes({fun, _meta, args}) when is_list(args) do
-    collect_error_nodes(fun) ++ Enum.flat_map(args, &collect_error_nodes/1)
-  end
-
-  defp collect_error_nodes(tuple) when is_tuple(tuple) do
-    tuple
-    |> Tuple.to_list()
-    |> Enum.flat_map(&collect_error_nodes/1)
-  end
-
-  defp collect_error_nodes(list) when is_list(list) do
-    Enum.flat_map(list, &collect_error_nodes/1)
-  end
-
-  defp collect_error_nodes(_other), do: []
-
   defp current_mode do
     Process.get(:toxic_parser_mode, :strict)
   end

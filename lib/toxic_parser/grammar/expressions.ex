@@ -43,20 +43,38 @@ defmodule ToxicParser.Grammar.Expressions do
         {:ok, ast, state, cursor, log}
 
       {:error, diag, cursor} ->
-        {:error, diag, state, cursor, log}
+        if state.mode == :tolerant do
+          recover_expr_error([], diag, state, cursor, ctx, log)
+        else
+          {:error, diag, state, cursor, log}
+        end
 
       {:ok, _, cursor} ->
         # Proceed with expression parsing
-        case expr(state, cursor, ctx, log) do
+        {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+
+        case expr(checkpoint_state, cursor, ctx, log) do
           {:ok, first, state, cursor, log} ->
-            # Check for trailing EOE and annotate expression
-            {first, state, cursor} = maybe_annotate_eoe(first, state, cursor)
-            collect_exprs([first], state, cursor, ctx, log)
+            if state.mode == :tolerant and error_node?(first) and
+                 cursor_line_after_error?(first, cursor) and
+                 not error_node_from_lexer?(first) do
+              {state, cursor} = TokenAdapter.rewind(state, ref)
+
+              reason = error_node_reason(first)
+              recover_expr_error([], reason, state, cursor, ctx, log)
+            else
+              state = TokenAdapter.drop_checkpoint(state, ref)
+              # Check for trailing EOE and annotate expression
+              {first, state, cursor} = maybe_annotate_eoe(first, state, cursor)
+              collect_exprs([first], state, cursor, ctx, log)
+            end
 
           {:error, :unexpected_eof, state, cursor, log} ->
+            state = TokenAdapter.drop_checkpoint(state, ref)
             {:error, :unexpected_eof, state, cursor, log}
 
           {:error, reason, state, cursor, log} ->
+            state = TokenAdapter.drop_checkpoint(state, ref)
             recover_expr_error([], reason, state, cursor, ctx, log)
         end
     end
@@ -361,6 +379,7 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp maybe_recover_inline_error(reason, %State{mode: :tolerant} = state, cursor, _ctx, log) do
     {error_ast, state} = build_error_node(reason, state, cursor)
+    {state, cursor} = maybe_pushback_last_token(reason, state, cursor)
     {:ok, error_ast, state, cursor, log}
   end
 
@@ -368,12 +387,33 @@ defmodule ToxicParser.Grammar.Expressions do
     {:error, reason, state, cursor, log}
   end
 
+  defp maybe_pushback_last_token(:unexpected_eof, %State{} = state, cursor) do
+    case Cursor.peek(cursor) do
+      {:eof, _cursor} ->
+        case Cursor.last_token(cursor) do
+          nil -> {state, cursor}
+          last_tok -> TokenAdapter.pushback(state, cursor, last_tok)
+        end
+
+      _ ->
+        {state, cursor}
+    end
+  end
+
+  defp maybe_pushback_last_token(_reason, state, cursor), do: {state, cursor}
+
   defp build_error_node(reason, %State{} = state, cursor) do
     {token_meta, range_meta} =
       case Cursor.peek(cursor) do
         {:ok, tok, _cursor} -> {TokenAdapter.token_meta(tok), TokenAdapter.meta(tok)}
-        _ -> {[], nil}
+        _ ->
+          case Cursor.last_token(cursor) do
+            nil -> {[], nil}
+            last_tok -> {TokenAdapter.token_meta(last_tok), TokenAdapter.meta(last_tok)}
+          end
       end
+
+    token_meta = adjust_error_meta(token_meta, reason, cursor)
 
     {diagnostic, state} = parser_diagnostic(reason, range_meta, state, cursor)
 
@@ -394,7 +434,7 @@ defmodule ToxicParser.Grammar.Expressions do
     position =
       case range_meta do
         nil ->
-          {line, column} = Cursor.position(cursor)
+          {line, column} = error_anchor_position(reason, cursor)
           {{line, column}, {line, column}}
 
         _ ->
@@ -461,6 +501,30 @@ defmodule ToxicParser.Grammar.Expressions do
 
   defp should_parse_error_token?(_state, _token), do: false
 
+  defp adjust_error_meta(meta, :unexpected_eof, cursor) do
+    {line, column} = Cursor.position(cursor)
+
+    if is_integer(line) and is_integer(column) and line > 1 do
+      Keyword.merge(meta, [line: line - 1, column: 1])
+    else
+      meta
+    end
+  end
+
+  defp adjust_error_meta(meta, _reason, _cursor), do: meta
+
+  defp error_anchor_position(:unexpected_eof, cursor) do
+    {line, column} = Cursor.position(cursor)
+
+    if is_integer(line) and is_integer(column) and line > 1 do
+      {line - 1, 1}
+    else
+      {line, column}
+    end
+  end
+
+  defp error_anchor_position(_reason, cursor), do: Cursor.position(cursor)
+
   defp should_sync_after_error_expr?([last | _], %State{mode: :tolerant}, token) do
     with error_line when is_integer(error_line) <- error_expr_line(last),
          token_line when is_integer(token_line) <- TokenAdapter.line(token) do
@@ -481,6 +545,35 @@ defmodule ToxicParser.Grammar.Expressions do
   end
 
   defp error_expr_line(_other), do: nil
+
+  defp error_node?({:__error__, _meta, _payload}), do: true
+  defp error_node?(_other), do: false
+
+  defp error_node_reason({:__error__, _meta, [payload]}) when is_map(payload) do
+    Map.get(payload, :original)
+  end
+
+  defp error_node_reason({:__error__, _meta, payload}) when is_map(payload) do
+    Map.get(payload, :original)
+  end
+
+  defp error_node_reason(_other), do: :unexpected_eof
+
+  defp error_node_from_lexer?(error_node) do
+    case error_node_reason(error_node) do
+      %Toxic.Error{} -> true
+      _ -> false
+    end
+  end
+
+  defp cursor_line_after_error?(error_node, cursor) do
+    {line, _column} = Cursor.position(cursor)
+
+    case error_expr_line(error_node) do
+      error_line when is_integer(error_line) -> line > error_line
+      _ -> false
+    end
+  end
 
   @doc """
   Builds an AST node for an interpolated keyword key like "foo\#{x}":

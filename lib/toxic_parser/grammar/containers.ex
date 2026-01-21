@@ -11,6 +11,7 @@ defmodule ToxicParser.Grammar.Containers do
     ExprClass,
     NoParensErrors,
     ParseOpts,
+    Position,
     Pratt,
     State,
     TokenAdapter
@@ -196,6 +197,7 @@ defmodule ToxicParser.Grammar.Containers do
       {:ok, _, cursor} ->
         case Stabs.parse_paren_stab(open_meta, newlines, state, cursor, ctx, log, min_bp) do
           {:ok, ast, state, cursor, log} ->
+            {ast, state, cursor} = maybe_trim_paren_missing_closer(ast, open_meta, state, cursor)
             {:ok, ast, state, cursor, log}
 
           {:error, reason, state, cursor, log} ->
@@ -500,8 +502,120 @@ defmodule ToxicParser.Grammar.Containers do
           {error_ast, state} = build_container_error_node(reason, open_meta, state, cursor)
           {:ok, error_ast, state, cursor, log}
         else
-          {:error, reason, state, cursor, log}
+          case missing_tuple_terminator_reason(open_meta, state, cursor) do
+            {:missing, missing_reason} -> {:error, missing_reason, state, cursor, log}
+            :none -> {:error, reason, state, cursor, log}
+          end
         end
+    end
+  end
+
+  defp maybe_trim_paren_missing_closer({:__block__, meta, exprs} = ast, open_meta, state, cursor) do
+    case Enum.find(exprs, &missing_paren_closer_error_node?/1) do
+      nil ->
+        {ast, state, cursor}
+
+      error_node ->
+        case Enum.find_index(exprs, &expr_has_eoe_newlines?/1) do
+          nil ->
+            {ast, state, cursor}
+
+          split_idx ->
+            kept = Enum.take(exprs, split_idx + 1)
+            exprs = if Enum.member?(kept, error_node), do: kept, else: kept ++ [error_node]
+            {state, cursor} = recover_after_missing_paren(open_meta, state, cursor)
+            {{:__block__, meta, exprs}, state, cursor}
+        end
+    end
+  end
+
+  defp maybe_trim_paren_missing_closer(ast, _open_meta, state, cursor),
+    do: {ast, state, cursor}
+
+  defp expr_has_eoe_newlines?({_, meta, _}) when is_list(meta) do
+    case Keyword.get(meta, :end_of_expression) do
+      eoe when is_list(eoe) -> Keyword.get(eoe, :newlines, 0) > 0
+      _ -> false
+    end
+  end
+
+  defp expr_has_eoe_newlines?(_), do: false
+
+  defp missing_paren_closer_error_node?({:__error__, _meta, [payload]}) when is_map(payload) do
+    missing_paren_closer_error_payload?(payload)
+  end
+
+  defp missing_paren_closer_error_node?({:__error__, _meta, payload}) when is_map(payload) do
+    missing_paren_closer_error_payload?(payload)
+  end
+
+  defp missing_paren_closer_error_node?(_), do: false
+
+  defp missing_paren_closer_error_payload?(payload) do
+    case Map.get(payload, :original) do
+      %Toxic.Error{
+        code: :terminator_missing_closer,
+        details: %{expected_delimiter: :")"}
+      } ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp recover_after_missing_paren(open_meta, %State{} = state, cursor) do
+    case Cursor.peek(cursor) do
+      {:eof, _cursor} ->
+        line = Keyword.get(open_meta, :line, 1)
+        column = Keyword.get(open_meta, :column, 1)
+        %{offset: offset} = Position.to_location(line, column, state.line_index)
+        size = byte_size(state.source)
+
+        if offset >= size do
+          {state, cursor}
+        else
+          rest = binary_part(state.source, offset, size - offset)
+
+          case :binary.match(rest, "\n") do
+            {idx, 1} when idx + 1 < byte_size(rest) ->
+              suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
+              tokens = lex_suffix_tokens(state, suffix, line + 1, 1)
+              eol = {:eol, {{line, column}, {line + 1, 1}, 1}, nil}
+              {state, cursor} = TokenAdapter.pushback_many(state, cursor, [eol | tokens])
+              {state, cursor}
+
+            _ ->
+              {state, cursor}
+          end
+        end
+
+      _ ->
+        {state, cursor}
+    end
+  end
+
+  defp lex_suffix_tokens(%State{} = state, suffix, line, column) do
+    opts =
+      state.opts
+      |> Keyword.put(:mode, state.mode)
+      |> Keyword.put(:line, line)
+      |> Keyword.put(:column, column)
+
+    suffix_cursor = Cursor.new(suffix, opts)
+    lex_suffix_tokens([], suffix_cursor)
+  end
+
+  defp lex_suffix_tokens(acc, suffix_cursor) do
+    case Cursor.next(suffix_cursor) do
+      {:ok, tok, suffix_cursor} ->
+        lex_suffix_tokens([tok | acc], suffix_cursor)
+
+      {:eof, _suffix_cursor} ->
+        Enum.reverse(acc)
+
+      {:error, _reason, _suffix_cursor} ->
+        Enum.reverse(acc)
     end
   end
 
@@ -634,6 +748,49 @@ defmodule ToxicParser.Grammar.Containers do
               {:error, diag, state, cursor, log}
           end
       end
+    end
+  end
+
+  defp missing_tuple_terminator_reason(open_meta, state, cursor) do
+    {ref, checkpoint_state} = TokenAdapter.checkpoint(state, cursor)
+    result = scan_for_close(checkpoint_state, cursor, :"}")
+    _state = TokenAdapter.drop_checkpoint(checkpoint_state, ref)
+
+    case result do
+      {:missing, {end_line, end_column}} ->
+        reason_meta = [
+          opening_delimiter: :"{",
+          expected_delimiter: :"}",
+          line: Keyword.get(open_meta, :line, 1),
+          column: Keyword.get(open_meta, :column, 1),
+          end_line: end_line,
+          end_column: end_column
+        ]
+
+        {:missing, {reason_meta, "missing terminator: }", ""}}
+
+      :closed ->
+        :none
+    end
+  end
+
+  defp scan_for_close(state, cursor, close_kind) do
+    case Cursor.peek(cursor) do
+      {:ok, {^close_kind, _meta, _value}, _cursor} ->
+        :closed
+
+      {:ok, _tok, cursor} ->
+        case TokenAdapter.next(state, cursor) do
+          {:ok, _tok, state, cursor} -> scan_for_close(state, cursor, close_kind)
+          {:eof, _state, cursor} -> {:missing, Cursor.position(cursor)}
+          {:error, _reason, _state, cursor} -> {:missing, Cursor.position(cursor)}
+        end
+
+      {:eof, cursor} ->
+        {:missing, Cursor.position(cursor)}
+
+      {:error, _reason, cursor} ->
+        {:missing, Cursor.position(cursor)}
     end
   end
 

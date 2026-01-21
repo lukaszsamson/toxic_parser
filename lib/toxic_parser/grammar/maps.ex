@@ -690,7 +690,15 @@ defmodule ToxicParser.Grammar.Maps do
 
           {_, {:eof, cursor}} ->
             state = TokenAdapter.drop_checkpoint(state, reparse_ref)
-            {:error, :unexpected_eof, state, cursor, log}
+
+            case Cursor.last_token(cursor) do
+              {:"}", meta, _value} when state.mode == :strict ->
+                meta = Helpers.token_meta({:"}", meta, nil})
+                {:error, syntax_error_before(meta, "'}'"), state, cursor, log}
+
+              _ ->
+                {:error, :unexpected_eof, state, cursor, log}
+            end
 
           {_, {:error, diag, cursor}} ->
             state = TokenAdapter.drop_checkpoint(state, reparse_ref)
@@ -751,20 +759,56 @@ defmodule ToxicParser.Grammar.Maps do
         end
 
       :not_update ->
-        {state, cursor, newlines} = EOE.skip_count_newlines(state, cursor, 0)
+        case invalid_pipe_update_reason(base_expr) do
+          {:error, reason} when state.mode == :tolerant ->
+            meta = ErrorHelpers.error_meta_from_reason(reason, cursor)
+            {error_ast, state} = build_map_error_node(reason, meta, state, cursor)
+            {state, cursor, close_meta} = consume_close_or_synthesize(state, cursor)
+            {:ok, error_ast, close_meta, state, cursor, log}
 
-        case Cursor.peek(cursor) do
-          {:ok, {:pipe_op, _, _} = pipe_tok, cursor} ->
-            {:ok, _pipe, state, cursor} = TokenAdapter.next(state, cursor)
-            {state, cursor, newlines_after_pipe} = EOE.skip_newlines_only(state, cursor, 0)
-            pipe_meta_kw = token_meta_with_newlines(pipe_tok, max(newlines, newlines_after_pipe))
-            parse_map_update_rhs(base_expr, pipe_meta_kw, state, cursor, log)
+          _ ->
+            {state, cursor, newlines} = EOE.skip_count_newlines(state, cursor, 0)
 
-          {:ok, _, cursor} ->
-            {:not_update, state, cursor}
+            case Cursor.peek(cursor) do
+              {:ok, {:pipe_op, _, _} = pipe_tok, cursor} ->
+                {:ok, _pipe, state, cursor} = TokenAdapter.next(state, cursor)
+                {state, cursor, newlines_after_pipe} = EOE.skip_newlines_only(state, cursor, 0)
+                pipe_meta_kw =
+                  token_meta_with_newlines(pipe_tok, max(newlines, newlines_after_pipe))
+
+                parse_map_update_rhs(base_expr, pipe_meta_kw, state, cursor, log)
+
+              {:ok, _, cursor} ->
+                {:not_update, state, cursor}
+
+              {:eof, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
+
+              {:error, diag, cursor} ->
+                {:error, diag, state, cursor, log}
+            end
         end
     end
   end
+
+  defp invalid_pipe_update_reason({:|, pipe_meta, [base, rhs]}) do
+    if Keyword.has_key?(pipe_meta, :parens) do
+      :ok
+    else
+      base_class = ExprClass.classify(base)
+
+      case classify_pipe_rhs_for_map_update(rhs, base_class) do
+        :invalid ->
+          meta = Keyword.take(pipe_meta, [:line, :column])
+          {:error, {meta, "syntax error before: ", "'|'"}}
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
+  defp invalid_pipe_update_reason(_), do: :ok
 
   # Check if an expression is a pipe expression with valid map update RHS
   # e.g., map | :a => 1 parses as {:|, meta, [map, {:"=>", _, [:a, 1]}]}
@@ -809,8 +853,6 @@ defmodule ToxicParser.Grammar.Maps do
     if Keyword.has_key?(rhs_meta, :parens) do
       {:valid, [expr]}
     else
-      raise "dead code"
-
       case extract_assoc(expr) do
         {:assoc, key, value, assoc_meta} ->
           annotated_key = annotate_assoc(key, assoc_meta)
@@ -866,7 +908,6 @@ defmodule ToxicParser.Grammar.Maps do
   defp extract_assoc({callee, meta, args}) when is_list(meta) and is_list(args) do
     case extract_assoc_in_args(args) do
       {:assoc, new_args, value, assoc_meta} ->
-        raise "dead code"
         {:assoc, {callee, meta, new_args}, value, assoc_meta}
 
       :not_assoc ->
@@ -1078,6 +1119,10 @@ defmodule ToxicParser.Grammar.Maps do
     container_ctx = Context.container_expr()
 
     case Cursor.peek(cursor) do
+      {:ok, {:"}", meta, _value}, cursor} when state.mode == :strict ->
+        meta = Helpers.token_meta({:"}", meta, nil})
+        {:error, syntax_error_before(meta, "'}'"), state, cursor, log}
+
       {:ok, {:"[", _meta, _value}, cursor} ->
         # Bracketed list literal: treat as single entry, unless followed by =>.
         with {:ok, rhs_expr, state, cursor, log} <-

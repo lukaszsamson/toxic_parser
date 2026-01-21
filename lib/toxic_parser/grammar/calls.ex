@@ -666,6 +666,15 @@ defmodule ToxicParser.Grammar.Calls do
                       {:ok, arg, state, cursor, log} ->
                         handle_no_parens_arg(arg, acc, state, cursor, ctx, log, min_bp, opts)
 
+                      {:keyword_key, _key, key_meta, state, cursor, log} ->
+                        location = Keyword.take(key_meta, [:line, :column])
+                        {:error, {location, "syntax error before: ", ""}, state, cursor, log}
+
+                      {:keyword_key_interpolated, _parts, _kind, key_meta, _delimiter, state,
+                       cursor, log} ->
+                        location = Keyword.take(key_meta, [:line, :column])
+                        {:error, {location, "syntax error before: ", ""}, state, cursor, log}
+
                       {:error, reason, state, cursor, log} ->
                         {:error, reason, state, cursor, log}
                     end
