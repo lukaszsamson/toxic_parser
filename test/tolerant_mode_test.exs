@@ -341,7 +341,7 @@ defmodule ToxicParser.TolerantModeTest do
     %{name: "property test 9", code: "%{x | l|n}"},
     %{name: "property test 10", code: "with x <- (? do x end"},
     %{name: "property test 11", code: "[\"foo\#{t^\"}\": 1]"},
-    %{name: "property test 12", code: "-(b"},
+    %{name: "property test 12", code: "-(b"}
   ]
 
   for %{name: name, code: code} = data <- @error_cases do
@@ -373,12 +373,12 @@ defmodule ToxicParser.TolerantModeTest do
       else
         assert error_nodes != []
 
-      {_, error_meta, payloads} = hd(error_nodes)
-      payload = error_payload(payloads)
-      assert_error_payload(payload)
-      assert_error_meta_consistency(error_meta, payload)
+        {_, error_meta, payloads} = hd(error_nodes)
+        payload = error_payload(payloads)
+        assert_error_payload(payload)
+        assert_error_meta_consistency(error_meta, payload)
 
-      diagnostic = find_diagnostic(result, payload.diag_id)
+        diagnostic = find_diagnostic(result, payload.diag_id)
         assert diagnostic != nil
         assert payload.phase == diagnostic.phase
         assert payload.diag_id == diagnostic.details[:id]

@@ -5,6 +5,7 @@ defmodule ToxicParser.SystematicOperatorsTest do
       %{mode: :strict},
       %{mode: :tolerant}
     ]
+
   import ExUnit.CaptureIO
 
   setup %{mode: mode} do

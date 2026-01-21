@@ -669,7 +669,7 @@ defmodule ToxicParser.Grammar.Maps do
           {{:|, pipe_meta, [_base, rhs]}, {:ok, _, cursor}} ->
             cond do
               not Keyword.has_key?(pipe_meta, :parens) and is_list(rhs) and
-                  rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) ->
+                rhs != [] and Enum.all?(rhs, &is_keyword_or_assoc_entry?/1) ->
                 # Reparse to distinguish between kw_data and bracketed list `[kw]`.
                 {state, cursor} = TokenAdapter.rewind(state, reparse_ref)
                 parse_map_update_with_min_bp(state, cursor, log)
@@ -773,6 +773,7 @@ defmodule ToxicParser.Grammar.Maps do
               {:ok, {:pipe_op, _, _} = pipe_tok, cursor} ->
                 {:ok, _pipe, state, cursor} = TokenAdapter.next(state, cursor)
                 {state, cursor, newlines_after_pipe} = EOE.skip_newlines_only(state, cursor, 0)
+
                 pipe_meta_kw =
                   token_meta_with_newlines(pipe_tok, max(newlines, newlines_after_pipe))
 
@@ -1200,21 +1201,21 @@ defmodule ToxicParser.Grammar.Maps do
             {state, cursor} = EOE.skip(state, cursor)
 
             case Cursor.peek(cursor) do
-          {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
-            {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
-            close_meta = Helpers.token_meta(close_tok)
-            update_ast = map_update_ast(pipe_meta, base, kw_list)
-            {:ok, update_ast, close_meta, state, cursor, log}
+              {:ok, {:"}", _meta, _value} = close_tok, cursor} ->
+                {:ok, _close, state, cursor} = TokenAdapter.next(state, cursor)
+                close_meta = Helpers.token_meta(close_tok)
+                update_ast = map_update_ast(pipe_meta, base, kw_list)
+                {:ok, update_ast, close_meta, state, cursor, log}
 
-          {:eof, cursor} ->
-            {:error, :unexpected_eof, state, cursor, log}
+              {:eof, cursor} ->
+                {:error, :unexpected_eof, state, cursor, log}
 
-          {:error, diag, cursor} ->
-            {:error, diag, state, cursor, log}
+              {:error, diag, cursor} ->
+                {:error, diag, state, cursor, log}
 
-          {:ok, _, cursor} ->
-            {:error, :expected_closing_brace, state, cursor, log}
-        end
+              {:ok, _, cursor} ->
+                {:error, :expected_closing_brace, state, cursor, log}
+            end
 
           {:no_kw, state, cursor, log} ->
             # assoc_expr(s): %{base | k => v, ...}

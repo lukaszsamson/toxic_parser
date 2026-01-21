@@ -405,7 +405,9 @@ defmodule ToxicParser.Grammar.Expressions do
   defp build_error_node(reason, %State{} = state, cursor) do
     {token_meta, range_meta} =
       case Cursor.peek(cursor) do
-        {:ok, tok, _cursor} -> {TokenAdapter.token_meta(tok), TokenAdapter.meta(tok)}
+        {:ok, tok, _cursor} ->
+          {TokenAdapter.token_meta(tok), TokenAdapter.meta(tok)}
+
         _ ->
           case Cursor.last_token(cursor) do
             nil -> {[], nil}
@@ -505,7 +507,7 @@ defmodule ToxicParser.Grammar.Expressions do
     {line, column} = Cursor.position(cursor)
 
     if is_integer(line) and is_integer(column) and line > 1 do
-      Keyword.merge(meta, [line: line - 1, column: 1])
+      Keyword.merge(meta, line: line - 1, column: 1)
     else
       meta
     end

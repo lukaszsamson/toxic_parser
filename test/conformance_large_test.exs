@@ -4916,7 +4916,7 @@ defmodule ToxicParser.ConformanceLargeTest do
     case ToxicParser.parse_string(
            code,
            [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
-          ) do
+         ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -4927,7 +4927,7 @@ defmodule ToxicParser.ConformanceLargeTest do
            code,
            [mode: current_mode(), token_metadata: true, preserve_comments: true]
            |> Keyword.merge(options)
-          ) do
+         ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -4937,7 +4937,7 @@ defmodule ToxicParser.ConformanceLargeTest do
     case ToxicParser.parse_string(
            code,
            [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
-          ) do
+         ) do
       {:ok, result} -> result.ast
       {:error, result} -> raise format_error(result)
     end

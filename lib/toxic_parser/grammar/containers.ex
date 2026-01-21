@@ -203,6 +203,14 @@ defmodule ToxicParser.Grammar.Containers do
           {:error, reason, state, cursor, log} ->
             if state.mode == :tolerant do
               {error_ast, state} = build_container_error_node(reason, open_meta, state, cursor)
+
+              {state, cursor} =
+                if missing_paren_expected_int?(reason) do
+                  recover_after_missing_paren(open_meta, state, cursor)
+                else
+                  {state, cursor}
+                end
+
               {:ok, error_ast, state, cursor, log}
             else
               {:error, reason, state, cursor, log}
@@ -559,39 +567,52 @@ defmodule ToxicParser.Grammar.Containers do
       } ->
         true
 
+      {:expected, :")", [got: _]} ->
+        true
+
       _ ->
         false
     end
   end
 
+  defp missing_paren_expected_int?({:expected, :")", [got: _]}), do: true
+  defp missing_paren_expected_int?(_reason), do: false
+
   defp recover_after_missing_paren(open_meta, %State{} = state, cursor) do
     case Cursor.peek(cursor) do
       {:eof, _cursor} ->
-        line = Keyword.get(open_meta, :line, 1)
-        column = Keyword.get(open_meta, :column, 1)
-        %{offset: offset} = Position.to_location(line, column, state.line_index)
-        size = byte_size(state.source)
+        recover_missing_paren_suffix(open_meta, state, cursor)
 
-        if offset >= size do
-          {state, cursor}
-        else
-          rest = binary_part(state.source, offset, size - offset)
-
-          case :binary.match(rest, "\n") do
-            {idx, 1} when idx + 1 < byte_size(rest) ->
-              suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
-              tokens = lex_suffix_tokens(state, suffix, line + 1, 1)
-              eol = {:eol, {{line, column}, {line + 1, 1}, 1}, nil}
-              {state, cursor} = TokenAdapter.pushback_many(state, cursor, [eol | tokens])
-              {state, cursor}
-
-            _ ->
-              {state, cursor}
-          end
-        end
+      {:ok, {:")", _meta, _value}, _cursor} ->
+        recover_missing_paren_suffix(open_meta, state, cursor)
 
       _ ->
         {state, cursor}
+    end
+  end
+
+  defp recover_missing_paren_suffix(open_meta, %State{} = state, cursor) do
+    line = Keyword.get(open_meta, :line, 1)
+    column = Keyword.get(open_meta, :column, 1)
+    %{offset: offset} = Position.to_location(line, column, state.line_index)
+    size = byte_size(state.source)
+
+    if offset >= size do
+      {state, cursor}
+    else
+      rest = binary_part(state.source, offset, size - offset)
+
+      case :binary.match(rest, "\n") do
+        {idx, 1} when idx + 1 < byte_size(rest) ->
+          suffix = binary_part(rest, idx + 1, byte_size(rest) - idx - 1)
+          tokens = lex_suffix_tokens(state, suffix, line + 1, 1)
+          eol = {:eol, {{line, column}, {line + 1, 1}, 1}, nil}
+          {state, cursor} = TokenAdapter.pushback_many(state, cursor, [eol | tokens])
+          {state, cursor}
+
+        _ ->
+          {state, cursor}
+      end
     end
   end
 

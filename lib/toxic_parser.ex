@@ -204,6 +204,7 @@ defmodule ToxicParser do
           case Cursor.last_token(cursor) do
             {kind, meta, value} ->
               token_meta = TokenAdapter.token_meta({kind, meta, value})
+
               location =
                 case Keyword.take(token_meta, [:line, :column]) do
                   [line: line, column: column] when kind == :end_interpolation ->
@@ -212,6 +213,7 @@ defmodule ToxicParser do
                   other ->
                     other
                 end
+
               {location, "syntax error before: ", ""}
 
             _ ->
@@ -225,6 +227,7 @@ defmodule ToxicParser do
             {:ok, {kind, meta, value}, _cursor} when kind in [:")", :"]", :"}", :">>", :end] ->
               token_meta = TokenAdapter.token_meta({kind, meta, value})
               location = Keyword.take(token_meta, [:line, :column])
+
               token_display =
                 case kind do
                   :")" -> "')'"
@@ -233,6 +236,7 @@ defmodule ToxicParser do
                   :">>" -> "'>>'"
                   :end -> "'end'"
                 end
+
               {location, "syntax error before: ", token_display}
 
             _ ->
@@ -240,6 +244,7 @@ defmodule ToxicParser do
                 {kind, meta, value} when kind in [:")", :"]", :"}", :">>", :end] ->
                   token_meta = TokenAdapter.token_meta({kind, meta, value})
                   location = Keyword.take(token_meta, [:line, :column])
+
                   token_display =
                     case kind do
                       :")" -> "')'"
@@ -354,8 +359,8 @@ defmodule ToxicParser do
   defp normalize_reserved_word(other), do: other
 
   defp maybe_mismatched_end_reason(meta, %State{} = state, cursor) do
-    if Keyword.get(meta, :opening_delimiter) == :"{"
-       and Keyword.get(meta, :expected_delimiter) == :"}" do
+    if Keyword.get(meta, :opening_delimiter) == :"{" and
+         Keyword.get(meta, :expected_delimiter) == :"}" do
       case scan_for_token(state, cursor, :end) do
         {:ok, end_meta} ->
           reason_meta = [

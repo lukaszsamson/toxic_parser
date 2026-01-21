@@ -748,7 +748,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
            mode: current_mode(),
            token_metadata: true,
            literal_encoder: &{:ok, {:__block__, &2, [&1]}}
-          ) do
+         ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end
@@ -759,7 +759,7 @@ defmodule ToxicParser.ElixirParserConformanceTest do
            mode: current_mode(),
            token_metadata: true,
            existing_atoms_only: true
-          ) do
+         ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end

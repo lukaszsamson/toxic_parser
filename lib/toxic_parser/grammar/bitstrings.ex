@@ -344,6 +344,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
       "'#{value}'"
     end
   end
+
   defp bitstring_token_display(_kind, value) when is_atom(value) do
     token = Atom.to_string(value)
 
@@ -353,6 +354,7 @@ defmodule ToxicParser.Grammar.Bitstrings do
       "'#{token}'"
     end
   end
+
   defp bitstring_token_display(_kind, value) when is_integer(value), do: Integer.to_string(value)
   defp bitstring_token_display(_kind, value) when is_list(value), do: List.to_string(value)
   defp bitstring_token_display(kind, _value), do: Atom.to_string(kind)

@@ -166,7 +166,7 @@ defmodule ToxicParser.ConformanceCorpusTest do
     case ToxicParser.parse_string(
            code,
            [mode: current_mode(), token_metadata: true] |> Keyword.merge(options)
-          ) do
+         ) do
       {:ok, result} -> {:ok, result.ast}
       {:error, result} -> {:error, format_error(result)}
     end

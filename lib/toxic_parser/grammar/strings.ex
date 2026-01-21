@@ -488,7 +488,6 @@ defmodule ToxicParser.Grammar.Strings do
                        :heredoc_missing_terminator
                      ] and
                        state.mode == :tolerant ->
-                  {state, cursor} = maybe_pushback_fragment_remainder(acc, state, cursor)
                   {:error, {:missing_terminator, code, error_tok}, state, cursor, log}
 
                 _ ->
@@ -1351,56 +1350,6 @@ defmodule ToxicParser.Grammar.Strings do
       message = Exception.message(e)
       message = if is_list(message), do: List.to_string(message), else: message
       {:error, {meta, message, "'"}}
-  end
-
-  defp maybe_pushback_fragment_remainder(acc, %State{} = state, cursor) do
-    case acc do
-      [{:fragment, fragment} | _] when is_binary(fragment) ->
-        case split_fragment_remainder(fragment) do
-          {:ok, remainder} ->
-            {restate, recursor} =
-              TokenAdapter.new(remainder, Keyword.put(state.opts, :mode, state.mode))
-
-            tokens = collect_remainder_tokens(restate, recursor, [])
-
-            if tokens == [] do
-              {state, cursor}
-            else
-              TokenAdapter.pushback_many(state, cursor, tokens)
-            end
-
-          :none ->
-            {state, cursor}
-        end
-
-      _ ->
-        {state, cursor}
-    end
-  end
-
-  defp split_fragment_remainder(fragment) do
-    parts = String.split(fragment, "\n")
-
-    case List.last(parts) do
-      remainder when is_binary(remainder) and remainder != "" and length(parts) > 1 ->
-        {:ok, remainder}
-
-      _ ->
-        :none
-    end
-  end
-
-  defp collect_remainder_tokens(state, cursor, acc) do
-    case TokenAdapter.next(state, cursor) do
-      {:ok, tok, state, cursor} ->
-        collect_remainder_tokens(state, cursor, acc ++ [tok])
-
-      {:eof, _state, _cursor} ->
-        acc
-
-      {:error, _reason, _state, _cursor} ->
-        acc
-    end
   end
 
   defp string_kind(:bin_string_start), do: :binary

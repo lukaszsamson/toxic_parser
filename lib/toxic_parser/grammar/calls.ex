@@ -327,8 +327,7 @@ defmodule ToxicParser.Grammar.Calls do
         case reason do
           {meta, "unexpected parentheses" <> _, _} when is_list(meta) ->
             meta = [line: Keyword.get(meta, :line), column: 5]
-            {:error, NoParensErrors.error_no_parens_strict(meta),
-             state, cursor, log}
+            {:error, NoParensErrors.error_no_parens_strict(meta), state, cursor, log}
 
           _ ->
             {:error, reason, state, cursor, log}
@@ -371,6 +370,7 @@ defmodule ToxicParser.Grammar.Calls do
 
       {:error, :unexpected_eof, _state, _cursor, _log} ->
         {state, cursor} = TokenAdapter.rewind(checkpoint_state, ref)
+
         case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
           {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, nil, state, cursor, log}
           other -> other
@@ -385,14 +385,20 @@ defmodule ToxicParser.Grammar.Calls do
 
           {meta, "unexpected parentheses" <> _, _} ->
             case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
-              {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, meta, state, cursor, log}
-              other -> other
+              {:ok, inner, state, cursor, log} ->
+                {:ok, inner, :needs_close, meta, state, cursor, log}
+
+              other ->
+                other
             end
 
           _ ->
             case parse_spaced_paren_non_stab(state, cursor, callee_tok, log) do
-              {:ok, inner, state, cursor, log} -> {:ok, inner, :needs_close, nil, state, cursor, log}
-              other -> other
+              {:ok, inner, state, cursor, log} ->
+                {:ok, inner, :needs_close, nil, state, cursor, log}
+
+              other ->
+                other
             end
         end
     end
@@ -404,6 +410,7 @@ defmodule ToxicParser.Grammar.Calls do
       case Cursor.peek(cursor) do
         {:ok, {:",", _meta, _value}, _cursor} ->
           meta = TokenAdapter.token_meta(callee_tok)
+
           {:error, NoParensErrors.error_no_parens_strict(Keyword.take(meta, [:line, :column])),
            state, cursor, log}
 
@@ -431,9 +438,16 @@ defmodule ToxicParser.Grammar.Calls do
           _ ->
             with {:ok, next_expr, state, cursor, log} <-
                    Expressions.expr(state, cursor, Context.matched_expr(), log) do
-              {next_expr, state, cursor} = Expressions.maybe_annotate_eoe(next_expr, state, cursor)
+              {next_expr, state, cursor} =
+                Expressions.maybe_annotate_eoe(next_expr, state, cursor)
 
-              case collect_spaced_paren_exprs([next_expr], state, cursor, Context.matched_expr(), log) do
+              case collect_spaced_paren_exprs(
+                     [next_expr],
+                     state,
+                     cursor,
+                     Context.matched_expr(),
+                     log
+                   ) do
                 {:ok, exprs_rev, state, cursor, log} ->
                   exprs = Enum.reverse(exprs_rev)
                   {:ok, {:__block__, [], [first_expr | exprs]}, state, cursor, log}
@@ -472,7 +486,9 @@ defmodule ToxicParser.Grammar.Calls do
           {:ok, _tok, cursor} ->
             case Expressions.expr(state, cursor, ctx, log) do
               {:ok, next_expr, state, cursor, log} ->
-                {next_expr, state, cursor} = Expressions.maybe_annotate_eoe(next_expr, state, cursor)
+                {next_expr, state, cursor} =
+                  Expressions.maybe_annotate_eoe(next_expr, state, cursor)
+
                 collect_spaced_paren_exprs([next_expr | acc], state, cursor, ctx, log)
 
               {:error, reason, state, cursor, log} ->

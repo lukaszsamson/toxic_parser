@@ -77,8 +77,7 @@ defmodule ToxicParser.Cursor do
           {:ok, tok, {rest, line, column, driver_hot, cfg, rest_tokens, tok}}
 
         {:eof, driver_hot} ->
-          {:eof,
-            {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
           {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
@@ -109,8 +108,7 @@ defmodule ToxicParser.Cursor do
           {:ok, hd(tokens), {rest, line, column, driver_hot, cfg, tokens, last_token}}
 
         {:eof, driver_hot} ->
-          {:eof,
-            {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
+          {:eof, {empty_input(cfg.lexer_backend), line, column, driver_hot, cfg, [], last_token}}
 
         {:error, reason, rest, line, column, driver_hot} ->
           {:error, reason, {rest, line, column, driver_hot, cfg, [], last_token}}
